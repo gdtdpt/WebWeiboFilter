@@ -230,6 +230,23 @@
 | 降对比 | 降低不透明度 / 浅灰替代深色 | 从"突出"变"背景" |
 | 去装饰 | 去掉彩色边框、角标、阴影、认证标记 | 删掉一切"提醒你看这里"的元件 |
 
+**⚠️ 过滤命中卡（广告 / 关键词）的表现形式 —— 已被 B2 实测锁死（§12-B2）**
+
+B2 已实测定论：虚拟列表的槽位位置来自**预计算的 `translateY`**，改自身尺寸不会让后续项上移，
+`item-wrapper` 总高也恒为 5311px 不变 ⇒ **「删除式隐藏」技术上不可能**。
+所以过滤命中卡的行事逻辑 = **保高度 + 降显著度**，只剩「降多彻底」这一个自由度。
+三个候选（**待用户拍板**）：
+
+| 方案 | 做法 | 优点 | 风险 |
+| --- | --- | --- | --- |
+| **A · 纯空白** | 整卡 `visibility: hidden`（信息留在 DOM、位置不动） | 最像"这里本来就没内容"，不留任何脚本痕迹 | 留一块与原卡等高的**空白**；连续命中时会成片 |
+| **B · 幽灵** | `opacity: .08~.15` + `grayscale(1)` + 降对比 | 空白不突兀（隐约有东西），最贴合 §7.5.0 的"降显著度"语汇 | "隐约可见的广告"可能比空白更招人问 |
+| **C · 折叠成一条线** | 内容裁到顶部一条极细灰线 | 视觉上像分隔线，最紧凑 | **必须保高度** ⇒ 只能是"顶一条线 + 其余留白"，反而更怪 |
+
+⛔ **已否决**：任何在页面上写提示文字的做法（如"已隐藏 1 条推广"）—— 直接暴露脚本存在，违背低调目标。
+可解释性（§9）走**诊断面板**，不进页面。
+⇒ 建议默认 **A**（纯空白）；真机看着扎眼再退到 **B**。
+
 #### 7.5.1 按「观看距离」排优先级（决定力气花在哪）
 
 判断"哪个改动值得做"的标尺——同事从你身后走过时，能看清什么取决于距离：
@@ -680,7 +697,7 @@ L2 的"工单式"重排**只允许用 CSS 改变已有节点的摆位**（`displ
 | 编号 | 状态 | 结论 / 缺口 |
 | --- | --- | --- |
 | B1 | ✅ **已确认（2026-10-13 第二轮；`natural` 埋点同日降级）** | 微博的广告是**两类**，判据完全不同 —— **完整判据见下方「B1 专节」**：<br>**A 类 · 页面级 banner 广告位**（发布器正下方，**不在信息流里**）：纯图片，来源为广告投放 CDN `kadmimage.biz.weibo.com`，自带关闭按钮 ⇒ **间歇投放**（1440 无 / 1449、1505、1505(1) 有），不能假设常在。<br>**B 类 · 信息流内的推广卡**：四路判据按权重累加，**≥3 判广告、1~2 判存疑** ⇒ 实测 **2 张真广告卡 + 1 张存疑卡**。<br>**⛔ 反面结论（同样重要）**：① 卡片修饰符**区分不了**广告 —— 广告卡与自然卡同为 `_wrap_ecgcn_2 _normal_ecgcn_34`（**上一轮「广告卡会换 modifier」的猜测作废**）；② class 里**没有** `ad/promo/sponsor` 任何令牌（四份快照全为 0）；③ DOM 里搜不到「广告」二字 —— banner 上的标识是**烤在图片里**的；④ `div.wbpro-tag-img`（认证图标 `icon_auth_black.png`）出现在**自然卡**上，**不是**广告信号；⑤ **广告在 UI 上可能完全没有可见标识**（饼干姐卡）⇒ 埋点是唯一兜底 |
-| B2 | 🟡 **离线定论已确认；首次真机实测作废（探针取错对象，已修，待重跑）** | **离线定论**：项容器是 `transform` 定位的虚拟列表 —— `div.vue-recycle-scroller__item-view` 带内联 `transform: translateY(0 / 443 / 900 / 1331 / 1666px)`，回收槽为 `translateY(-9999px); opacity: 0`；外层 `item-wrapper` 带内联 `min-height: 8562px` ⇒ **位置由微博 JS 预计算，隐藏一项不会让后续项上移**。<br>**⚠️ 首次真机实测（2026-10-13 16:13）作废 —— 测的对象不是信息流项**：`testHeight()` 打出 `delta: 0 / residual: 137`，看上去正好支持上面的结论，但目标是 `woo-box-item-inlineBlock _item_a3hty_47 __yawf_feed-picture_item`，即**卡片内九宫格的一张图片格**（高 137px，外层是 `_inlineNum3_*` 三列图网格）。隐藏一张图片格当然不会让后续信息流项上移 ⇒ 读数**无信息量**。**根因**：`findContainers()` 按「≥3 个同签名子节点」打分，一个 **9 宫格（9 个一模一样的图片格）得分高于信息流容器** ⇒ 抢走 `primary` ⇒ `_items` 变成图片格 ⇒ `testHeight()` 照单全收。<br>**已修（2026-10-13）**：① `feedItems()` 只认 `item-wrapper` 的**直接子槽位**；② `scoreContainer()` 给「子节点是虚拟槽位」的组 **+1000** 加权，嵌套网格再也抢不走；③ `testHeight()` 每次打印**目标身份**（tag / class / `data-index`）并校验 `sanity.targetIsScrollerSlot`，取错对象时 verdict 直接报警；④ 新增 2 条夹具回归测试把坑焊死（`_feedItems()` 只返回槽位 / 从图片格出发也必须纠正回槽位）。<br>**本轮同时加测**：新增「1px + **主动触发重测量**」（`handleResize` / `forceUpdate` / `window resize`）与「`visibility:hidden` 对照组」两组实验，并探测虚拟列表 **Vue 实例是否暴露 `sizes[]`** —— 若暴露，CSS 之外还有一条 JS 路径（改 size 缓存 + 触发重排）。<br>⇒ **待用户重跑一次 `SpecBaseRecon.testHeight()` 才能闭合 B2**。<br>**推论（不依赖重跑）**：§7.5.0「降显著度不是删除」从设计取向升级为**技术必需** |
+| B2 | ✅ **已定论（2026-10-13 16:21 真机实测）：隐藏不可行 ——「保高度 + 降显著度」是唯一路径** | **实测结论**（`probe-height-20261013-1621.json`，`sanity.warning: null` ⇒ 目标确为信息流槽位）：取 `item-view` 槽位（内联 `transform: translateY(0px)`，高 287.6px）与其下一槽（`translateY(287px)`，高 588.2px），跑**四组**实验 —— ① `display:none` ② `height:1px; overflow:hidden` ③ `1px` + **主动触发重测量**（`handleResize`/`forceUpdate`/`window resize`）④ `visibility:hidden`（对照组）⇒ **四组结果完全一致：后续项上移 `0px`、残留空洞 `287px`、无延迟重排**（采样 0/400/1200ms 三次读数相同）。<br>**决定性证据**：`item-wrapper` 的 `scrollHeight`/`clientHeight` 前后恒为 **5311px** 不变 ⇒ **虚拟列表从未重测尺寸、也没重算总高**（槽位位置来自预计算的 `translateY`，与内容实际高度无关）⇒ 洞**不可能**被 CSS 闭合，主动触发重测量同样无效。<br>⚠️ 附带确认两条：① `nextOffsetTop` 恒为 `0`（两个槽都是 0）⇒ **`offsetTop` 对这项毫无判别力**，必须用 `getBoundingClientRect()`（早先那次重写是对的）；② `findScrollerVm()` **未找到**虚拟列表 Vue 实例（生产构建下实例不可达）⇒ **JS 路径（改 size 缓存）既不可评估、也不采用**（符合「不碰微博内部状态」的红线）。<br>⇒ **最终结论**：「删除式隐藏」全部作废（`display:none` / `1px` / 任何变体）；过滤命中卡只能走 **保高度 + 降显著度**（§7.5.0）—— 这条从「设计取向」正式升级为**技术唯一解**。<br>**早期离线定论（实测吻合）**：项容器是 `transform` 定位的虚拟列表 —— `div.vue-recycle-scroller__item-view` 带内联 `transform: translateY(0 / 443 / 900 / 1331 / 1666px)`，回收槽为 `translateY(-9999px); opacity: 0`；外层 `item-wrapper` 带内联 `min-height: 8562px` ⇒ **位置由微博 JS 预计算，隐藏一项不会让后续项上移**。<br>**⚠️ 首次真机实测（2026-10-13 16:13）作废 —— 测的对象不是信息流项**：`testHeight()` 打出 `delta: 0 / residual: 137`，看上去正好支持上面的结论，但目标是 `woo-box-item-inlineBlock _item_a3hty_47 __yawf_feed-picture_item`，即**卡片内九宫格的一张图片格**（高 137px，外层是 `_inlineNum3_*` 三列图网格）。隐藏一张图片格当然不会让后续信息流项上移 ⇒ 读数**无信息量**。**根因**：`findContainers()` 按「≥3 个同签名子节点」打分，一个 **9 宫格（9 个一模一样的图片格）得分高于信息流容器** ⇒ 抢走 `primary` ⇒ `_items` 变成图片格 ⇒ `testHeight()` 照单全收。<br>**已修（2026-10-13）**：① `feedItems()` 只认 `item-wrapper` 的**直接子槽位**；② `scoreContainer()` 给「子节点是虚拟槽位」的组 **+1000** 加权，嵌套网格再也抢不走；③ `testHeight()` 每次打印**目标身份**（tag / class / `data-index`）并校验 `sanity.targetIsScrollerSlot`，取错对象时 verdict 直接报警；④ 新增 2 条夹具回归测试把坑焊死（`_feedItems()` 只返回槽位 / 从图片格出发也必须纠正回槽位）。<br>**本轮同时加测**：新增「1px + **主动触发重测量**」（`handleResize` / `forceUpdate` / `window resize`）与「`visibility:hidden` 对照组」两组实验，并探测虚拟列表 **Vue 实例是否暴露 `sizes[]`** —— 若暴露，CSS 之外还有一条 JS 路径（改 size 缓存 + 触发重排）。<br>（历史：2026-10-13 16:13 首测因**探针取错对象**作废，见上方记录与 `docs/dev-guide.md §5` 的踩坑框；探针已修并加了 2 条回归测试） |
 | B3 | ✅ **已确认** | 容器 `div.vue-recycle-scroller__item-wrapper` → 项 `div.vue-recycle-scroller__item-view`（虚拟槽位，带 `data-index`）→ 卡 `div.wbpro-scroller-item` → `article`。<br>**帖子稳定 ID = 时间链接 `https://weibo.com/<uid>/<bid>` 里的 `bid`**（base62，如 `Rmb9sjU1W`） |
 | B4 | ✅ **已确认（含一处重要修正）** | **① 可靠锚点**（两份快照都在）：`wbpro-*` 语义类 —— `wbpro-scroller-item` / `wbpro-feed-content` / `wbpro-feed-ogText` / `wbpro-feed-reText` / `wbpro-textcut`；`woo-*` 设计系统类 —— `woo-avatar-img` / `woo-icon-vipimg` / `woo-picture-main` / `woo-panel-main` / `woo-box-flex` …；以及 `vue-*` / `vjs-*`。<br>**② 构建哈希**：`_name_hash_lineno`（`_num_198pe_46`、`_normal_ecgcn_34`）⇒ **禁止写进选择器**（构建一变即失效）。<br>**③ ⚠️ 修正：`__yawf_*` 不是微博的。** 同一次构建（哈希 `198pe` / `ecgcn` 完全一致）下，第一份快照有 1928 处、第二份 0 处 ⇒ 它是**运行时被外部脚本注入**的（`__yawf_component_*__` / `__yawf_key___` / `__yawf_event_*` 是典型的 Vue 组件与事件注解）⇒ **绝不能依赖**（首轮据此得出的 B4 结论已作废） |
 | B5 | ✅ **已确认（单次采样）** | 右下角 24×24 无遮挡（`clean: true`，视口 1128×851）⇒ §8.2 隐藏热区可行 |
@@ -767,13 +784,9 @@ L2 的"工单式"重排**只允许用 CSS 改变已有节点的摆位**（`displ
 - ⚠️ 夹具里还有 `data-shipian-state` / `data-shipian-btn` —— 用户自装**拾片扩展**注入的节点，分析时应排除（1505 快照有 8 处、1505(1) 为 0 ⇒ 时有时无）。
 - ✅ **`__yawf_*` 的来源已查明并消除**：是上游油猴脚本（`tiansh/yawf` 系）运行时注入的 Vue 注解。用户已在第二轮采集前**卸载该脚本**，之后三份快照 `__yawf_*` 计数均为 0 ⇒ 后续夹具是干净基线。**但这条教训要记住：侦察前必须确认浏览器里没有别的微博脚本在改 DOM**，否则夹具不可比。
 
-**下一步**：B1 已定稿 ⇒ **M1 的广告识别已落地**（`src/core/ad-detect.js`、`src/adapters/weibo-home.js`）。
-**B7 已实测**（2026-10-13 16:13）⇒ L0 策略定案：`MutationObserver` 持续校正（覆盖 SPA 换页 + 新消息计数），**不能只写一次**。
-**B2 仍欠一次「有效」实测**：首测打空了 —— `testHeight()` 拿卡片内的**九宫格图片格**当了目标（`woo-box-item-inlineBlock _item_a3hty_47 __yawf_feed-picture_item`，高 137px），
-所以 `delta: 0 / residual: 137` 是假象（隐藏一张图片格当然不影响信息流项位置）。
-探针**已修**：`feedItems()` 只认 `item-wrapper` 的直接子槽位 · `scoreContainer()` 给「子节点是虚拟槽位」的组 **+1000** 加权 ·
-`testHeight()` 打印目标身份并在取错对象时用 `sanity.warning` 报警 · 新增 2 条夹具回归测试 · 实验组从 2 组扩到 **4 组**（+「1px + 主动触发重测量」+「`visibility:hidden` 对照组」）。
-⇒ **请重跑一次 `testHeight()`**；跑完看控制台有没有 `sanity.warning`（**有 → 本次读数作废**，把 JSON 原样发我）。
+**下一步**：**M0 侦察全部闭环** —— B1 ✅（广告判据）· B2 ✅（隐藏不可行）· B3~B7 ✅。
+⇒ M1 剩下的只有**接线**：调度层 + 应用层，把已落地的判定核心与适配层接到「保高度 + 降显著度」这条唯一路径上。
+⚠️ 接线前需先拍板一个产品决策（见 §7.5.0 末尾「过滤命中卡的表现形式」）：保高度是硬约束，剩下的自由度只有「藏到多彻底」。
 **两个探针跑完都会自动下载 JSON 文件**（`probe-height-*.json` / `probe-title-*.json`），不需要从 Console 复制对象；
 若想一次全拿走，跑 `SpecBaseRecon.exportResults()`（汇总成 `probe-all-*.json`），下载被拦时用 `SpecBaseRecon.copyResult()`。
 另建议：`SpecBaseRecon.probeAds()` 可在任何时刻复跑，确认判据在**活页面**上仍然成立（现在会同时列出「推广卡」与「存疑卡」）。
@@ -788,8 +801,9 @@ L2 的"工单式"重排**只允许用 CSS 改变已有节点的摆位**（`displ
   - 进度：**适配层 ✅ 已落地** —— `src/adapters/weibo-home.js`：卡片信号抽取 + 页面广告位发现 + 9 条探针（`PROBES` / `runProbes()`）。
   - 进度：**夹具回放测试 ✅ 已就绪** —— `tests/fixture-ad.test.mjs`（linkedom 真 DOM，夹具缺失时自动跳过）。
   - **未做（有意）**：调度层与应用层**尚未接线** —— 因为「怎么隐藏才不留洞」取决于 B2 实测结论（§12-B2）。在 B2 定论前写隐藏逻辑 = 写注定要重写的代码。
-  - **2026-10-13 追加**：B7 已实测（⇒ L0 走 `MutationObserver` 持续校正）；B2 首测**因探针取错对象而作废**，探针已修（槽位锚定 + 加权 + 身份校验 + 2 条回归测试），**待用户重跑**。
-    重跑若确认「洞无法闭合」，M1 的应用层就按 §7.5.0「保高度、只降显著度」接线 —— 不再考虑任何「删除式」隐藏。
+  - **2026-10-13 追加**：B7 已实测（⇒ L0 走 `MutationObserver` 持续校正）；**B2 已实测定论「隐藏不可行」**
+    （四组实验一致：上移 0px / 空洞 287px / 无延迟重排 / `item-wrapper` 总高恒定不变）⇒ M0 侦察**全部闭环**。
+    M1 下一步只剩**接线**：调度层 + 应用层挂到「保高度 + 降显著度」这条唯一路径上（形式待 §7.5.0 拍板）。
 - **M2 低调模式**：L1 + L2 落地，首帧注入，可逆。
 - **M3 入口与面板**：隐藏热区 + TM 菜单 + 首次提示 + 配置持久化 + 导出导入 + 可解释性 + **探针注册表与诊断页「适配自检」**（§6.1 / §8.3）。
 
