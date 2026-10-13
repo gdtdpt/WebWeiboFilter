@@ -1245,6 +1245,8 @@
       return {
         sig: sigOf(node),
         rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
+        // 视口外 / 被裁掉的候选也照样记下来（右栏在窄窗口下会被裁掉一半，但它的存在仍然重要）
+        inViewport: r.right > 0 && r.left < window.innerWidth && r.bottom > 0 && r.top < window.innerHeight,
         position: st2.position, zIndex: st2.zIndex,
         bg: st2.backgroundColor, color: st2.color
       };
@@ -1269,7 +1271,10 @@
             .map(function (nd) { return nd.getAttribute('fill'); }).slice(0, 10)
           : []
       } : null,
-      top: [], left: [], right: [], bottom: []
+      top: [], left: [], right: [], bottom: [],
+      // 不管尺寸阈值，凡是落在信息流右缘之外/下缘之外的元素都记一笔 ——
+      // 用来回答「右栏到底存不存在」（微博在窗口不够宽时会自己把它收起来）
+      rightAny: [], bottomAny: []
     };
 
     var nodes = document.querySelectorAll('#app *');
@@ -1278,16 +1283,62 @@
       var nd = nodes[q];
       var rr = nd.getBoundingClientRect();
       if (rr.width < 40 || rr.height < 20) continue;
+      if (scRect && rr.left > scRect.right + 4) {
+        if (out.shell.rightAny.length < 8) out.shell.rightAny.push(factOf(nd));
+      } else if (scRect && rr.top > scRect.bottom + 4) {
+        if (out.shell.bottomAny.length < 8) out.shell.bottomAny.push(factOf(nd));
+      }
       if (rr.top < 90 && rr.width > 400) {
         if (out.shell.top.length < 8) out.shell.top.push(factOf(nd));
       } else if (rr.left < 260 && rr.width >= 100 && rr.width <= 340 && rr.height > 260) {
         if (out.shell.left.length < 8) out.shell.left.push(factOf(nd));
-      } else if (scRect && rr.left > scRect.right + 4 && rr.width > 100 && rr.height > 80) {
+      } else if (scRect && rr.left > scRect.right + 4 && rr.width > 60 && rr.height > 40) {
         if (out.shell.right.length < 8) out.shell.right.push(factOf(nd));
-      } else if (scRect && rr.top > scRect.bottom + 4 && rr.height > 80) {
+      } else if (scRect && rr.top > scRect.bottom + 4 && rr.height > 40) {
         if (out.shell.bottom.length < 8) out.shell.bottom.push(factOf(nd));
       }
     }
+
+    // ---- ④.5 主题（明 / 暗）与布局模式 ----------------------------------------------
+    // 为什么必须记下来：深色主题会用**字面量**在 `[data-theme="dark"]:root` 里重定义同一批
+    // 配色变量 ⇒ 任何「写死颜色」的规则都会在其中一套主题上翻车（实测教训，见 PROJECT.md §12-B9）。
+    var docEl = document.documentElement;
+    var TOKEN_NAMES = [
+      '--w-main', '--w-sub', '--w-contrast', '--w-dividing-line', '--w-card-border',
+      '--w-brand', '--w-special', '--w-alink', '--w-error',
+      '--frame-background', '--w-card-background', '--weibo-top-nav-borderTop',
+      '--main-width', '--simple-width', '--left-width', '--mid-width', '--right-width',
+    ];
+    var tokens = {};
+    TOKEN_NAMES.forEach(function (n) {
+      var v = '';
+      try { v = rootStyle ? String(rootStyle.getPropertyValue(n)).trim() : ''; } catch (e) { v = ''; }
+      if (v) tokens[n] = v;
+    });
+    function px(v) { var m = /^([\d.]+)px$/.exec(String(v || '')); return m ? +m[1] : null; }
+
+    out.theme = {
+      htmlAttrs: {
+        theme: docEl.getAttribute('data-theme'),
+        layout: docEl.getAttribute('data-layout'),
+        dpr: docEl.getAttribute('data-dpr'),
+      },
+      bodyClass: (document.body && document.body.getAttribute('class')) || '',
+      tokens: tokens
+    };
+
+    // 微博在窗口不够宽时会自己收起右栏（内容宽 < --main-width ⇒ 走 --simple-width 那套布局）。
+    // 判据是**算术**，不靠猜：`--simple-width` = 左栏 + 间隙 + 内容列，`--main-width` 再多一条右栏。
+    var contentW = (document.body && document.body.clientWidth) || window.innerWidth || 0;
+    out.layout = {
+      contentWidth: contentW,
+      mainWidth: px(tokens['--main-width']),
+      simpleWidth: px(tokens['--simple-width']),
+      rightWidth: px(tokens['--right-width']),
+      mode: (px(tokens['--main-width']) && contentW < px(tokens['--main-width']))
+        ? 'simple（微博自己收起了右栏）'
+        : 'full（含右栏）'
+    };
 
     // ---- ⑤ woo-icon 家族 + 时间锚点样本 ---------------------------------------------
     var iconClasses = {};
@@ -1320,7 +1371,7 @@
     }
     out.ourRuleHits = {
       avatar: count('img.woo-avatar-img'),
-      badge: count('img.woo-icon-vipimg, i.woo-icon-vipimg'),
+      badge: count('img.woo-icon-vipimg, i.woo-icon-vipimg, svg.woo-icon-in.woo-icon-skinSpe, svg.woo-icon-in.woo-icon--vblue'),
       media: count('[class*="woo-picture"]'),
       textContainers: count('.wbpro-feed-ogText, .wbpro-feed-reText, .wbpro-textcut'),
       textLinks: count('.wbpro-feed-ogText a, .wbpro-feed-reText a, .wbpro-textcut a'),
@@ -1328,10 +1379,16 @@
       logoSvg: count('a[href="/"][aria-label] svg')
     };
 
-    out.verdict = '自定义属性 ' + out.varRuleCount + ' 组规则 / :root 生效 ' + out.rootVarCount
+    out.verdict = '主题 ' + (out.theme.htmlAttrs.theme || '(未声明)')
+      + '（正文令牌 ' + (out.theme.tokens['--w-main'] || '?') + ' / 卡片底 '
+      + (out.theme.tokens['--w-card-background'] || '?') + '）；布局 ' + out.layout.mode
+      + '（内容宽 ' + out.layout.contentWidth + ' / main ' + out.layout.mainWidth
+      + ' / simple ' + out.layout.simpleWidth + '）'
+      + '；自定义属性 ' + out.varRuleCount + ' 组规则 / :root 生效 ' + out.rootVarCount
       + ' 个 / 暖色变量 ' + out.brandVars.length + ' 个 / 页面暖色元素 ' + out.warmElementCount
       + ' 处；外壳候选：顶栏 ' + out.shell.top.length + ' / 左栏 ' + out.shell.left.length
-      + ' / 右栏 ' + out.shell.right.length + ' / 底部 ' + out.shell.bottom.length
+      + ' / 右栏 ' + out.shell.right.length + '（信息流右侧任意元素 '
+      + out.shell.rightAny.length + '）/ 底部 ' + out.shell.bottom.length
       + '；时间锚点 ' + out.timeAnchors.total + ' 个（带绝对时间 title '
       + out.timeAnchors.absoluteTitle + ' 个）';
 

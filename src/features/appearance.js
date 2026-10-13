@@ -10,6 +10,7 @@
  */
 
 import { l1Css } from './l1.js';
+import { themeCss } from './theme.js';
 import { composeCss } from '../apply/style.js';
 
 /**
@@ -21,7 +22,12 @@ export function appearanceCss(cfg) {
   const parts = [];
 
   // §7.5.2：L2 蕴含 L1 —— 开 L2 时 L1 的规则必须一并生效，否则会出现"皮换了、噪没去"的怪状态
-  if (a.l2 || a.l1) parts.push(l1Css());
+  if (a.l2 || a.l1) {
+    // ⚠️ 顺序有意义：`themeCss()` 的 `:root` 覆盖放**后面**。
+    // 两者都是 `!important`，靠后的同优先级声明在冲突时胜出 —— 变量覆盖是地基，先让位给具体规则。
+    parts.push(themeCss());
+    parts.push(l1Css());
+  }
   // L2 的重排规则、以及第二批「改高度」的规则以后接在这里（同样首帧注入）
 
   return composeCss(...parts);

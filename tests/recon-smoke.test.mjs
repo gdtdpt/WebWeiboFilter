@@ -257,9 +257,21 @@ test('recon 冒烟：probeTheme() 在真实快照上跑得通并产出关键字�
   assert.ok(theme.shell, 'shell 段缺失');
   assert.ok(theme.shell.logo, `${file}: 顶栏 logo 没取到（a[href="/"][aria-label] 可能已失效）`);
   assert.equal(typeof theme.shell.logo.sig, 'string');
-  for (const key of ['top', 'left', 'right', 'bottom']) {
+  for (const key of ['top', 'left', 'right', 'bottom', 'rightAny', 'bottomAny']) {
     assert.ok(Array.isArray(theme.shell[key]), `shell.${key} 必须是数组`);
   }
+
+  // 主题段（2026-10-13 新增）：深色/浅色必须以 <html data-theme> 形式记录下来 ——
+  // 它是「颜色一律走主题令牌」这条纪律的事实依据（PROJECT.md §12-B9）
+  assert.ok(theme.theme, 'theme 段缺失');
+  assert.equal(theme.theme.htmlAttrs.theme, 'dark',
+    '夹具的 <html data-theme="dark"> 没被读到 —— 主题锚点解析可能坏了');
+  assert.equal(typeof theme.theme.tokens, 'object');
+
+  // 布局模式：靠 --main-width / --simple-width 的算术判定，不靠猜
+  assert.ok(theme.layout, 'layout 段缺失');
+  assert.equal(typeof theme.layout.mode, 'string');
+  assert.equal(typeof theme.layout.contentWidth, 'number');
 
   // 时间锚点：夹具里每张卡都有帖子直链
   assert.ok(theme.timeAnchors.total > 0, '一个时间锚点都没取到 —— 直链正则可能写错了');

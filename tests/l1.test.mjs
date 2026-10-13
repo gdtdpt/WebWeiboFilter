@@ -86,6 +86,22 @@ test('L1：锚点纪律 —— 选择器里不许出现构建哈希或 __yawf_*'
   }
 });
 
+test('L1：主题无关 —— 颜色只许走微博的中性令牌，不许写死明暗色', () => {
+  // 起因（2026-10-13 真机取样，PROJECT.md §12-B9）：用户的微博跑在**深色主题**下，
+  // 而这一批最初的 `color:#333` / `box-shadow:…#e6e6e6` 是按浅色写的 ⇒
+  // 深色下分别成了「深灰字压深灰底 = 正文消失」与「一条白线」。
+  // 这条守卫把"写死颜色"这个手脚钉死：只要出现十六进制色就变红。
+  const css = appearanceCss({ appearance: { l1: true } });
+  const hex = css.match(/#[0-9a-fA-F]{3,8}\b/g) || [];
+  assert.deepEqual(hex, [],
+    `外观 CSS 里出现了写死的十六进制颜色 ${hex.join(', ')} —— 请改用 var(--w-main) / var(--w-sub) / var(--w-dividing-line)`);
+
+  // 关键的两个令牌必须真的用上（防止有人把它们顺手换掉）
+  assert.match(css, /color:var\(--w-main\)/, '正文没用主题令牌 --w-main');
+  assert.match(css, /color:var\(--w-sub\)/, '链接没用主题令牌 --w-sub');
+  assert.match(css, /box-shadow:0 1px 0 var\(--w-dividing-line\)/, '分割线没用主题令牌 --w-dividing-line');
+});
+
 test('L1：关键规则确实覆盖了预期目标（防止"规则还在但选择器被改错"）', () => {
   const css = l1Css();
   assert.match(css, /woo-avatar-img/, '头像灰度规则丢了');
