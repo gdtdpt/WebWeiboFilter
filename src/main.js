@@ -16,9 +16,10 @@
  *   M3 面板  — 入口热区 / 面板 / 配置导入导出 / 诊断页（探针注册表已在适配层就位）
  */
 
-import { loadConfig } from './config.js';
+import { loadConfig, saveConfig } from './config.js';
 import { applyL0 } from './features/l0.js';
-import { ensureStyle } from './apply/style.js';
+import { appearanceCss } from './features/appearance.js';
+import { ensureStyle, composeCss, FILTER_CSS } from './apply/style.js';
 import { createScheduler } from './scheduler.js';
 
 const PREFIX = '[SpecBase]';
@@ -36,6 +37,11 @@ let config = null;
 let scheduler = null;
 let appearanceApplied = false;
 let filterStarted = false;
+
+/** 本次要注入的完整样式（过滤规则永远在，档位规则按配置，见 `features/appearance.js`） */
+function fullCss(cfg) {
+  return composeCss(FILTER_CSS, appearanceCss(cfg));
+}
 
 /** 读一次配置并缓存（GM_* 不可用时退回默认值） */
 function readConfig() {
@@ -92,7 +98,8 @@ function startFilter() {
  * `document-start` 时 `documentElement` 可能还不存在 ⇒ 样式注入推后到 DOMContentLoaded 再补一次。
  */
 function bootFirstFrame() {
-  if (ensureStyle(document)) log('压制样式已注入（首帧）');
+  const cfg = readConfig();
+  if (ensureStyle(document, fullCss(cfg))) log('样式已注入（首帧：过滤规则 + 外观档）');
   applyAppearance();
 }
 
@@ -100,11 +107,11 @@ bootFirstFrame();
 
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
-    ensureStyle(document);   // 首帧没插进去时补一次
+    ensureStyle(document, fullCss(readConfig()));   // 首帧没插进去时补一次
     startFilter();
   }, { once: true });
 } else {
-  ensureStyle(document);
+  ensureStyle(document, fullCss(readConfig()));
   startFilter();
 }
 
@@ -157,6 +164,22 @@ if (page) {
         startFilter();
         return Boolean(scheduler && scheduler.isRunning());
       },
+      /**
+       * 开关外观档位（写进 TM 存储）。
+       * ⚠️ **改完必须刷新页面**（§7.4 约束：切换 L0/L1/L2 后自动刷新）——
+       * 样式虽在首帧注入，但当前页面里微博已按旧样式测量过虚拟列表高度。
+       * 例：`__spb.appearance({ l1: true })` 然后刷新。
+       */
+      appearance: (patch) => {
+        const cfg = readConfig();
+        if (!cfg || !patch || typeof patch !== 'object') return null;
+        const next = Object.assign({}, cfg, { appearance: Object.assign({}, cfg.appearance, patch) });
+        const saved = saveConfig(next);
+        config = next;               // 本轮会话的把手立刻读到新值（页面样式需刷新才对）
+        return { saved, appearance: next.appearance, needReload: true };
+      },
+      /** 当前实际注入的完整样式（排查"规则到底有没有生效"用） */
+      css: () => fullCss(readConfig()),
     };
   } catch (e) {
     log('调试把手挂载失败（不影响过滤）', e);

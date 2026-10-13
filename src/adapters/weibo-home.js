@@ -44,6 +44,17 @@ export const SEL_RE_TEXT = ['.wbpro-feed-reText'];
 /** 头像（§7.5.5 三个变体的落点） */
 export const SEL_AVATAR = ['img.woo-avatar-img'];
 
+/** 正文截断容器（"展开全文"的宿主，正文链接也可能落在它里面） */
+export const SEL_TEXTCUT = ['.wbpro-textcut'];
+
+/**
+ * 媒体容器（单图 / 九宫格共用，实测 `woo-picture-main`）。
+ * L1 的灰度规则打在这上面（§7.5 B 组）。
+ * ⚠️ 用 `[class*=]` 部分匹配而不是完整类名：`woo-picture-main` 之外还有
+ * `woo-picture-*` 家族成员，且部分匹配对新增变体更宽容（`woo-` 是稳定前缀，不是构建哈希）。
+ */
+export const SEL_MEDIA = ['[class*="woo-picture"]'];
+
 /** 答案选择：返回第一个命中的元素 */
 function pick(root, selectors) {
   for (const s of selectors) {
@@ -310,15 +321,32 @@ export const PROBES = [
     expect: 'variable',   // 实测：间歇投放，有时为空 —— 为空**不代表失效**
     failMeans: '⚠️ 本探针为空属正常（实测间歇投放）。只有当页面上肉眼可见广告却命中 0 时才算失效',
   },
+  {
+    id: 'media',
+    desc: '媒体容器 [class*=woo-picture]（L1 灰度落点）',
+    selector: SEL_MEDIA.join(' / '),
+    expect: 'optional',   // 纯文字微博本就没有图 ⇒ 为空不算失效
+    failMeans: '媒体锚点失效 ⇒ L1 的图片灰度不生效（不影响过滤）',
+  },
+  {
+    id: 'text-link',
+    desc: '正文内链接（L1 去蓝落点：话题 / @ / 外链）',
+    selector: `${SEL_OG_TEXT[0]} a / ${SEL_TEXTCUT[0]} a`,
+    expect: 'optional',   // 没有链接的微博很常见
+    failMeans: '正文链接锚点失效 ⇒ L1 的话题/@/外链去蓝不生效（不影响过滤）',
+  },
 ];
 
 /**
  * 执行探针（只读，§6.1）。M3 的诊断页会调用它。
+ *
  * @param {Document} doc
+ * @param {Array} [list] 探针表；缺省用本层（信息流 / 容器层）的 `PROBES`。
+ *   M3 诊断页应把各层的表拼起来跑：`runProbes(doc, [...PROBES, ...PROBES_SHELL])`。
  * @returns {Array<{id:string,desc:string,count:number,status:'ok'|'warn'|'fail',failMeans:string}>}
  */
-export function runProbes(doc) {
-  return PROBES.map((p) => {
+export function runProbes(doc, list) {
+  return (list || PROBES).map((p) => {
     let count = 0;
     try {
       count = doc.querySelectorAll(p.selector.split(' / ')[0]).length;

@@ -239,3 +239,41 @@ test('recon 冒烟：即使喂进「图片格网格」当容器，`_collectItems
   // 且绝不能把图片格本身当成项
   assert.equal(items.includes(gridCell), false, `${file}: 图片格被当成了信息流项`);
 });
+
+test('recon 冒烟：probeTheme() 在真实快照上跑得通并产出关键字段（M2 取样用）', { skip }, () => {
+  const file = fixtures.find((f) => f.includes('1440')) || fixtures[0];
+  const html = readFileSync(join(FIXTURE_DIR, file), 'utf8');
+  const { recon, downloads } = bootRecon(html);
+
+  const theme = recon.probeTheme();
+
+  assert.equal(typeof theme.varRuleCount, 'number');
+  assert.equal(typeof theme.rootVarCount, 'number');
+  assert.ok(Array.isArray(theme.brandVars), 'brandVars 必须是数组（哪怕为空）');
+  assert.ok(Array.isArray(theme.warmElements));
+  assert.ok(Array.isArray(theme.varRules));
+
+  // 外壳：logo 是全站的，必然存在；取不到就说明锚点写错了
+  assert.ok(theme.shell, 'shell 段缺失');
+  assert.ok(theme.shell.logo, `${file}: 顶栏 logo 没取到（a[href="/"][aria-label] 可能已失效）`);
+  assert.equal(typeof theme.shell.logo.sig, 'string');
+  for (const key of ['top', 'left', 'right', 'bottom']) {
+    assert.ok(Array.isArray(theme.shell[key]), `shell.${key} 必须是数组`);
+  }
+
+  // 时间锚点：夹具里每张卡都有帖子直链
+  assert.ok(theme.timeAnchors.total > 0, '一个时间锚点都没取到 —— 直链正则可能写错了');
+  assert.ok(theme.timeAnchors.absoluteTitle > 0, '没有任何锚点带「YYYY-MM-DD HH:mm」格式的 title');
+
+  // 我方规则命中数：必须真的数到卡片（否则说明选择器与前缀对不上）
+  assert.ok(theme.ourRuleHits.cards > 0, 'ourRuleHits.cards 不该为 0');
+  assert.ok(theme.ourRuleHits.avatar > 0, 'ourRuleHits.avatar 不该为 0');
+  assert.equal(_countIconFamily(theme.wooIconFamily) > 0, true, 'woo-icon 家族一个都没扫到');
+
+  assert.ok(downloads.some((d) => d.name.indexOf('probe-theme-') === 0),
+    'probeTheme() 跑完应自动下载 JSON');
+});
+
+function _countIconFamily(family) {
+  return Object.keys(family || {}).length;
+}

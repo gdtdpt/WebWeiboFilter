@@ -1,0 +1,76 @@
+/**
+ * L1「素净」外观档（PROJECT.md §7.5 的第一批 —— **零高度影响子集**）
+ *
+ * ── 为什么只做「零高度影响」的那些项 ────────────────────────────────
+ * B2 已实测（§12-B2）：虚拟列表的槽位位置来自**预计算的 `translateY` 缓存**，
+ * `item-wrapper` 的 scrollHeight / clientHeight 全程恒定 ⇒ **微博从不重测槽位尺寸**。
+ * ⇒ 任何**改变卡片高度**的改动（媒体缩略化、隐藏统计行 / 互动按钮行、改字号行距）
+ *   都可能在时间线上留下**洞**或累积漂移 —— 与「过滤卡不能删除式隐藏」同一个根因。
+ * 所以这一批**全是"改颜色 / 改装饰 / 改滤镜，不改尺寸"的规则**：
+ * 先把「改样式不会引起洞或漂移」这个前提在真机上验证掉，再动改高度的项。
+ *
+ * ── 锚点纪律（§6 / §12-B4）────────────────────────────────────────
+ * 只用稳定锚点：`woo-*` / `wbpro-*` / `vue-*` / `vjs-*` / `#scroller` / `#homeWrap` / `#app`。
+ * ⛔ 禁止构建哈希（`_logo_18dhr_77`、`_side_1ubn9_37`）—— 微博一改版全部失效。
+ * ⛔ 禁止 `__yawf_*` —— 那是外部脚本运行时注入的，干净页面里根本不存在。
+ * 选择器常量一律从适配层 import（单一来源，避免"CSS 改了探针没改"的漂移）。
+ *
+ * ── 为什么到处 `!important` ─────────────────────────────────────
+ * 这是一套「覆盖微博自有主题」的样式，而微博编译后的选择器优先级不低。
+ * 因此**一律 `!important`**，但把选择器压得很窄（宁可少覆盖，也不误伤）。
+ *
+ * ⚠️ **已知未做**（都缺确定锚点或属改高度，见 §7.5 与 PROJECT.md §13-M2）：
+ *    全局去橙红（要真机确认 `--w-brand` 一类主题变量的定义位置）、
+ *    隐藏右栏 / 底部推荐（只能靠几何判定 ⇒ 等 `probeTheme()` 取样）、
+ *    时间改绝对格式（CSS 侧无稳定锚点，需先由适配层打标）、
+ *    媒体缩略化 / 隐藏统计行 / 隐藏互动按钮行（**改高度** ⇒ 第二批，需先验洞）。
+ */
+
+import {
+  SEL_CARD, SEL_AVATAR, SEL_OG_TEXT, SEL_RE_TEXT, SEL_TEXTCUT, SEL_MEDIA,
+} from '../adapters/weibo-home.js';
+import { SEL_BADGE, SEL_LOGO } from '../adapters/weibo-shell.js';
+
+/** 正文容器族（原创正文 / 转发原文 / 截断容器） */
+const TEXT_SEL = [SEL_OG_TEXT[0], SEL_RE_TEXT[0], SEL_TEXTCUT[0]].join(',');
+
+/** 正文内的链接（话题 / `@` / 外链） */
+const TEXT_LINK_SEL = [SEL_OG_TEXT[0], SEL_RE_TEXT[0], SEL_TEXTCUT[0]]
+  .map((s) => `${s} a`).join(',');
+
+function rule(selector, body) {
+  return selector + '{' + body + '}';
+}
+
+/**
+ * 生成 L1 的 CSS 文本。逐组说明「为什么它不改高度」。
+ *
+ * @returns {string}
+ */
+export function l1Css() {
+  return [
+    // ① 身份信号：头像灰度（**保持原尺寸**）· 认证角标隐藏（行内小图标，不占行高）
+    rule(SEL_AVATAR.join(','), 'filter:grayscale(1) !important;opacity:.7 !important'),
+    rule(SEL_BADGE.join(','), 'display:none !important'),
+
+    // ② 媒体：灰度 + 降饱和（**不改尺寸**；缩略化属第二批）
+    rule(`${SEL_MEDIA[0]} img`, 'filter:grayscale(1) saturate(.55) !important;opacity:.85 !important'),
+
+    // ③ 正文：文字色转中性；链接 / 话题 / @ 去蓝、去下划线、去话题底色（颜色不占布局 ⇒ 零高度影响）
+    rule(TEXT_SEL, 'color:#333 !important'),
+    rule(TEXT_LINK_SEL, 'color:#6b6b6b !important;text-decoration:none !important;background:none !important'),
+
+    // ④ 卡片：去阴影、去圆角，改用一条 1px 的**内阴影**做分割线
+    //    ⚠️ 用 box-shadow 而不是 border-bottom —— border 会占 1px 布局 ⇒ 改高度。
+    rule(SEL_CARD[0], 'border-radius:0 !important;box-shadow:0 1px 0 #e6e6e6 !important'),
+    // 卡片外壳（article 及其下一层）通常自带圆角与投影，一并压掉；
+    // 只走两层，避免把视频控件等深层元素的样式一起杀掉。
+    rule(`${SEL_CARD[0]} > *,${SEL_CARD[0]} > * > *`, 'border-radius:0 !important;box-shadow:none !important'),
+
+    // ⑤ 外壳：logo 灰化（SVG 内的 fill 是硬编码的微博红，只能用滤镜压）
+    rule(`${SEL_LOGO[0]} svg`, 'filter:grayscale(1) !important;opacity:.5 !important'),
+  ].join('\n') + '\n';
+}
+
+/** 规则条数（探针 / 诊断页断言用；改 `l1Css()` 时记得同步） */
+export const L1_RULE_COUNT = 8;

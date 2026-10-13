@@ -16,7 +16,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { PROBES, runProbes } from '../src/adapters/weibo-home.js';
+import { PROBES_SHELL } from '../src/adapters/weibo-shell.js';
 import { FIXTURE_DIR, fixtures } from './_fixture-expect.mjs';
+
+/** 诊断页（M3）需要把各层的探针表合并起来跑 —— 这里也按合并后的口径测 */
+const ALL_PROBES = [...PROBES, ...PROBES_SHELL];
 
 let parseHTML = null;
 try {
@@ -32,10 +36,10 @@ const skip = !fixtures.length
 const ALLOWED_EXPECT = ['exists', 'optional', 'variable'];
 
 test('探针注册表：每条都具备 id / desc / selector / expect / failMeans，且 id 唯一', () => {
-  assert.ok(PROBES.length > 0, '探针注册表不能为空');
+  assert.ok(ALL_PROBES.length > 0, '探针注册表不能为空');
 
   const ids = new Set();
-  for (const p of PROBES) {
+  for (const p of ALL_PROBES) {
     assert.equal(typeof p.id, 'string', `${JSON.stringify(p)} 缺 id`);
     assert.ok(p.id.length > 0);
     assert.equal(typeof p.desc, 'string', `${p.id} 缺 desc`);
@@ -56,9 +60,9 @@ test('探针注册表：每条都具备 id / desc / selector / expect / failMean
 for (const file of fixtures) {
   test(`探针自检：${file} —— 「应当存在」的选择器必须全部命中`, { skip }, () => {
     const { document } = parseHTML(readFileSync(join(FIXTURE_DIR, file), 'utf8'));
-    const results = runProbes(document);
+    const results = runProbes(document, ALL_PROBES);
 
-    assert.equal(results.length, PROBES.length);
+    assert.equal(results.length, ALL_PROBES.length);
 
     for (const r of results) {
       assert.ok(['ok', 'warn', 'fail'].includes(r.status), `${r.id} 状态非法：${r.status}`);
@@ -66,7 +70,7 @@ for (const file of fixtures) {
     }
 
     // 首页时间线上，这些结构必然存在 —— 它们失效就意味着适配层被改版打穿了
-    const required = ['scroller', 'item-view', 'card', 'og-text', 'avatar', 'home-wrap'];
+    const required = ['scroller', 'item-view', 'card', 'og-text', 'avatar', 'home-wrap', 'logo'];
     for (const id of required) {
       const r = results.find((x) => x.id === id);
       assert.equal(r.status, 'ok',
@@ -81,17 +85,29 @@ for (const file of fixtures) {
 
 test('探针自检：空页面上「应当存在」的选择器必须报 fail（否则探针形同虚设）', () => {
   const fake = { querySelectorAll: () => [] };
-  const results = runProbes(fake);
+  const results = runProbes(fake, ALL_PROBES);
 
-  for (const id of ['scroller', 'item-view', 'card', 'og-text', 'avatar']) {
+  for (const id of ['scroller', 'item-view', 'card', 'og-text', 'avatar', 'logo']) {
     const r = results.find((x) => x.id === id);
     assert.equal(r.status, 'fail', `${id} 在空页面上应报 fail，实际 ${r.status}`);
   }
   // optional 的只降级为 warn
-  for (const id of ['re-text', 'tag-slot', 'follow-btn', 'home-wrap']) {
+  for (const id of ['re-text', 'tag-slot', 'follow-btn', 'home-wrap', 'media', 'text-link', 'icon-badge']) {
     const r = results.find((x) => x.id === id);
     assert.equal(r.status, 'warn', `${id} 是 optional，空页面上应为 warn，实际 ${r.status}`);
   }
   // variable 的永远是 ok（为空不代表失效）
   assert.equal(results.find((x) => x.id === 'ad-cdn').status, 'ok');
+});
+
+test('runProbes：可传入自定义探针表（M3 诊断页要合并各层）', () => {
+  const fake = { querySelectorAll: () => [] };
+  const two = [
+    { id: 'a', desc: 'd', selector: 'div', expect: 'exists', failMeans: 'm' },
+    { id: 'b', desc: 'd', selector: 'span', expect: 'optional', failMeans: 'm' },
+  ];
+  const r = runProbes(fake, two);
+  assert.equal(r.length, 2);
+  assert.equal(r[0].status, 'fail');
+  assert.equal(r[1].status, 'warn');
 });

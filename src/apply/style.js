@@ -28,31 +28,51 @@ export const MARK_PAGE_AD = 'ad';
 export const STYLE_ID = 'spb-style';
 
 /**
- * 这套选择器与服务端无关 —— 只依赖我们自己写的属性，微博改版也不会让它失效。
+ * 过滤用的规则（与外观档位无关，**永远注入**）。
+ * 这套选择器只依赖我们自己写的属性，微博改版也不会让它失效。
  */
-export const CSS = [
+export const FILTER_CSS = [
   `[${MARK_ATTR}="${MARK_HIDDEN}"]{visibility:hidden !important}`,
   `[${MARK_ATTR}="${MARK_PAGE_AD}"]{display:none !important}`,
 ].join('\n') + '\n';
+
+/** 旧名（= `FILTER_CSS`），保留给既有调用与测试 */
+export const CSS = FILTER_CSS;
+
+/** 组装多段 CSS（过滤 + 外观档；空段自动跳过） */
+export function composeCss(...parts) {
+  return parts.filter((p) => Boolean(p)).join('\n');
+}
 
 /**
  * 幂等地注入样式表。`document-start` 时 `<head>` 可能还不存在，
  * 所以退回挂到 `documentElement`（同样生效）。
  *
+ * ⚠️ 内容不一致时会**更新**已有样式表（切档位后重新注入用得上）；
+ *    内容一致则不动、返回 false（保证幂等）。
+ *
  * @param {Document} doc
- * @returns {boolean} 本次是否真的插入了
+ * @param {string} [cssText] 缺省用过滤规则（兼容既有调用）
+ * @returns {boolean} 本次是否真的改动/插入了
  */
-export function ensureStyle(doc) {
+export function ensureStyle(doc, cssText) {
   const d = doc || (typeof document !== 'undefined' ? document : null);
   if (!d || !d.createElement) return false;
-  if (d.getElementById(STYLE_ID)) return false;
+
+  const text = cssText || FILTER_CSS;
+  const existing = d.getElementById ? d.getElementById(STYLE_ID) : null;
+  if (existing) {
+    if (existing.textContent === text) return false;
+    existing.textContent = text;
+    return true;
+  }
 
   const root = d.head || d.documentElement;
   if (!root || !root.appendChild) return false;
 
   const el = d.createElement('style');
   el.id = STYLE_ID;
-  el.textContent = CSS;
+  el.textContent = text;
   root.appendChild(el);
   return true;
 }

@@ -27,7 +27,8 @@
  *
  * 结果怎么拿走（不用从 Console 复制对象）
  * ------------------------------------
- *   · `testHeight()` / `watchTitle(20)` —— 跑完**自动下载** `probe-height-*.json` / `probe-title-*.json`
+ *   · `testHeight()` / `watchTitle(20)` / `probeTheme()` —— 跑完**自动下载** JSON
+ *     （`probe-height-*.json` / `probe-title-*.json` / `probe-theme-*.json`）
  *   · `SpecBaseRecon.exportResults()` —— 把跑过的**所有**探针结果汇总成一份 `probe-all-*.json` 下载
  *   · `SpecBaseRecon.copyResult()` —— 兜底：把结果 JSON 塞进剪贴板（下载被浏览器拦时用）
  *
@@ -1125,6 +1126,220 @@
     return t;
   }
 
+  // ---- 主题与外壳取样（M2 用）-----------------------------------------------------------------
+
+  /**
+   * 一次性把「L1/L2 剩下的项该打到哪儿」的真机数据取回来，**跑完自动下载 JSON**。
+   *
+   * 为什么需要它：外壳（顶栏 / 侧栏 / 右栏 / logo）的类名**全是构建哈希**（`_side_1ubn9_37`），
+   * CSS 侧没有稳定锚点；而「全局去橙红」得先知道微博把品牌色定义成哪个自定义属性、
+   * 定义在哪个选择器上（`:root` 还是某个主题类）。这两类都只能**在真机上取样**，不能猜
+   * （§6.1：没有探针的适配规则不许进代码）。
+   *
+   * 取样内容：
+   *   ① 样式表里定义的自定义属性（`--w-*` / `--weibo-*`）及其定义选择器
+   *   ② `:root` 上实际生效的变量值 + **疑似品牌暖色**（橙 / 红）的变量清单
+   *   ③ 页面元素上的暖色分布 —— 「去橙红」的着力点清单（按出现次数排序）
+   *   ④ 外壳几何：logo / 顶栏 / 左侧栏 / 右侧栏 / 底部推荐 的稳定签名与矩形
+   *   ⑤ `woo-icon-*` 家族（补齐认证 / 会员角标的锚点）
+   *   ⑥ 时间锚点样本（验证「相对时间 → 绝对短格式」的选择器策略）
+   *   ⑦ 我方 L1 规则在当前页面上的**命中数**（确认规则真的打到了东西）
+   *
+   * ⚠️ 会遍历数千个元素做 getComputedStyle ⇒ 页面会卡半秒左右，属正常。
+   * @returns {Object}
+   */
+  function probeTheme() {
+    var out = {};
+
+    // ---- ① 自定义属性：定义位置 ---------------------------------------------------
+    var varRules = [];
+    function walkRules(list, origin, depth) {
+      for (var i = 0; i < list.length; i++) {
+        var r = list[i];
+        if (r.cssRules && !r.selectorText) { walkRules(r.cssRules, origin, depth + 1); continue; }
+        if (!r.style || !r.selectorText) continue;
+        var vars = {}, n = 0;
+        for (var j = 0; j < r.style.length; j++) {
+          var p = r.style[j];
+          if (p.indexOf('--') === 0) { vars[p] = String(r.style.getPropertyValue(p)).trim(); n++; }
+        }
+        if (n) varRules.push({ origin: origin, selector: r.selectorText, vars: vars });
+      }
+    }
+    var sheets = document.styleSheets || [];
+    for (var s = 0; s < sheets.length; s++) {
+      var rules = null;
+      try { rules = sheets[s].cssRules; } catch (e) { rules = null; }   // 跨域样式表会抛 SecurityError
+      if (rules) walkRules(rules, sheets[s].href || '(inline)', 0);
+    }
+    out.varRuleCount = varRules.length;
+    out.varRules = varRules.slice(0, 400);
+
+    // ---- ② 变量实际值 + 暖色识别 --------------------------------------------------
+    function rgbOf(v) {
+      var t = String(v || '').trim();
+      var m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(t);
+      if (m) {
+        var h = m[1];
+        if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+        return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+      }
+      m = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(t);
+      return m ? [+m[1], +m[2], +m[3]] : null;
+    }
+
+    /** 暖色（红 / 橙 / 黄）判定：红分量最大且与最小分量拉开差距；灰阶返回 null */
+    function warmth(v) {
+      var c = rgbOf(v);
+      if (!c) return null;
+      var max = Math.max(c[0], c[1], c[2]), min = Math.min(c[0], c[1], c[2]);
+      if (c[0] !== max || max - min < 40) return null;
+      return { rgb: c, spread: max - min };
+    }
+
+    var names = {};
+    for (var k = 0; k < varRules.length; k++) {
+      for (var key in varRules[k].vars) names[key] = 1;
+    }
+    var rootStyle = null;
+    try { rootStyle = window.getComputedStyle(document.documentElement); } catch (e) { rootStyle = null; }
+
+    var rootVars = {}, brandVars = [];
+    Object.keys(names).forEach(function (name) {
+      var v = '';
+      try { v = rootStyle ? String(rootStyle.getPropertyValue(name)).trim() : ''; } catch (e) { v = ''; }
+      if (!v) return;
+      rootVars[name] = v;
+      if (warmth(v)) brandVars.push({ name: name, value: v });
+    });
+    out.rootVarCount = Object.keys(rootVars).length;
+    out.rootVars = rootVars;
+    out.brandVars = brandVars;
+
+    // ---- ③ 页面上的暖色分布（去橙红的着力点）---------------------------------------
+    var warmEls = {};
+    var all = document.querySelectorAll('#app *');
+    var limit = Math.min(all.length, 4000);
+    var COLOR_PROPS = ['color', 'background-color', 'border-top-color', 'border-bottom-color', 'fill'];
+    for (var i = 0; i < limit; i++) {
+      var el = all[i], st = null;
+      try { st = window.getComputedStyle(el); } catch (e) { continue; }
+      for (var pi = 0; pi < COLOR_PROPS.length; pi++) {
+        var val = st.getPropertyValue(COLOR_PROPS[pi]);
+        if (!warmth(val)) continue;
+        var key2 = sigOf(el) + ' | ' + COLOR_PROPS[pi] + ': ' + val;
+        warmEls[key2] = (warmEls[key2] || 0) + 1;
+      }
+    }
+    out.warmElementCount = Object.keys(warmEls).length;
+    out.warmElements = Object.keys(warmEls)
+      .sort(function (a, b) { return warmEls[b] - warmEls[a]; })
+      .slice(0, 40)
+      .map(function (key3) { return { signature: key3, count: warmEls[key3] }; });
+
+    // ---- ④ 外壳几何 ---------------------------------------------------------------
+    function factOf(node) {
+      if (!node) return null;
+      var r = node.getBoundingClientRect();
+      var st2 = window.getComputedStyle(node);
+      return {
+        sig: sigOf(node),
+        rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
+        position: st2.position, zIndex: st2.zIndex,
+        bg: st2.backgroundColor, color: st2.color
+      };
+    }
+
+    var scroller = document.querySelector('#scroller');
+    var scRect = scroller ? scroller.getBoundingClientRect() : null;
+    var logo = document.querySelector('a[href="/"][aria-label]');
+    var logoSvg = logo ? logo.querySelector('svg') : null;
+
+    out.shell = {
+      viewport: { w: window.innerWidth, h: window.innerHeight },
+      scrollerRect: scRect ? {
+        x: Math.round(scRect.left), y: Math.round(scRect.top),
+        w: Math.round(scRect.width), h: Math.round(scRect.height)
+      } : null,
+      logo: logo ? {
+        sig: sigOf(logo),
+        ariaLabel: logo.getAttribute('aria-label'),
+        svgFills: logoSvg
+          ? Array.prototype.slice.call(logoSvg.querySelectorAll('[fill]'))
+            .map(function (nd) { return nd.getAttribute('fill'); }).slice(0, 10)
+          : []
+      } : null,
+      top: [], left: [], right: [], bottom: []
+    };
+
+    var nodes = document.querySelectorAll('#app *');
+    var nlimit = Math.min(nodes.length, 3000);
+    for (var q = 0; q < nlimit; q++) {
+      var nd = nodes[q];
+      var rr = nd.getBoundingClientRect();
+      if (rr.width < 40 || rr.height < 20) continue;
+      if (rr.top < 90 && rr.width > 400) {
+        if (out.shell.top.length < 8) out.shell.top.push(factOf(nd));
+      } else if (rr.left < 260 && rr.width >= 100 && rr.width <= 340 && rr.height > 260) {
+        if (out.shell.left.length < 8) out.shell.left.push(factOf(nd));
+      } else if (scRect && rr.left > scRect.right + 4 && rr.width > 100 && rr.height > 80) {
+        if (out.shell.right.length < 8) out.shell.right.push(factOf(nd));
+      } else if (scRect && rr.top > scRect.bottom + 4 && rr.height > 80) {
+        if (out.shell.bottom.length < 8) out.shell.bottom.push(factOf(nd));
+      }
+    }
+
+    // ---- ⑤ woo-icon 家族 + 时间锚点样本 ---------------------------------------------
+    var iconClasses = {};
+    Array.prototype.slice.call(document.querySelectorAll('[class*="woo-icon"]')).forEach(function (node) {
+      classes(node).forEach(function (c) {
+        if (c.indexOf('woo-icon') === 0) iconClasses[c] = (iconClasses[c] || 0) + 1;
+      });
+    });
+    out.wooIconFamily = iconClasses;
+
+    var timeAnchors = { total: 0, withTitle: 0, absoluteTitle: 0, samples: [] };
+    Array.prototype.slice.call(document.querySelectorAll('a[href]')).forEach(function (a) {
+      var href = a.getAttribute('href') || '';
+      if (!/^https?:\/\/weibo\.com\/\d+\//.test(href)) return;   // 帖子直链；昵称链接是 /u/<uid>，不会命中
+      timeAnchors.total++;
+      var t = a.getAttribute('title');
+      if (t) {
+        timeAnchors.withTitle++;
+        if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(t)) timeAnchors.absoluteTitle++;
+      }
+      if (timeAnchors.samples.length < 6) {
+        timeAnchors.samples.push({ text: (a.textContent || '').trim().slice(0, 20), title: t || null, href: href });
+      }
+    });
+    out.timeAnchors = timeAnchors;
+
+    // ---- ⑥ 我方 L1 规则的命中数 -----------------------------------------------------
+    function count(sel) {
+      try { return document.querySelectorAll(sel).length; } catch (e) { return -1; }
+    }
+    out.ourRuleHits = {
+      avatar: count('img.woo-avatar-img'),
+      badge: count('img.woo-icon-vipimg, i.woo-icon-vipimg'),
+      media: count('[class*="woo-picture"]'),
+      textContainers: count('.wbpro-feed-ogText, .wbpro-feed-reText, .wbpro-textcut'),
+      textLinks: count('.wbpro-feed-ogText a, .wbpro-feed-reText a, .wbpro-textcut a'),
+      cards: count('.wbpro-scroller-item'),
+      logoSvg: count('a[href="/"][aria-label] svg')
+    };
+
+    out.verdict = '自定义属性 ' + out.varRuleCount + ' 组规则 / :root 生效 ' + out.rootVarCount
+      + ' 个 / 暖色变量 ' + out.brandVars.length + ' 个 / 页面暖色元素 ' + out.warmElementCount
+      + ' 处；外壳候选：顶栏 ' + out.shell.top.length + ' / 左栏 ' + out.shell.left.length
+      + ' / 右栏 ' + out.shell.right.length + ' / 底部 ' + out.shell.bottom.length
+      + '；时间锚点 ' + out.timeAnchors.total + ' 个（带绝对时间 title '
+      + out.timeAnchors.absoluteTitle + ' 个）';
+
+    console.log('%c[SpecBase Recon] probeTheme 结果', 'background:#2f3e34;color:#fff;padding:1px 4px', out);
+    console.log('[SpecBase Recon] ' + out.verdict);
+    return exportResult('theme', out);
+  }
+
   window.SpecBaseRecon = {
     version: VERSION,
     report: report,
@@ -1132,6 +1347,7 @@
     watchTitle: watchTitle,
     huntAds: huntAds,
     probeAds: probeAds,
+    probeTheme: probeTheme,
     findContainers: findContainers,
     // 内部钩子（供测试 / 排查用，不是面向用户的 API）—— 守「项集合必须是信息流槽位」这条线
     _feedItems: feedItems,
