@@ -13,21 +13,14 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { classifyFeedItem, classifyPageAdSlot } from '../src/core/ad-detect.js';
 import { SEL_CARD, readCardSignals, findPageAdSlots } from '../src/adapters/weibo-home.js';
-
-const HERE = dirname(fileURLToPath(import.meta.url));
-const FIXTURE_DIR = join(HERE, 'fixtures');
+import { FIXTURE_DIR, fixtures, EXPECT, expectFor } from './_fixture-expect.mjs';
 
 // ── 环境探测：夹具 + DOM 实现 ────────────────────────────────────────────
-const fixtures = existsSync(FIXTURE_DIR)
-  ? readdirSync(FIXTURE_DIR).filter((f) => /^snapshot-.*\.html$/.test(f)).sort()
-  : [];
-
 let parseHTML = null;
 try {
   ({ parseHTML } = await import('linkedom'));
@@ -38,29 +31,6 @@ try {
 const skip = !fixtures.length
   ? 'fixtures/ 为空（.gitignore 里的私有数据）—— 跳过夹具回放'
   : (!parseHTML ? 'linkedom 未安装 —— 运行 npm install 后重试' : false);
-
-/**
- * 各份实测夹具的**期望结果**（由 M0 侦察逐卡人工核对得出，见 PROJECT.md §12-B）。
- * key = 文件名子串；未列出的夹具只做「不崩」冒烟。
- */
-const EXPECT = [
-  { key: '1440',  desc: '首页时间线（首轮，无广告）',       feedAds: 0, bannerAds: 0 },
-  {
-    // 1449 有 **两** 张广告卡：
-    //   ① 饼干姐 / Rmd6xreW1 —— 广告埋点在**转发原文**的视频链接上
-    //      （`mark_id=999_reallog_mark_ad:999|WeiboADNatural`）
-    //   ② OiiOii_AI / R7RCuh927 —— 商业投放埋点 + 「关注」按钮
-    key: '1449', desc: '首页时间线（饼干姐 + OiiOii 两张推广卡）', feedAds: 2, bannerAds: 1,
-  },
-  { key: '1505 (1)', desc: '首页时间线（叫我老伯/京东 荐读卡）', feedAds: 1, bannerAds: 1 },
-  { key: '1505',  desc: '首页时间线（干净）',               feedAds: 0, bannerAds: 1 },
-];
-
-/** 按 key 从长到短匹配，避免 '1505' 抢走 '1505 (1)' */
-function expectFor(file) {
-  const sorted = [...EXPECT].sort((a, b) => b.key.length - a.key.length);
-  return sorted.find((e) => file.includes(e.key)) || null;
-}
 
 function loadDoc(file) {
   const html = readFileSync(join(FIXTURE_DIR, file), 'utf8');
@@ -103,17 +73,23 @@ for (const file of fixtures) {
     assert.equal(noId.length, 0, `${file}: ${noId.length} 张卡取不到 bid`);
 
     const feedAds = r.feedVerdicts.filter((x) => x.verdict.isAd);
+    const feedSuspects = r.feedVerdicts.filter((x) => !x.verdict.isAd && x.verdict.suspect);
     const banners = r.bannerVerdicts.filter((x) => x.verdict.isAd && !x.inFeed);
 
-    // 判定必须可解释（§9）：判为广告就必须给出理由
-    for (const a of feedAds) {
-      assert.ok(a.verdict.reasons.length > 0, `${file}: ${a.id} 判为广告但没给理由`);
+    // 判定必须可解释（§9）：判为广告**或**判为存疑，都必须给出理由
+    for (const a of [...feedAds, ...feedSuspects]) {
+      assert.ok(a.verdict.reasons.length > 0, `${file}: ${a.id} 有判定结果但没给理由`);
     }
 
     if (exp) {
       assert.equal(feedAds.length, exp.feedAds,
         `${file}: 信息流推广卡数期望 ${exp.feedAds}、实际 ${feedAds.length}\n` +
         `  明细: ${JSON.stringify(r.feedVerdicts.map((x) => ({ id: x.id, ad: x.verdict.isAd, s: x.verdict.score, why: x.verdict.reasons })), null, 2)}`);
+      if (exp.feedSuspects !== undefined) {
+        assert.equal(feedSuspects.length, exp.feedSuspects,
+          `${file}: 存疑卡数期望 ${exp.feedSuspects}、实际 ${feedSuspects.length}\n` +
+          `  明细: ${JSON.stringify(feedSuspects.map((x) => ({ id: x.id, author: x.author, s: x.verdict.score, why: x.verdict.reasons })), null, 2)}`);
+      }
       assert.equal(banners.length, exp.bannerAds,
         `${file}: 页面广告位数期望 ${exp.bannerAds}、实际 ${banners.length}`);
     }
@@ -153,7 +129,7 @@ test('适配层：自然卡的认证图标 wbpro-tag-img 不得进入 tagTexts',
   assert.ok(!allTags.includes('认证'), 'img 型标签不应被当作文案标签');
 });
 
-test('适配层：转发卡里的广告埋点在「转发原文」上，也应被判出（1449 饼干姐）', { skip }, () => {
+test('适配层：转发原文上的埋点要抓到，但该卡只判存疑（1449 饼干姐）', { skip }, () => {
   const file = fixtures.find((f) => f.includes('1449'));
   if (!file) return;
 
@@ -168,4 +144,18 @@ test('适配层：转发卡里的广告埋点在「转发原文」上，也应�
   // 该卡的「原创正文」不应包含埋点 —— 说明埋点确实来自转发原文
   assert.ok(!/reallog_mark_ad|WeiboADNatural/.test(biscuit.text),
     '埋点在转发原文，原创正文里不该有');
+
+  // 该卡在页面上**没有任何**可见广告标识 —— 这是它必须走埋点判据的原因
+  assert.deepEqual(biscuit.tagTexts, [], '不应有推广标签');
+  assert.equal(biscuit.hasFollowButton, false, '不应有「关注」按钮');
+
+  // 判定结论（2026-10-13 用户人工核对后定）：存疑，不判广告
+  const v = classifyFeedItem(biscuit);
+  assert.equal(v.isAd, false, '内容经人工核对不像广告，不得判为广告');
+  assert.equal(v.suspect, true, '但应保留为存疑线索');
+
+  // 同一份快照里 OiiOii 那张仍是确定的广告 —— 降级没有波及真正的广告
+  const oii = sigs.find((s) => s.author === 'OiiOii_AI');
+  assert.ok(oii, '应能取到 OiiOii 的卡');
+  assert.equal(classifyFeedItem(oii).isAd, true, 'OiiOii 卡（商业投放埋点）仍应判为广告');
 });

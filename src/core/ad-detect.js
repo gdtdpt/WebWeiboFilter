@@ -7,7 +7,7 @@
  *
  * ─── 实测样本（tests/fixtures/，私有不入库）──────────────────────────
  *   1440（8 卡）   无广告
- *   1449（13 卡）  A 类 banner ✔    B 类推广卡 ✔「饼干姐 / OiiOii」
+ *   1449（13 卡）  A 类 banner ✔    B 类推广卡 ✔「OiiOii」＋**存疑卡**「饼干姐」（见 AD_URL_MARKERS 中 natural 的降级说明）
  *   1505（12 卡）  A 类 banner ✔    无 B 类
  *   1505(1)（6卡） A 类 banner ✔    B 类推广卡 ✔「叫我老伯 / 京东双11」
  *
@@ -41,25 +41,33 @@ export const AD_TAG_TEXTS = [
 ];
 
 /**
- * 广告跳转埋点。出现在卡内任意 `<a href>` / URL 里即为**强判据**。
+ * 广告跳转埋点。每个标记自带 `weight`（证据权重），判定时取「权重最高的那一条」。
  *
- * 实测共发现**三个变体**（按可信度排序，`matchAdUrl` 返回第一个命中的 id）：
+ * ⚠️ **每个 URL 只取第一个命中的标记**（下表顺序 = 优先级），所以 `natural` 必须排在
+ * 兜底的 `reallog_mark_ad` **前面**，否则 `999_reallog_mark_ad` 会被兜底规则按 2 分算进去。
  *
- *  ① `campaign` —— 商业投放（**最硬**）
+ * 实测共发现**三个变体**：
+ *
+ *  ① `campaign` —— 商业投放（**最硬，可单独判广告**，weight 3）
  *     `shop.sc.weibo.com/h5/sclick/index?mark=3_reallog_mark_ad%3A8%7C3_<19位活动ID>`
  *     解码后：`mark=3_reallog_mark_ad:8|3_1791875133631432656708000038139964`
  *     命中计数：1440=0 / 1449=12 / 1505=0 / 1505(1)=6
  *
- *  ② `natural` —— 原生 / 视频广告
+ *  ② `natural` —— 原生 / 视频广告（**存疑级，weight 1 —— 只记线索，不单独判广告**）
  *     `video.weibo.com/show?fid=1034:…&mark_id=999_reallog_mark_ad%3A999%7CWeiboADNatural`
  *     解码后：`mark_id=999_reallog_mark_ad:999|WeiboADNatural`
  *     命中计数：1440=0 / 1449=2 / 1505=0 / 1505(1)=0
- *     ⚠️ **待观察**：样本里它出现在一条「帖子看着自然、但内嵌广告视频」的卡上。
- *     干净快照 1505 也有 3 条 `video.weibo.com/show` 链接却**不带**该埋点 ⇒ 判别力成立（不是「凡视频都算」）。
- *     但「该不该把整张卡判为广告」建议再攒几个样本后与用户确认。
  *
- *  ③ `weiboad` —— 广告短链令牌 `…_weiboad=`（实测：`shorturl.biz.weibo.cn/…&63c25…_weiboad=`）
- *     ④ `sclick` / `spm_mark` —— 电商广告跳转与投放位标记（实测）
+ *     🔴 **降级理由（2026-10-13，用户人工核对后定）**：唯一一条样本是 1449「饼干姐」转发卡 ——
+ *     用户看了原帖，**正文是玩笑话、视频内容也不是推广**，整条内容完全不像广告。
+ *     该卡在页面上也没有任何广告标识（无标签 / 无「关注」按钮 / 无播放器）。
+ *     ⇒ 结论：`WeiboADNatural` **不足以证明这是一条商业广告**（更可能是微博对视频内容的投放/扶持标记）。
+ *     ⇒ 处理：**降为存疑线索**，单独出现时只报 `suspect`，不判 `isAd`。待攒够样本再重新评估权重。
+ *
+ *  ③ `weiboad` —— 广告短链令牌 `…_weiboad=`（实测：`shorturl.biz.weibo.cn/…&63c25…_weiboad=`，weight 2）
+ *
+ * 兜底与辅助（weight 2，均需旁证）：`reallog_mark_ad`（兜底其它 reallog 形态）、
+ * `sclick`（电商广告跳转）、`spm_mark`（投放位标记）。
  *
  * 对照：**自然卡**的电商链接是 `shop.sc.weibo.com/h5/goods/index?…&vs=weibo_feed`（不带任何埋点）。
  */
@@ -67,24 +75,27 @@ export const AD_URL_MARKERS = [
   {
     id: 'campaign',
     label: '商业投放',
+    weight: 3,
     re: /3_reallog_mark_ad/i,
     desc: '微博信息流商业广告埋点（实测，带 19 位活动 ID）',
   },
   {
     id: 'natural',
     label: '原生/视频广告',
+    weight: 1,
     re: /999_reallog_mark_ad|WeiboADNatural/i,
-    desc: '微博原生 / 视频广告埋点（实测 WeiboADNatural）',
+    desc: '微博原生 / 视频广告埋点（实测 WeiboADNatural）。⚠️ 证据不足，只记为存疑线索',
   },
   {
     id: 'reallog_mark_ad',
     label: '其它 reallog 广告',
+    weight: 2,
     re: /reallog_mark_ad/i,
     desc: '兜底：其它形态的 reallog 广告埋点',
   },
-  { id: 'weiboad', label: '广告短链', re: /_weiboad=/i, desc: '微博广告短链令牌（实测）' },
-  { id: 'sclick', label: '电商广告跳转', re: /\/h5\/sclick\//i, desc: '微博电商广告跳转服务（实测）' },
-  { id: 'spm_mark', label: '投放位标记', re: /[?&]spm_mark=/i, desc: '投放位标记（实测）' },
+  { id: 'weiboad', label: '广告短链', weight: 2, re: /_weiboad=/i, desc: '微博广告短链令牌（实测）' },
+  { id: 'sclick', label: '电商广告跳转', weight: 2, re: /\/h5\/sclick\//i, desc: '微博电商广告跳转服务（实测）' },
+  { id: 'spm_mark', label: '投放位标记', weight: 2, re: /[?&]spm_mark=/i, desc: '投放位标记（实测）' },
 ];
 
 /**
@@ -107,9 +118,13 @@ export const AD_IMG_HOSTS = [
  */
 export const AD_CLOSE_ICON = '948/2022/09/21/close.png';
 
-/** 计分权重：≥ STRONG 即单独足以判定为广告 */
+/**
+ * 计分权重。
+ *   - 广告埋点的权重**不在这里**，而是逐条挂在 `AD_URL_MARKERS[].weight` 上
+ *     （因为不同埋点的可信度差很多 —— 商业投放 3、原生/视频广告仅 1）。
+ *   - 下面的三项是「非埋点」判据的权重。**≥ AD_THRESHOLD 即单独足以判定为广告**。
+ */
 export const WEIGHT = {
-  urlMarker: 3,
   adHost: 3,
   tagText: 3,
   followButton: 2,   // 启发式：单独不够，需配合其他信号
@@ -140,6 +155,17 @@ export function matchAdUrl(url) {
 export function adMarkerLabel(id) {
   const m = AD_URL_MARKERS.find((x) => x.id === id);
   return m ? m.label : id;
+}
+
+/**
+ * marker id → 该埋点的证据权重。
+ * 未登记的 id 返回 0（安全退化：不贡献分数，但理由里仍会出现）。
+ * @param {string} id
+ * @returns {number}
+ */
+export function adMarkerWeight(id) {
+  const m = AD_URL_MARKERS.find((x) => x.id === id);
+  return m ? m.weight : 0;
 }
 
 /**
@@ -188,17 +214,18 @@ export function isAdCloseIcon(src) {
  * @property {boolean}  isAd
  * @property {number}   score
  * @property {string[]} reasons   命中的理由（§9「可解释性」纪律：必须能告诉用户为什么）
- * @property {boolean}  suspect   证据不足但可疑（如只命中「关注按钮」）
+ * @property {boolean}  suspect   证据不足但可疑（只命中「关注按钮」、或只命中 `natural` 埋点等弱线索）
  */
 
 /**
  * 判定一张**信息流卡**是否为推广卡（B 类）。
  *
  * 实测支持：
- *   - 1505(1) 推广卡「叫我老伯/京东」：urlMarker ✔ + followButton ✔ + tagText(荐读) ✔
- *   - 1449   推广卡「饼干姐/OiiOii」：urlMarker ✔ + followButton ✔（无文字标签）
- *   - 1505   无广告快照：三者全灭（12 张卡）
- *   - 1440   无广告快照：三者全灭（8 张卡）
+ *   - 1505(1) 推广卡「叫我老伯/京东」：埋点(campaign) ✔ + followButton ✔ + tagText(荐读) ✔ ⇒ 广告
+ *   - 1449   推广卡「OiiOii」     ：埋点(campaign) ✔ + followButton ✔（无文字标签）   ⇒ 广告
+ *   - 1449   **存疑卡**「饼干姐」  ：仅埋点(natural, weight 1) ⇒ **可疑、不判广告**（用户人工核对：内容不像广告）
+ *   - 1505   无广告快照：四路全灭（12 张卡）
+ *   - 1440   无广告快照：四路全灭（8 张卡）
  *
  * @param {FeedItemSignals} sig
  * @returns {AdVerdict}
@@ -208,10 +235,23 @@ export function classifyFeedItem(sig) {
   const reasons = [];
   let score = 0;
 
-  const urlHit = (s.urls || []).map(matchAdUrl).find(Boolean);
-  if (urlHit) {
-    score += WEIGHT.urlMarker;
-    reasons.push(`正文外链带广告埋点(${adMarkerLabel(urlHit)})`);
+  // 埋点：每个 URL 只取第一个命中的标记（表序=优先级），再跨 URL 取**权重最高**的一条
+  const urlHits = [];
+  for (const u of (s.urls || [])) {
+    const id = matchAdUrl(u);
+    if (id && urlHits.indexOf(id) === -1) urlHits.push(id);
+  }
+  if (urlHits.length) {
+    let best = urlHits[0];
+    for (const id of urlHits) {
+      if (adMarkerWeight(id) > adMarkerWeight(best)) best = id;
+    }
+    const w = adMarkerWeight(best);
+    score += w;
+    // §9 可解释性：证据不足时必须说清「为什么只算线索」，否则用户看不懂为什么没被过滤
+    reasons.push(w < AD_THRESHOLD
+      ? `正文外链带广告埋点(${adMarkerLabel(best)}，证据不足仅记为线索)`
+      : `正文外链带广告埋点(${adMarkerLabel(best)})`);
   }
 
   const hostHit = (s.imgSrcs || []).map(matchAdHost).find(Boolean);
@@ -236,7 +276,7 @@ export function classifyFeedItem(sig) {
     isAd,
     score,
     reasons,
-    // 有证据但没过阈值 ⇒ 可疑；一条信号都没有 ⇒ 不可疑
+    // 有证据但没过阈值 ⇒ 存疑（如只命中「原生/视频广告」埋点、或只有「关注」按钮）；一条信号都没有 ⇒ 不可疑
     suspect: !isAd && score > 0,
   };
 }

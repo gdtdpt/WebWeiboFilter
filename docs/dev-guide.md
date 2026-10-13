@@ -97,10 +97,24 @@ npm test          # 等价于 node --test（无参数会自动发现测试文件
    - `SpecBaseRecon.downloadReport()` → JSON（回答 B1/B3/B4/B5/B7）
    - `SpecBaseRecon.saveSnapshot()` → HTML（放进 `tests/fixtures/`，作为离线单测输入）
 4. 需要时手动补跑：
-   - `SpecBaseRecon.probeAds()` —— 广告判据实测（B1）：逐条打印 A 类广告位 / B 类推广卡命中了哪条判据
-   - `SpecBaseRecon.testHeight()` —— 量 `display:none` 残留 vs 1px 容器（B2）
-   - `SpecBaseRecon.watchTitle(20)` —— 观察 20s，看微博是否自己改写 title/favicon（B7）
+   - `SpecBaseRecon.probeAds()` —— 广告判据实测（B1）：逐条打印 A 类广告位 / B 类推广卡 / **存疑卡**命中了哪条判据
+   - `SpecBaseRecon.testHeight()` —— 量隐藏一项后的上移量 / 残留空洞 / 延迟重排（B2）。**跑完自动下载 JSON**
+   - `SpecBaseRecon.watchTitle(20)` —— 观察 20s，看微博是否自己改写 title/favicon（B7）。**跑完自动下载 JSON**
 5. 对**分组页 / 详情页 / 关注页**各存一份快照（§12 采集方式）。
+
+**结果怎么拿走（不用从 Console 复制对象）**
+
+Console 里直接打印的 JS 对象是**复制不出来**的（右键复制会退化成浅拷贝，长对象还会被折叠）。
+所以脚本把每个探针的结果都存进 `SpecBaseRecon._results`，并提供三条出口：
+
+| 出口 | 做什么 |
+| --- | --- |
+| `testHeight()` / `watchTitle(20)` | 跑完**自动下载** `probe-height-*.json` / `probe-title-*.json` |
+| `SpecBaseRecon.exportResults()` | 把**已跑过的所有**探针结果汇总成一份 `probe-all-*.json` |
+| `SpecBaseRecon.copyResult()` | 兜底（下载被浏览器拦时）：把结果 JSON 塞进剪贴板；失败则打印可右键复制的字符串 |
+
+> 临时救急（不想重贴脚本时）：`copy(JSON.stringify(SpecBaseRecon.testHeight()))`、或
+> `SpecBaseRecon.watchTitle(20).then(r => copy(JSON.stringify(r)))` —— DevTools 的 `copy()` 会把 JSON 放进剪贴板。
 
 > ⚠️ **采集前先确认浏览器里没有别的微博脚本/扩展在跑** —— 首轮的 `__yawf_*` 就是上游油猴脚本注入的，
 > 让整批夹具不可比。确认干净再存快照。
@@ -146,30 +160,36 @@ node tools\recon\find-ad-slots.mjs tests\fixtures\snapshot-YYYYMMDD-HHMM.html --
 
 ### 5.3 广告判据（B1 ✅ 已定稿 —— 详见 PROJECT.md §12-B1）
 
-**两类广告，判据完全不同：**
+**判定规则**：各路判据按**权重累加** —— **≥3 分判广告、1~2 分判「存疑」、0 分判干净**。
 
-| 类 | 位置 | 判据 |
+| 类 | 位置 | 判据（含权重） |
 | --- | --- | --- |
 | **A 类** 页面 banner | 发布器正下方、**不在信息流里** | `img[src*="kadmimage.biz.weibo.com"]`（广告投放 CDN）＋ 自带关闭按钮 `…/948/2022/09/21/close.png`。**间歇投放**（实测 4 份里 3 份有） |
-| **B 类** 信息流推广卡 | `.wbpro-scroller-item` 内 | ① 外链广告埋点（见下）<br>② 卡内图片来自广告 CDN<br>③ 头部标签槽文案（`div.wbpro-tag`，**整串精确比对**）<br>④ 卡内「关注」按钮 `button[_followbtn_*]`（**权重低，单独不判广告**） |
+| **B 类** 信息流推广卡 | `.wbpro-scroller-item` 内 | ① 外链广告埋点（**3** 分，见下）<br>② 卡内图片来自广告 CDN（**3** 分）<br>③ 头部标签槽文案 `div.wbpro-tag`（**3** 分，**整串精确比对**）<br>④ 卡内「关注」按钮 `button[_followbtn_*]`（**2** 分，单独只判存疑） |
 
-**B 类判据①的三个埋点变体**（`src/core/ad-detect.js` 里分别命名，各自可解释）：
+**B 类判据①的埋点变体**（`src/core/ad-detect.js` 里各自带权重，顺序=优先级）：
 
-| id | 实测原文（已解码） | 说明 |
-| --- | --- | --- |
-| `campaign` | `mark=3_reallog_mark_ad:8\|3_<19位活动ID>` | 商业投放，**最硬** |
-| `natural` | `mark_id=999_reallog_mark_ad:999\|WeiboADNatural` | 原生 / 视频广告；⚠️ 可能落在**转发原文**的链接上（1449「饼干姐」卡即如此）⇒ 已记为**待与用户确认**的设计点 |
-| `weiboad` | `…_weiboad=`（`shorturl.biz.weibo.cn`） | 广告短链令牌 |
-| （另有 `sclick` 电商跳转、`spm_mark` 投放位标记） | | |
+| id | 权重 | 实测原文（已解码） | 说明 |
+| --- | --- | --- | --- |
+| `campaign` | **3** | `mark=3_reallog_mark_ad:8\|3_<19位活动ID>` | 商业投放，**最硬** ⇒ 可单独判广告 |
+| `natural` | **1** | `mark_id=999_reallog_mark_ad:999\|WeiboADNatural` | 🔴 **已降级为存疑级**（2026-10-13 用户人工核对「饼干姐」卡后定：那条内容完全不像广告）⇒ 单独出现只报 `suspect`，不判广告 |
+| `weiboad` | **2** | `…_weiboad=`（`shorturl.biz.weibo.cn`） | 广告短链令牌 |
+| `reallog_mark_ad` / `sclick` / `spm_mark` | **2** | 兜底 / 电商跳转 / 投放位标记 | 均需旁证 |
 
-**⛔ 四个「不要」（都踩过/验证过）**：
+⚠️ **改这张表时注意**：`AD_URL_MARKERS` 的**表序 = 优先级**（每个 URL 只取第一个命中的标记），
+`natural` **必须排在兜底的 `reallog_mark_ad` 之前**，否则 `999_reallog_mark_ad` 会被兜底规则按 2 分算，
+降级就失效了。`tests/ad-detect.test.mjs` 有断言守这个顺序。
+
+**⛔ 五个「不要」（都踩过/验证过）**：
 1. 不要用卡片修饰符 —— 广告卡与自然卡同为 `_wrap_ecgcn_2 _normal_ecgcn_34`。
 2. 不要找 `ad/promo/sponsor` 类名 —— 四份快照全为 0。
 3. 不要在 DOM 里搜「广告」二字 —— banner 的标识是**烤在图片里**的。
 4. 不要把 `div.wbpro-tag-img`（认证图标）当广告信号 —— 它在**自然卡**上。
    另：`video.weibo.com/show` 链接本身是自然的（干净快照也有 3 条）—— **只有带埋点的才算广告**。
+5. **不要假设广告在 UI 上有可见标识** —— 1449「饼干姐」卡无标签、无「关注」按钮、无广告图、无播放器，
+   唯一证据是转发原文视频链接上的埋点 ⇒ **埋点是唯一兜底，必须保证它单独可靠**。
 
-**活页面上随时复查**：Console 里跑 `SpecBaseRecon.probeAds()`，会逐条打印命中了哪条判据。
+**活页面上随时复查**：Console 里跑 `SpecBaseRecon.probeAds()`，会分别列出「推广卡」与「存疑卡」并打印命中了哪条判据。
 
 仍未定：**高度行为 B2**（离线已定论一半：`translateY` 定位 ⇒ `display:none` 必留洞；1px 容器是否闭合缺口待实测）、
 **title/favicon 是否被改写 B7** —— 见 PROJECT.md §12-B。
@@ -179,7 +199,7 @@ node tools\recon\find-ad-slots.mjs tests\fixtures\snapshot-YYYYMMDD-HHMM.html --
 | 里程碑 | 内容 | 状态 |
 | --- | --- | --- |
 | **M0 侦察** | 侦察采集 + DOM 快照夹具 + 结构报告 | 🟢 **B1/B3/B4/B5/B6 ✅ 已闭环**（4 份快照）；仅欠 **B2 高度实测**与 **B7 title 改写** |
-| **M1 管线** | 调度层 / 判定核心 / 应用层 + 广告识别 + 关键词过滤 | 🟡 **广告识别 ✅ 已落地**（`src/core/ad-detect.js` + `src/adapters/weibo-home.js` + 31 条单测 + 夹具回放）；**调度层/应用层有意未接线** —— 等 B2 定论 |
+| **M1 管线** | 调度层 / 判定核心 / 应用层 + 广告识别 + 关键词过滤 | 🟡 **广告识别 ✅ 已落地**（`src/core/ad-detect.js` + `src/adapters/weibo-home.js` + 夹具回放 4 份真实快照，单测 **40/40 全绿**）；**调度层/应用层有意未接线** —— 等 B2 定论 |
 | **M2 低调模式** | L1 + L2 落地、首帧注入、可逆 | 🟡 **L0 已落地**（零适配成本，不依赖侦察结论） |
 | **M3 入口与面板** | 隐藏热区 + TM 菜单 + 配置导入导出 + 可解释性 + 探针注册表 + 诊断页 | ⛔ （探针**注册表**已在 `src/adapters/weibo-home.js#PROBES` 先落好，M3 只差 UI） |
 

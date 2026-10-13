@@ -9,6 +9,7 @@ import {
   AD_THRESHOLD,
   matchAdUrl,
   adMarkerLabel,
+  adMarkerWeight,
   matchAdHost,
   matchAdTag,
   isAdCloseIcon,
@@ -41,6 +42,27 @@ test('广告 URL 埋点：第三个变体 WeiboADNatural（原生/视频广告�
   assert.equal(adMarkerLabel('natural'), '原生/视频广告');
   // 兜底分支：只写 reallog_mark_ad、不带已知前缀的情况
   assert.equal(matchAdUrl('https://x.example/a?mark_id=7_reallog_mark_ad%3A1'), 'reallog_mark_ad');
+});
+
+test('埋点权重分级：`natural` 只有 1 分（存疑级），商业投放 3 分', () => {
+  // 2026-10-13 用户人工核对「饼干姐」卡后定：WeiboADNatural 不足以证明是商业广告 ⇒ 降级
+  assert.equal(adMarkerWeight('campaign'), 3);
+  assert.equal(adMarkerWeight('natural'), AD_THRESHOLD - 2, 'natural 必须低于阈值，单靠它判不出广告');
+  assert.ok(adMarkerWeight('natural') < AD_THRESHOLD);
+  assert.equal(adMarkerWeight('weiboad'), 2);
+  assert.equal(adMarkerWeight('sclick'), 2);
+  assert.equal(adMarkerWeight('spm_mark'), 2);
+  assert.equal(adMarkerWeight('不存在的 id'), 0);
+  // 表里每一条都必须带权重，否则会静默按 0 分处理
+  for (const m of AD_URL_MARKERS) {
+    assert.equal(typeof m.weight, 'number', `${m.id} 缺 weight`);
+  }
+});
+
+test('埋点优先级：`natural` 必须排在兜底的 reallog_mark_ad 之前', () => {
+  // 否则 999_reallog_mark_ad 会被兜底规则按 2 分算进去，降级就失效了
+  assert.ok(AD_URL_MARKERS.findIndex((m) => m.id === 'natural') <
+            AD_URL_MARKERS.findIndex((m) => m.id === 'reallog_mark_ad'));
 });
 
 test('广告 URL 埋点：**自然卡**的 video.weibo.com 播放地址不得误判', () => {
@@ -130,7 +152,7 @@ test('B 类推广卡 · 实测样本 1505(1)「叫我老伯 / 京东双11」应�
   assert.ok(v.reasons.some((r) => r.includes('关注')));
 });
 
-test('B 类推广卡 · 实测样本 1449「饼干姐 / OiiOii」应判为广告（无文字标签也成立）', () => {
+test('B 类推广卡 · 实测样本 1449「OiiOii」应判为广告（无文字标签也成立）', () => {
   const v = classifyFeedItem({
     urls: ['https://shorturl.biz.weibo.cn/AXoDbLRC?mark=3_reallog_mark_ad%3A8&63c2534ddd8ca220ee63f24b4c9bee38_weiboad='],
     tagTexts: [],
@@ -140,6 +162,49 @@ test('B 类推广卡 · 实测样本 1449「饼干姐 / OiiOii」应判为广告
   assert.equal(v.isAd, true);
   // 标签槽为空也要能判出来 —— 这是「不能把标签当唯一判据」的回归保护
   assert.ok(!v.reasons.some((r) => r.includes('标签')));
+});
+
+test('B 类推广卡 · 实测样本 1449「饼干姐」只判存疑、**不判广告**（2026-10-13 定）', () => {
+  // 该卡全部链接：除转发原文那条视频外，其余都是用户主页 / 站内话题，不该命中
+  const v = classifyFeedItem({
+    urls: [
+      'https://weibo.com/u/1651047542',
+      'https://weibo.com/1651047542/Rmd6xreW1',
+      'https://weibo.com/n/%E4%BA%92%E8%81%94%E7%BD%91%E6%AC%A2%E4%B9%90%E6%8C%87%E5%8D%97',
+      'https://s.weibo.com/weibo?q=%23%E7%94%9F%E6%B4%BB%E8%B6%A3%E4%BA%8B%E7%8B%82%E6%83%B3%E6%9B%B2%23',
+      'https://video.weibo.com/show?fid=1034:5352459179065379' +
+        '&mark_id=999_reallog_mark_ad%3A999%7CWeiboADNatural',
+      'https://weibo.com/6850370174/Rm0HPAPjm',
+    ],
+    tagTexts: [],
+    imgSrcs: ['https://tvax2.sinaimg.cn/crop.0.0.996.996.1024/6268fc76ly8gbdf0ls21ij20ro0rogn7.jpg'],
+    hasFollowButton: false,
+  });
+  assert.equal(v.isAd, false, '该卡内容经人工核对不像广告，不应被判为广告');
+  assert.equal(v.suspect, true, '但埋点仍在，应留作存疑线索');
+  assert.equal(v.score, 1);
+  assert.ok(v.reasons.some((r) => r.includes('仅记为线索')), '理由要说明为什么只算线索');
+});
+
+test('埋点组合：`natural` 叠加其它弱证据仍不该独自构成广告', () => {
+  // 只有 weak 埋点 + 无其它信号 ⇒ 仍为存疑
+  const v = classifyFeedItem({
+    urls: ['https://video.weibo.com/show?fid=1&mark_id=999_reallog_mark_ad%3A999%7CWeiboADNatural'],
+    tagTexts: [],
+    imgSrcs: [],
+    hasFollowButton: false,
+  });
+  assert.equal(v.isAd, false);
+  assert.equal(v.suspect, true);
+
+  // 但 `natural` + 头部推广标签 ⇒ 够阈值，应判广告（弱线索可被强证据带起来）
+  const v2 = classifyFeedItem({
+    urls: ['https://video.weibo.com/show?fid=1&mark_id=999_reallog_mark_ad%3A999%7CWeiboADNatural'],
+    tagTexts: ['荐读'],
+    imgSrcs: [],
+    hasFollowButton: false,
+  });
+  assert.equal(v2.isAd, true);
 });
 
 test('B 类推广卡 · 实测样本 1505 的自然卡不得误判（12 张卡的代表）', () => {

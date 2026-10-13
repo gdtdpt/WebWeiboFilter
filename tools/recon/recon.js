@@ -13,12 +13,20 @@
  * 4. 点 `SpecBaseRecon.saveSnapshot()` 存 DOM 快照 HTML，放进 tests/fixtures/。
  * 5. 找广告：`SpecBaseRecon.huntAds(12)`（自动滚动；报告卡片类型分布 + 结构异常卡；**一旦发现带广告文案的卡会自动存快照**）。
  * 5b. **广告判据实测（B1 已定稿）**：`SpecBaseRecon.probeAds()` —— 一次列出页面上的
- *     A 类页面 banner 广告位与 B 类信息流推广卡，并逐条打印**命中了哪条判据**。
- *     四路判据（任一单独成立即可）：外链埋点（`3_reallog_mark_ad` 商业投放 /
- *     `999_reallog_mark_ad|WeiboADNatural` 原生视频广告 / `_weiboad=` / `/h5/sclick/` / `spm_mark=`）；
- *     广告 CDN 图 `kadmimage.biz.weibo.com`；头部标签槽文案（荐读 / 推广 / 广告）；
- *     卡内「关注」按钮 `_followbtn_`（需与其它信号同现）。详见 PROJECT.md §12-B1。
+ *     A 类页面 banner 广告位、B 类信息流推广卡、以及**存疑卡**，并逐条打印**命中了哪条判据**。
+ *     四路判据：外链埋点（`3_reallog_mark_ad` 商业投放 =3 分 / `999_reallog_mark_ad|WeiboADNatural`
+ *     原生视频广告 =**1 分**（存疑级，单独判不出广告）/ `_weiboad=` / `/h5/sclick/` / `spm_mark=` =2 分）；
+ *     广告 CDN 图 `kadmimage.biz.weibo.com` =3 分；头部标签槽文案（荐读 / 推广 / 广告）=3 分；
+ *     卡内「关注」按钮 `_followbtn_` =2 分（需与其它信号同现）。**≥3 分判广告，1~2 分判存疑**。
+ *     详见 PROJECT.md §12-B1。
  * 6. 其余手动：`SpecBaseRecon.testHeight()`（量高度行为）/ `SpecBaseRecon.watchTitle(20)`（看 title/favicon 是否被改写）。
+ *    这两个**跑完会自动下载 JSON 文件**，不需要从 Console 复制任何东西。
+ *
+ * 结果怎么拿走（不用从 Console 复制对象）
+ * ------------------------------------
+ *   · `testHeight()` / `watchTitle(20)` —— 跑完**自动下载** `probe-height-*.json` / `probe-title-*.json`
+ *   · `SpecBaseRecon.exportResults()` —— 把跑过的**所有**探针结果汇总成一份 `probe-all-*.json` 下载
+ *   · `SpecBaseRecon.copyResult()` —— 兜底：把结果 JSON 塞进剪贴板（下载被浏览器拦时用）
  *
  * ⚠️ 夹具与报告含真实微博内容，属私有数据 —— 仓库已把 tests/fixtures 排除在 git 之外。
  */
@@ -309,36 +317,148 @@
     };
   }
 
-  // ---- ④ 高度行为实测（B2：display:none 残留 vs 1px 容器）-----------------------------------
+  // ---- ④ 高度行为实测（B2：隐藏一项之后的上移量 / 残留空洞 / 延迟重排）-----------------------
 
+  /**
+   * 回答 B2（首版头号风险）：隐藏一个 `.vue-recycle-scroller__item-view` 之后
+   *   ① 后续项会不会上移？上移多少？
+   *   ② 还剩多少空洞？
+   *   ③ 会不会**延迟**重排（微博用 ResizeObserver 重新测量 ⇒ 内容跳变）？
+   *
+   * ⚠️ 关键：item-view 是 `position:absolute` + `transform:translateY(...)` 定位的，
+   * **`offsetTop` 不反映视觉位置** —— 只看 offsetTop 会得出「什么都没发生」的错误结论。
+   * 所以这里同时看 `getBoundingClientRect()`（含 transform）与 `offsetTop`，
+   * 并在隐藏后采样 0 / 400 / 1200ms，专门抓延迟重排。
+   *
+   * 结果自动导出成 JSON（不用从 Console 复制），并恢复现场 —— 绝不留下改动。
+   * @returns {Promise<Object>}
+   */
   function testHeight(items) {
     var list = items || (window.SpecBaseRecon && window.SpecBaseRecon._items) || [];
-    if (list.length < 2) return { skipped: true, reason: '需要至少 2 个项节点' };
-    var target = list[0], next = list[1];
-    var res = { targetClass: classOf(target) };
+    if (list.length < 2) {
+      // 兜底：不依赖 report() 先跑过 —— 直接按稳定类名取项节点
+      list = Array.prototype.slice.call(document.querySelectorAll('.vue-recycle-scroller__item-view'));
+    }
+    if (list.length < 2) {
+      return Promise.resolve(stash('height', {
+        skipped: true,
+        reason: '一条信息流项都没取到 —— 先把信息流滚出内容再跑（选择器 .vue-recycle-scroller__item-view 也可能已失效）'
+      }));
+    }
 
-    var beforeNext = next.offsetTop;
-    var h = target.offsetHeight;
-    res.before = { targetHeight: h, nextTop: beforeNext };
-
+    var target = list[0], next = list[1], wrap = target.parentElement;
     var prevDisplay = target.style.display;
-    target.style.display = 'none';
-    var afterHide = next.offsetTop;
-    target.style.display = prevDisplay;
-    res.displayNone = { nextTop: afterHide, delta: beforeNext - afterHide, residual: h - (beforeNext - afterHide) };
+    var prevHeight = target.style.height;
+    var prevOverflow = target.style.overflow;
 
-    var prevH = target.style.height, prevOverflow = target.style.overflow;
-    target.style.height = '1px';
-    target.style.overflow = 'hidden';
-    var after1px = next.offsetTop;
-    target.style.height = prevH;
-    target.style.overflow = prevOverflow;
-    res.onePixel = { nextTop: after1px, delta: beforeNext - after1px, residual: h - (beforeNext - after1px) };
+    function styleOf(el) {
+      return {
+        position: cs(el, 'position'), transform: cs(el, 'transform'), top: cs(el, 'top'),
+        height: cs(el, 'height'), overflow: cs(el, 'overflow'), opacity: cs(el, 'opacity')
+      };
+    }
 
-    res.verdict = res.onePixel.residual <= 3
-      ? '1px 容器有效（残留高度≈1px）'
-      : '1px 容器残留 ' + res.onePixel.residual + 'px，需换策略';
-    return res;
+    function snap(label) {
+      var r0 = target.getBoundingClientRect(), r1 = next.getBoundingClientRect();
+      return {
+        label: label,
+        targetTop: Math.round(r0.top), targetH: Math.round(r0.height),
+        nextTop: Math.round(r1.top), nextH: Math.round(r1.height),
+        nextOffsetTop: next.offsetTop,
+        wrapScrollHeight: wrap ? wrap.scrollHeight : null,
+        wrapClientHeight: wrap ? wrap.clientHeight : null
+      };
+    }
+
+    function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+    function restore() {
+      target.style.display = prevDisplay;
+      target.style.height = prevHeight;
+      target.style.overflow = prevOverflow;
+    }
+
+    var res = {
+      question: 'B2 — 隐藏一个项之后：后续项上移多少？还剩多少空洞？会不会延迟重排（跳变）？',
+      method: 'getBoundingClientRect（含 transform）+ offsetTop 双视角；隐藏后采样 0 / 400 / 1200ms',
+      itemStyle: styleOf(target),
+      nextStyle: styleOf(next),
+      displayNone: [],
+      onePixel: [],
+      verdict: ''
+    };
+
+    /** 跑一个实验：存基线 → 施加改动 → 采样三次 → 撤销 */
+    function experiment(label, apply, undo, sink) {
+      sink.push(snap(label + ' · 基线'));
+      apply();
+      sink.push(snap(label + ' · 立即'));
+      return wait(400).then(function () {
+        sink.push(snap(label + ' · +400ms'));
+        return wait(800);
+      }).then(function () {
+        sink.push(snap(label + ' · +1200ms'));
+        undo();
+      });
+    }
+
+    /** 从一组采样算出「上移量 / 残留空洞 / 是否延迟重排」 */
+    function evaluate(sink) {
+      if (sink.length < 2) return null;
+      var b = sink[0], later = sink.slice(1), last = later[later.length - 1];
+      return {
+        moved: b.nextTop - last.nextTop,                                  // 正数 = 后续项上移
+        hole: last.nextTop - b.targetTop,                                 // 空洞 = 原卡顶 → 下一卡顶
+        jump: later.some(function (s) { return s.nextTop !== later[0].nextTop; }),
+        wrapScrollHeightBefore: b.wrapScrollHeight,
+        wrapScrollHeightAfter: last.wrapScrollHeight
+      };
+    }
+
+    console.log('[SpecBase Recon] testHeight：开始实测（约 3 秒，跑两组实验）—— '
+      + '**期间请不要滚动页面**，否则读数会被污染。跑完自动下载 JSON。');
+
+    return experiment(
+      'display:none',
+      function () { target.style.display = 'none'; },
+      function () { target.style.display = prevDisplay; },
+      res.displayNone
+    ).then(function () {
+      return experiment(
+        '1px 容器',
+        function () { target.style.height = '1px'; target.style.overflow = 'hidden'; },
+        function () { target.style.height = prevHeight; target.style.overflow = prevOverflow; },
+        res.onePixel
+      );
+    }).then(function () {
+      restore();
+      var a = evaluate(res.displayNone);
+      var c = evaluate(res.onePixel);
+      res.displayNoneSummary = a;
+      res.onePixelSummary = c;
+
+      var parts = [];
+      if (a) parts.push('display:none → 后续项上移 ' + a.moved + 'px、残留空洞 ' + a.hole +
+        'px' + (a.jump ? '、⚠️ 有延迟重排' : '、无延迟重排'));
+      if (c) parts.push('1px 容器 → 后续项上移 ' + c.moved + 'px、残留空洞 ' + c.hole +
+        'px' + (c.jump ? '、⚠️ 有延迟重排' : '、无延迟重排'));
+      if (c) {
+        parts.push('结论：' + (c.hole <= 3
+          ? '1px 容器可闭合空洞 → 可以直接隐藏'
+          : '1px 容器仍残留 ' + c.hole + 'px → **隐藏不可行**，改走「降显著度」（保高度，只缩小/去色/降对比，§7.5.0）'));
+      } else {
+        parts.push('结论：未能测出');
+      }
+      res.verdict = parts.join('；');
+
+      console.log('%c[SpecBase Recon] testHeight 结果', 'background:#2f3e34;color:#fff;padding:1px 4px', res);
+      console.log('[SpecBase Recon] ' + res.verdict);
+      return exportResult('height', res);
+    }, function (err) {
+      restore();
+      res.error = String(err);
+      return exportResult('height', res);
+    });
   }
 
   // ---- ⑤ 右下角悬浮占用（B5）----------------------------------------------------------------
@@ -397,13 +517,25 @@
       });
     });
     mo.observe(document.documentElement, { childList: true, subtree: true });
-    console.log('[SpecBase Recon] 开始观察 title / favicon ' + secs + 's …（期间可切到别的标签页再切回来，看是否变化）');
+    console.log('[SpecBase Recon] 开始观察 title / favicon ' + secs + 's …'
+      + '期间可切到别的标签页再切回来（看是否变化），**但不要刷新页面**。结束后会自动导出 JSON。');
     return new Promise(function (resolve) {
       setTimeout(function () {
         mo.disconnect();
-        var res = { start: start, end: titleFavicon(), changeCount: changes.length, changes: changes.slice(0, 30) };
-        console.log('[SpecBase Recon] title/favicon 观察结果：', res);
-        resolve(res);
+        var res = {
+          seconds: secs,
+          start: start,
+          end: titleFavicon(),
+          changeCount: changes.length,
+          changes: changes.slice(0, 30),
+          // 微博改写 title 的常见时机：新消息数、红点、切标签页回来 —— 建议「有变化」时重跑一次 L0 验收
+          verdict: changes.length
+            ? '⚠️ 观察期内 title / favicon 被改写了 ' + changes.length + ' 次 ⇒ L0 的 MutationObserver 防御是必需的'
+            : '观察期内 title / favicon 未被改写 ⇒ 但不要据此删掉 L0 的防御（改写可能只在新消息到达时发生）'
+        };
+        console.log('%c[SpecBase Recon] watchTitle 结果', 'background:#2f3e34;color:#fff;padding:1px 4px', res);
+        console.log('[SpecBase Recon] ' + res.verdict);
+        resolve(exportResult('title', res));
       }, secs * 1000);
     });
   }
@@ -480,6 +612,7 @@
       };
       console.log('%c[SpecBase Recon] huntAds 结果', 'background:#2f3e34;color:#fff;padding:1px 4px', res);
       window.SpecBaseRecon._hunt = res;
+      stash('hunt', res);
       window.SpecBaseRecon._seen = seen;
       return res;
     }
@@ -538,8 +671,8 @@
 
     console.log('%c[SpecBase Recon] 报告 %c ' + VERSION, 'background:#2f3e34;color:#fff;padding:1px 4px;border-radius:3px', 'color:#888');
     console.log(result);
-    console.log('[SpecBase Recon] 下一步：SpecBaseRecon.downloadReport() 存 JSON · SpecBaseRecon.saveSnapshot() 存 DOM 快照 · SpecBaseRecon.testHeight() 量高度');
-    return result;
+    console.log('[SpecBase Recon] 下一步：SpecBaseRecon.downloadReport() 存 JSON · SpecBaseRecon.saveSnapshot() 存 DOM 快照 · SpecBaseRecon.testHeight() 量高度（会自动下载 JSON）');
+    return stash('report', result);
   }
 
   // ---- 导出 ---------------------------------------------------------------------------------
@@ -562,6 +695,77 @@
     return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes());
   }
 
+  // ---- 结果收集与导出 -------------------------------------------------------------------------
+  // 解决的问题：探针结果以 JS 对象打印在 Console 里，**复制不出来**（右键复制对象会变成
+  // [object Object] 的浅拷贝，长对象还会被折叠/截断）。
+  //   ⇒ 每个探针跑完都把结果**存进 RESULTS**；
+  //   ⇒ testHeight() / watchTitle() 跑完**自动下载** JSON，用户不用做任何事；
+  //   ⇒ 其余探针用 `exportResults()`（一次全导）或 `copyResult()`（塞剪贴板）取。
+
+  var RESULTS = {};
+
+  function stash(key, value) {
+    RESULTS[key] = value;
+    if (window.SpecBaseRecon) window.SpecBaseRecon._results = RESULTS;
+    return value;
+  }
+
+  function buildPayload(tag, result) {
+    return {
+      script: 'specbase-recon', version: VERSION,
+      generatedAt: new Date().toISOString(),
+      page: { url: location.href, title: document.title },
+      tag: tag,
+      result: result
+    };
+  }
+
+  /** 存进 RESULTS 并**立刻下载成 JSON 文件** —— 用户不需要从 Console 复制任何东西 */
+  function exportResult(tag, result) {
+    stash(tag, result);
+    download('probe-' + tag + '-' + stamp() + '.json',
+      JSON.stringify(buildPayload(tag, result), null, 2), 'application/json');
+    return result;
+  }
+
+  /**
+   * 把**所有已跑过的**探针结果汇总成一份 JSON 并下载。
+   * 手动跑过 probeAds() / testHeight() / watchTitle() / report() 之后，一句就能全拿走。
+   */
+  function exportResults() {
+    var payload = {
+      script: 'specbase-recon', version: VERSION,
+      generatedAt: new Date().toISOString(),
+      page: { url: location.href, title: document.title },
+      keys: Object.keys(RESULTS),
+      results: RESULTS
+    };
+    download('probe-all-' + stamp() + '.json', JSON.stringify(payload, null, 2), 'application/json');
+    return payload;
+  }
+
+  /** 兜底：把结果 JSON 塞进剪贴板（下载被浏览器拦时用） */
+  function copyResult() {
+    var keys = Object.keys(RESULTS);
+    if (!keys.length) {
+      console.warn('[SpecBase Recon] 还没有结果 —— 先跑 probeAds() / testHeight() / watchTitle() 之一。');
+      return null;
+    }
+    var text = JSON.stringify(RESULTS, null, 2);
+    var printFallback = function () {
+      console.log('[SpecBase Recon] 自动复制失败。请**右键点下面这行字符串 → Copy string contents**，粘贴给开发者即可：');
+      console.log(text);
+    };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () {
+          console.log('[SpecBase Recon] 已复制到剪贴板（' + keys.join(', ') + '，' + text.length + ' 字符）—— 粘贴给开发者即可');
+        }, printFallback);
+      } else { printFallback(); }
+    } catch (e) { printFallback(); }
+    return text;
+  }
+
   function saveSnapshot() {
     var html = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
     download('snapshot-' + stamp() + '.html', html, 'text/html');
@@ -574,14 +778,16 @@
 
   // 广告 CDN（A 类页面 banner 实测来源）
   var AD_HOSTS = ['kadmimage.biz.weibo.com', 'kadm.biz.weibo.com', 'sinaads.cn', 'ad.sina.com.cn', 'sax.sina.com.cn'];
-  // 广告跳转埋点（B 类推广卡的正文外链）—— 三个变体，与 src/core/ad-detect.js 保持一致
+  // 广告跳转埋点（B 类推广卡的正文外链）—— 逐条带权重，与 src/core/ad-detect.js 保持一致。
+  // ⚠️ 顺序 = 优先级：每个 URL 只取第一个命中的标记，所以 natural 必须在兜底的 reallog_mark_ad 之前。
+  // ⚠️ `natural`（WeiboADNatural）**只有 1 分** —— 2026-10-13 用户人工核对「饼干姐」卡后降级为存疑线索。
   var AD_URLS = [
-    { id: 'campaign', re: /3_reallog_mark_ad/i },
-    { id: 'natural', re: /999_reallog_mark_ad|WeiboADNatural/i },
-    { id: 'reallog_mark_ad', re: /reallog_mark_ad/i },
-    { id: 'weiboad', re: /_weiboad=/i },
-    { id: 'sclick', re: /\/h5\/sclick\//i },
-    { id: 'spm_mark', re: /[?&]spm_mark=/i }
+    { id: 'campaign', weight: 3, re: /3_reallog_mark_ad/i },
+    { id: 'natural', weight: 1, re: /999_reallog_mark_ad|WeiboADNatural/i },
+    { id: 'reallog_mark_ad', weight: 2, re: /reallog_mark_ad/i },
+    { id: 'weiboad', weight: 2, re: /_weiboad=/i },
+    { id: 'sclick', weight: 2, re: /\/h5\/sclick\//i },
+    { id: 'spm_mark', weight: 2, re: /[?&]spm_mark=/i }
   ];
   // 推广标签文案（**整串精确比对**）
   var AD_TAGS = ['广告', '推广', '荐读', '热推', '品牌推广', '商业推广', '赞助', 'Sponsored', 'Promoted'];
@@ -589,6 +795,10 @@
   function adUrlOf(url) {
     for (var i = 0; i < AD_URLS.length; i++) { if (AD_URLS[i].re.test(url)) return AD_URLS[i].id; }
     return null;
+  }
+  function adUrlWeight(id) {
+    for (var i = 0; i < AD_URLS.length; i++) { if (AD_URLS[i].id === id) return AD_URLS[i].weight; }
+    return 0;
   }
   function adHostOf(src) {
     for (var i = 0; i < AD_HOSTS.length; i++) { if (src.indexOf(AD_HOSTS[i]) !== -1) return AD_HOSTS[i]; }
@@ -648,17 +858,25 @@
     }
     if (follow) hits.push('followBtn');
 
+    // 计分：埋点按各自权重（natural 只有 1 分 ⇒ 单独判不出广告），标签/广告图各 3 分，关注按钮 2 分
     var score = 0;
     hits.forEach(function (h) {
-      if (h.indexOf('followBtn') === 0) score += 2; else score += 3;
+      if (h === 'followBtn') { score += 2; return; }
+      if (h.indexOf('url:') === 0) { score += adUrlWeight(h.slice(4)); return; }
+      score += 3;
     });
 
-    return { hits: hits, score: score, isAd: score >= 3, tags: tags, followBtn: follow };
+    return {
+      hits: hits, score: score,
+      isAd: score >= 3,
+      suspect: score > 0 && score < 3,
+      tags: tags, followBtn: follow
+    };
   }
 
   /** B1 主入口：一次回答「这一页上有哪些广告、各自命中哪条判据」 */
   function probeAds() {
-    var out = { pageAds: [], feedAds: [], cleanCards: 0, totalCards: 0 };
+    var out = { pageAds: [], feedAds: [], feedSuspects: [], cleanCards: 0, totalCards: 0 };
 
     // ① A 类：页面级 banner 广告位（锚「广告 CDN 图片」而不是结构 —— 结构类名是构建哈希）
     var allImgs = document.querySelectorAll('img');
@@ -695,19 +913,25 @@
         hits: s.hits,
         score: s.score,
         isAd: s.isAd,
+        suspect: s.suspect,
         tags: s.tags,
         preview: txt(cards[c]).slice(0, 70)
       };
-      if (s.isAd) out.feedAds.push(row); else out.cleanCards++;
+      if (s.isAd) out.feedAds.push(row);
+      else if (s.suspect) out.feedSuspects.push(row);
+      else out.cleanCards++;
     }
 
-    out.verdict = (out.pageAds.length || out.feedAds.length)
-      ? '页面广告位 ' + out.pageAds.length + ' 个 / 信息流推广卡 ' + out.feedAds.length + ' 张（共 ' + out.totalCards + ' 张卡）'
+    out.verdict = (out.pageAds.length || out.feedAds.length || out.feedSuspects.length)
+      ? '页面广告位 ' + out.pageAds.length + ' 个 / 信息流推广卡 ' + out.feedAds.length + ' 张'
+        + ' / 存疑卡 ' + out.feedSuspects.length + ' 张（共 ' + out.totalCards + ' 张卡）'
       : '本页未检出广告（共 ' + out.totalCards + ' 张卡）—— 注意 A 类 banner 是间歇投放，此刻为空属正常';
 
     console.log('%c[SpecBase Recon] probeAds 结果', 'background:#2f3e34;color:#fff;padding:1px 4px', out);
+    console.log('[SpecBase Recon] ' + out.verdict);
     window.SpecBaseRecon._ads = out;
-    return out;
+    // 存进 RESULTS —— 之后用 exportResults() / copyResult() 一句话取走，不用从 Console 复制对象
+    return stash('ads', out);
   }
 
   function sigOf(el) {
@@ -730,12 +954,17 @@
     findContainers: findContainers,
     _container: null,
     _items: [],
+    _results: RESULTS,
     downloadReport: function () {
       var r = report();
       download('specbase-recon-' + stamp() + '.json', JSON.stringify(r, null, 2), 'application/json');
       return r;
     },
-    saveSnapshot: saveSnapshot
+    saveSnapshot: saveSnapshot,
+    // 结果导出（解决「Console 里的对象复制不出来」）
+    exportResults: exportResults,
+    copyResult: copyResult,
+    downloadAds: function () { exportResult('ads', probeAds()); }
   };
 
   // 自动跑一次
