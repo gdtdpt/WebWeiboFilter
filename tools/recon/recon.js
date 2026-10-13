@@ -21,6 +21,9 @@
  *     详见 PROJECT.md §12-B1。
  * 6. 其余手动：`SpecBaseRecon.testHeight()`（量高度行为）/ `SpecBaseRecon.watchTitle(20)`（看 title/favicon 是否被改写）。
  *    这两个**跑完会自动下载 JSON 文件**，不需要从 Console 复制任何东西。
+ *    `testHeight()` 跑**四组**实验：display:none / 1px 容器 / 1px + 主动触发重测量 / visibility:hidden（对照组）。
+ *    ⚠️ 它会打印**目标身份**（tag/class/data-index）并校验「目标必须是 `.vue-recycle-scroller__item-view` 槽位」；
+ *    若 `sanity.warning` 非空 ⇒ 读数作废（2026-10-13 曾误测到卡片内九宫格图片格，见 §12-B2）。
  *
  * 结果怎么拿走（不用从 Console 复制对象）
  * ------------------------------------
@@ -179,6 +182,11 @@
       if (avg < 30) return;
       var maxDev = Math.max.apply(null, heights.map(function (h) { return Math.abs(h - avg); }));
       var score = g.length - (maxDev > avg * 0.6 ? 2 : 0);
+      // ⚠️ 真信息流容器（子节点 = 虚拟列表槽位）必须碾压一切嵌套网格：
+      //   否则一个 9 宫格图片网格（9 个同签名图片格）会把 primary 抢走 —— 见 testHeight 的踩坑注释。
+      var slotKids = 0;
+      for (var q = 0; q < g.length; q++) if (isScrollerSlot(g[q])) slotKids++;
+      if (slotKids >= 3) score += 1000;
       if (!best || score > best.score) {
         best = { sig: sig, count: g.length, avgHeight: Math.round(avg), maxDev: Math.round(maxDev), score: score, nodes: g };
       }
@@ -319,25 +327,132 @@
 
   // ---- ④ 高度行为实测（B2：隐藏一项之后的上移量 / 残留空洞 / 延迟重排）-----------------------
 
+  /** 虚拟列表的项容器（槽位父节点）—— **B2 唯一权威锚点** */
+  function itemWrapper() {
+    return document.querySelector('.vue-recycle-scroller__item-wrapper');
+  }
+
+  function isScrollerSlot(el) {
+    return !!el && classes(el).indexOf('vue-recycle-scroller__item-view') !== -1;
+  }
+
   /**
-   * 回答 B2（首版头号风险）：隐藏一个 `.vue-recycle-scroller__item-view` 之后
+   * 只取**信息流槽位**：`item-wrapper` 的**直接子节点**里带 `vue-recycle-scroller__item-view` 的那些。
+   * ⚠️ 为什么必须这么严格 —— 2026-10-13 真实踩坑：
+   *   上一版 `testHeight()` 直接用 `report()` 选出的「最高分容器」取项，结果钻进了
+   *   **卡片内的九宫格图片格**（`woo-box-item-inlineBlock _item_a3hty_47 __yawf_feed-picture_item`，
+   *   高 137px）。隐藏它当然不会让后续信息流项上移，于是打出了 `delta: 0 / residual: 137`
+   *   —— 读数看着像结论，其实**完全无意义**。原因：`scoreContainer()` 按「≥3 个同签名子节点」
+   *   打分，一个 9 宫格（9 个一模一样的图片格）比信息流容器得分还高 ⇒ 抢到了 primary。
+   *   ⇒ 修法：① 本函数只认 `item-wrapper` 的直接子槽位；② `scoreContainer()` 给真槽位组巨额加权；
+   *     ③ `testHeight()` 每次打印**目标身份**并显式校验，取错对象时 verdict 直接报警。
+   */
+  function feedItems() {
+    var w = itemWrapper();
+    if (!w) return [];
+    var out = [];
+    for (var i = 0; i < w.children.length; i++) if (isScrollerSlot(w.children[i])) out.push(w.children[i]);
+    return out;
+  }
+
+  /** 目标身份 —— 取错对象时能一眼看出来（tag / class / data-index / 是否槽位 / 内联 style） */
+  function identityOf(el) {
+    return {
+      tag: tag(el),
+      className: classOf(el),
+      dataIndex: el.getAttribute ? el.getAttribute('data-index') : null,
+      isScrollerSlot: isScrollerSlot(el),
+      parentClass: el.parentElement ? classOf(el.parentElement) : null,
+      inlineStyle: String((el.getAttribute && el.getAttribute('style')) || '').slice(0, 240)
+    };
+  }
+
+  /**
+   * 尽力找出承载虚拟列表的 Vue 组件实例 —— 只为一件事：判断「**能不能主动触发重测量**」。
+   * 若实例上真的挂着 `sizes[] / handleResize / forceUpdate`，那 CSS 之外就还有一条 JS 路径
+   * （把广告项尺寸从 size 缓存里改掉）；否则就只能走「降显著度」。
+   * ⚠️ 返回对象里 `_vm` 是**实例引用，不能进 JSON**（循环引用），序列化前用 summarizeVm() 剥掉。
+   */
+  function findScrollerVm(el) {
+    try {
+      var node = el, depth = 0;
+      while (node && depth < 40) {
+        var vm = node.__vue__ || node.__vueParentComponent;
+        if (vm) {
+          var cur = vm, hops = 0;
+          while (cur && hops < 25) {
+            var opt = cur.$options || {};
+            var name = String(opt.name || opt._componentTag ||
+              (cur.type && (cur.type.name || cur.type.__name)) || '');
+            var api = [];
+            ['forceUpdate', 'updateVisibleItems', 'scrollToItem', 'handleResize', 'onResize']
+              .forEach(function (m) { if (typeof cur[m] === 'function') api.push(m); });
+            if (cur.sizes) api.push('sizes[]');
+            if (/scroller|virtual|recycle/i.test(name)) {
+              return {
+                found: true, name: name, api: uniq(api),
+                sizesLength: cur.sizes ? cur.sizes.length : null,
+                itemSize: typeof cur.itemSize === 'number' ? cur.itemSize : null,
+                componentKeys: Object.keys(cur).filter(function (k) { return !/^\$|^_/.test(k); }).slice(0, 25),
+                _vm: cur
+              };
+            }
+            cur = cur.$parent || cur.parent;
+            hops++;
+          }
+        }
+        node = node.parentElement; depth++;
+      }
+    } catch (e) { return { found: false, error: String(e) }; }
+    return { found: false };
+  }
+
+  /** 剥掉实例引用，只留可 JSON 化的摘要 */
+  function summarizeVm(vm) {
+    if (!vm) return { found: false };
+    return {
+      found: !!vm.found, name: vm.name || null, api: vm.api || null,
+      sizesLength: vm.sizesLength, itemSize: vm.itemSize,
+      componentKeys: vm.componentKeys, error: vm.error
+    };
+  }
+
+  /** 优先挑一对「都完全在视口内」的相邻项，避免半截卡污染读数 */
+  function pickVisiblePair(list) {
+    var vh = window.innerHeight;
+    for (var i = 0; i < list.length - 1; i++) {
+      var a = list[i].getBoundingClientRect(), b = list[i + 1].getBoundingClientRect();
+      if (a.height > 40 && a.top >= 0 && a.bottom <= vh && b.height > 40) {
+        return { target: list[i], next: list[i + 1], index: i };
+      }
+    }
+    return { target: list[0], next: list[1], index: 0 };
+  }
+
+  /**
+   * 回答 B2（首版头号风险）：隐藏一个**信息流槽位**之后
    *   ① 后续项会不会上移？上移多少？
    *   ② 还剩多少空洞？
    *   ③ 会不会**延迟**重排（微博用 ResizeObserver 重新测量 ⇒ 内容跳变）？
+   *   ④ 能否**主动**触发重测量（Vue 实例上的 handleResize / forceUpdate）把洞填掉？
    *
    * ⚠️ 关键：item-view 是 `position:absolute` + `transform:translateY(...)` 定位的，
    * **`offsetTop` 不反映视觉位置** —— 只看 offsetTop 会得出「什么都没发生」的错误结论。
    * 所以这里同时看 `getBoundingClientRect()`（含 transform）与 `offsetTop`，
    * 并在隐藏后采样 0 / 400 / 1200ms，专门抓延迟重排。
    *
+   * 四组实验（每组都跑完立刻还原）：
+   *   display:none / 1px 容器 / 1px + 主动触发重测量 / visibility:hidden（对照组）
+   *
    * 结果自动导出成 JSON（不用从 Console 复制），并恢复现场 —— 绝不留下改动。
    * @returns {Promise<Object>}
    */
   function testHeight(items) {
-    var list = items || (window.SpecBaseRecon && window.SpecBaseRecon._items) || [];
+    var list = feedItems();
+    var source = 'feedItems()（item-wrapper 的直接子槽位）';
     if (list.length < 2) {
-      // 兜底：不依赖 report() 先跑过 —— 直接按稳定类名取项节点
-      list = Array.prototype.slice.call(document.querySelectorAll('.vue-recycle-scroller__item-view'));
+      list = items || (window.SpecBaseRecon && window.SpecBaseRecon._items) || [];
+      source = '⚠️ _items 兜底（feedItems 取不到 ≥2 个槽位）';
     }
     if (list.length < 2) {
       return Promise.resolve(stash('height', {
@@ -346,10 +461,13 @@
       }));
     }
 
-    var target = list[0], next = list[1], wrap = target.parentElement;
+    var pair = pickVisiblePair(list);
+    var target = pair.target, next = pair.next, wrap = target.parentElement;
+    var scrollerVm = findScrollerVm(target);
     var prevDisplay = target.style.display;
     var prevHeight = target.style.height;
     var prevOverflow = target.style.overflow;
+    var prevVisibility = target.style.visibility;
 
     function styleOf(el) {
       return {
@@ -376,15 +494,30 @@
       target.style.display = prevDisplay;
       target.style.height = prevHeight;
       target.style.overflow = prevOverflow;
+      target.style.visibility = prevVisibility;
     }
 
     var res = {
       question: 'B2 — 隐藏一个项之后：后续项上移多少？还剩多少空洞？会不会延迟重排（跳变）？',
       method: 'getBoundingClientRect（含 transform）+ offsetTop 双视角；隐藏后采样 0 / 400 / 1200ms',
+      source: source,
+      slotCount: list.length,
+      targetIndex: pair.index,
+      target: identityOf(target),
+      next: identityOf(next),
+      scrollerVm: summarizeVm(scrollerVm),
+      sanity: {
+        targetIsScrollerSlot: isScrollerSlot(target),
+        nextIsScrollerSlot: isScrollerSlot(next),
+        warning: (isScrollerSlot(target) && isScrollerSlot(next)) ? null
+          : '⚠️ 目标不是信息流槽位（.vue-recycle-scroller__item-view）—— 本次读数无意义，别据此下结论'
+      },
       itemStyle: styleOf(target),
       nextStyle: styleOf(next),
       displayNone: [],
       onePixel: [],
+      onePixelResize: [],
+      visibilityHidden: [],
       verdict: ''
     };
 
@@ -415,8 +548,19 @@
       };
     }
 
-    console.log('[SpecBase Recon] testHeight：开始实测（约 3 秒，跑两组实验）—— '
-      + '**期间请不要滚动页面**，否则读数会被污染。跑完自动下载 JSON。');
+    function poke() {
+      // 主动触发一次重测量：优先调 Vue 实例上的方法，其次派发 window resize
+      try { window.dispatchEvent(new Event('resize')); } catch (e) { /* noop */ }
+      var vm = scrollerVm && scrollerVm._vm;
+      if (!vm) return;
+      ['handleResize', 'onResize', 'forceUpdate', 'updateVisibleItems'].forEach(function (m) {
+        try { if (typeof vm[m] === 'function') vm[m](); } catch (e) { /* noop */ }
+      });
+    }
+
+    console.log('[SpecBase Recon] testHeight：开始实测（约 6 秒，跑四组实验）—— '
+      + '**期间请不要滚动页面**，否则读数会被污染。跑完自动下载 JSON。'
+      + (scrollerVm && scrollerVm.found ? '（已找到虚拟列表 Vue 实例：' + scrollerVm.name + '）' : '（未找到虚拟列表 Vue 实例）'));
 
     return experiment(
       'display:none',
@@ -431,23 +575,50 @@
         res.onePixel
       );
     }).then(function () {
+      return experiment(
+        '1px + 主动触发重测量',
+        function () { target.style.height = '1px'; target.style.overflow = 'hidden'; poke(); },
+        function () { target.style.height = prevHeight; target.style.overflow = prevOverflow; },
+        res.onePixelResize
+      );
+    }).then(function () {
+      return experiment(
+        'visibility:hidden（对照组 · 保高度）',
+        function () { target.style.visibility = 'hidden'; },
+        function () { target.style.visibility = prevVisibility; },
+        res.visibilityHidden
+      );
+    }).then(function () {
       restore();
       var a = evaluate(res.displayNone);
       var c = evaluate(res.onePixel);
+      var d = evaluate(res.onePixelResize);
+      var e = evaluate(res.visibilityHidden);
       res.displayNoneSummary = a;
       res.onePixelSummary = c;
+      res.onePixelResizeSummary = d;
+      res.visibilityHiddenSummary = e;
 
       var parts = [];
-      if (a) parts.push('display:none → 后续项上移 ' + a.moved + 'px、残留空洞 ' + a.hole +
-        'px' + (a.jump ? '、⚠️ 有延迟重排' : '、无延迟重排'));
-      if (c) parts.push('1px 容器 → 后续项上移 ' + c.moved + 'px、残留空洞 ' + c.hole +
-        'px' + (c.jump ? '、⚠️ 有延迟重排' : '、无延迟重排'));
+      if (res.sanity.warning) parts.push(res.sanity.warning);
+      function line(name, r) {
+        if (!r) return null;
+        return name + ' → 后续项上移 ' + r.moved + 'px、残留空洞 ' + r.hole +
+          'px' + (r.jump ? '、⚠️ 有延迟重排' : '、无延迟重排');
+      }
+      [['display:none', a], ['1px 容器', c], ['1px + 主动触发重测量', d], ['visibility:hidden', e]]
+        .forEach(function (kv) { var s = line(kv[0], kv[1]); if (s) parts.push(s); });
       if (c) {
         parts.push('结论：' + (c.hole <= 3
           ? '1px 容器可闭合空洞 → 可以直接隐藏'
-          : '1px 容器仍残留 ' + c.hole + 'px → **隐藏不可行**，改走「降显著度」（保高度，只缩小/去色/降对比，§7.5.0）'));
+          : '1px 容器仍残留 ' + c.hole + 'px'
+            + (d && d.hole <= 3 ? '，但**主动触发重测量可以闭合** ⇒ 走 JS 路径（改 size 缓存 + 触发重排）'
+              : '，且主动触发重测量也无效 → **隐藏不可行**，改走「降显著度」（保高度，只缩小/去色/降对比，§7.5.0）')));
       } else {
         parts.push('结论：未能测出');
+      }
+      if (res.scrollerVm && !res.scrollerVm.found) {
+        parts.push('（未找到虚拟列表 Vue 实例 ⇒ 无法评估 JS 路径）');
       }
       res.verdict = parts.join('；');
 
@@ -637,8 +808,18 @@
 
   function collectItems(containerEl) {
     if (!containerEl) return [];
+    // ① 最可靠：item-wrapper 的**直接子槽位** —— 绝不钻进卡片内的九宫格图片格
+    var w = itemWrapper() ||
+      (classes(containerEl).indexOf('vue-recycle-scroller__item-wrapper') !== -1 ? containerEl : null);
+    if (w) {
+      var slots = [];
+      for (var s = 0; s < w.children.length; s++) if (isScrollerSlot(w.children[s])) slots.push(w.children[s]);
+      if (slots.length >= 2) return slots;
+    }
+    // ② 容器自身就在信息流里 → 取其槽位后代
     var views = containerEl.querySelectorAll('.vue-recycle-scroller__item-view');
     if (views.length) return Array.prototype.slice.call(views);
+    // ③ 兜底（非虚拟列表页面）
     var kids = Array.prototype.slice.call(containerEl.children).filter(function (k) { return k.getBoundingClientRect().height > 30; });
     return kids.length ? kids : Array.prototype.slice.call(containerEl.children);
   }
@@ -952,6 +1133,10 @@
     huntAds: huntAds,
     probeAds: probeAds,
     findContainers: findContainers,
+    // 内部钩子（供测试 / 排查用，不是面向用户的 API）—— 守「项集合必须是信息流槽位」这条线
+    _feedItems: feedItems,
+    _collectItems: collectItems,
+    _isScrollerSlot: isScrollerSlot,
     _container: null,
     _items: [],
     _results: RESULTS,

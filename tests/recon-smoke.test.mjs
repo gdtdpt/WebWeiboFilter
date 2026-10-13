@@ -188,3 +188,54 @@ test('recon 冒烟：合成页 —— 干净外链不得命中任何埋点', { s
   assert.equal(ads.feedSuspects.length, 0, '自然卡的电商链接不该命中');
   assert.equal(ads.cleanCards, 1);
 });
+
+// ── 回归：项集合必须是**信息流槽位**，不得钻进卡片内的九宫格图片格 ──────────────
+//
+// 2026-10-13 真实事故：`findContainers()` 按「≥3 个同签名子节点」打分，一个 9 宫格图片网格
+// （9 个一模一样的 `woo-box-item-inlineBlock _item_a3hty_47 __yawf_feed-picture_item`，高 137px）
+// 得分比信息流容器还高 ⇒ 抢走 primary ⇒ `testHeight()` 拿图片格做隐藏实验，打出
+// `delta: 0 / residual: 137` 这种「看着像结论、其实无意义」的读数。
+// 下面两条断言把这个坑焊死：无论从哪个入口取项，结果都必须是 `.vue-recycle-scroller__item-view`。
+
+test('recon 冒烟：`_feedItems()` 只返回信息流槽位', { skip }, () => {
+  for (const file of fixtures) {
+    const html = readFileSync(join(FIXTURE_DIR, file), 'utf8');
+    const { recon } = bootRecon(html);
+
+    const items = recon._feedItems();
+    assert.ok(items.length >= 2, `${file}: 未取到信息流槽位（应 ≥2）`);
+
+    for (const it of items) {
+      const cls = it.getAttribute('class') || '';
+      assert.ok(cls.includes('vue-recycle-scroller__item-view'),
+        `${file}: _feedItems 混入非槽位元素 —— ${JSON.stringify(cls)}`);
+      assert.equal((it.parentElement.getAttribute('class') || '').includes('vue-recycle-scroller__item-wrapper'),
+        true, `${file}: 槽位的父节点不是 item-wrapper`);
+    }
+  }
+});
+
+test('recon 冒烟：即使喂进「图片格网格」当容器，`_collectItems()` 也必须纠正回信息流槽位', { skip }, () => {
+  const file = fixtures.find((f) => f.includes('1440')) || fixtures[0];
+  const html = readFileSync(join(FIXTURE_DIR, file), 'utf8');
+  const { recon, window } = bootRecon(html);
+
+  // 找一张卡里的九宫格单元（`woo-box-item-inlineBlock` 是 woo-* 设计系统类，B4 认证稳定）
+  const gridCell = [...window.document.querySelectorAll('.wbpro-scroller-item div')]
+    .find((el) => /(^|\s)woo-box-item-inlineBlock(\s|$)/.test(el.getAttribute('class') || '') &&
+                  el.querySelector('img'));
+  assert.ok(gridCell, `${file}: 夹具里找不到九宫格单元 —— 这条断言失去意义，请检查夹具`);
+
+  // 故意把「错容器」喂进去
+  const items = recon._collectItems(gridCell);
+  assert.ok(items.length >= 2, `${file}: 从错容器出发也该能纠正到信息流槽位`);
+
+  for (const it of items) {
+    const cls = it.getAttribute('class') || '';
+    assert.ok(cls.includes('vue-recycle-scroller__item-view'),
+      `${file}: _collectItems 未纠正 —— 返回了 ${JSON.stringify(cls)}`);
+  }
+
+  // 且绝不能把图片格本身当成项
+  assert.equal(items.includes(gridCell), false, `${file}: 图片格被当成了信息流项`);
+});

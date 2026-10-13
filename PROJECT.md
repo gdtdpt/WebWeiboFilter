@@ -680,12 +680,12 @@ L2 的"工单式"重排**只允许用 CSS 改变已有节点的摆位**（`displ
 | 编号 | 状态 | 结论 / 缺口 |
 | --- | --- | --- |
 | B1 | ✅ **已确认（2026-10-13 第二轮；`natural` 埋点同日降级）** | 微博的广告是**两类**，判据完全不同 —— **完整判据见下方「B1 专节」**：<br>**A 类 · 页面级 banner 广告位**（发布器正下方，**不在信息流里**）：纯图片，来源为广告投放 CDN `kadmimage.biz.weibo.com`，自带关闭按钮 ⇒ **间歇投放**（1440 无 / 1449、1505、1505(1) 有），不能假设常在。<br>**B 类 · 信息流内的推广卡**：四路判据按权重累加，**≥3 判广告、1~2 判存疑** ⇒ 实测 **2 张真广告卡 + 1 张存疑卡**。<br>**⛔ 反面结论（同样重要）**：① 卡片修饰符**区分不了**广告 —— 广告卡与自然卡同为 `_wrap_ecgcn_2 _normal_ecgcn_34`（**上一轮「广告卡会换 modifier」的猜测作废**）；② class 里**没有** `ad/promo/sponsor` 任何令牌（四份快照全为 0）；③ DOM 里搜不到「广告」二字 —— banner 上的标识是**烤在图片里**的；④ `div.wbpro-tag-img`（认证图标 `icon_auth_black.png`）出现在**自然卡**上，**不是**广告信号；⑤ **广告在 UI 上可能完全没有可见标识**（饼干姐卡）⇒ 埋点是唯一兜底 |
-| B2 | 🟡 **已部分定论（离线）+ 仍需一次实测** | **离线已定论**：项容器是 `transform` 定位的虚拟列表 —— `div.vue-recycle-scroller__item-view` 带内联 `transform: translateY(0 / 443 / 900 / 1331 / 1666px)`，回收槽为 `translateY(-9999px); opacity: 0`；外层 `item-wrapper` 带内联 `min-height: 8562px`。⇒ **位置由微博 JS 预先算好，隐藏一项不会让后续项上移** ⇒ `display:none` **必留洞**，§5.3 的 1px 容器能否闭合缺口**取决于微博是否重测该项尺寸**（ResizeObserver）⇒ **这一条仍需一次真机实测**（`SpecBaseRecon.testHeight()` 已重写：同时看 `getBoundingClientRect()`（含 transform）与 `offsetTop`，并在隐藏后采样 0/400/1200ms 抓**延迟重排**，跑完自动下载 JSON）。<br>**推论**：§7.5.0「降显著度不是删除」从设计取向升级为**技术必需** |
+| B2 | 🟡 **离线定论已确认；首次真机实测作废（探针取错对象，已修，待重跑）** | **离线定论**：项容器是 `transform` 定位的虚拟列表 —— `div.vue-recycle-scroller__item-view` 带内联 `transform: translateY(0 / 443 / 900 / 1331 / 1666px)`，回收槽为 `translateY(-9999px); opacity: 0`；外层 `item-wrapper` 带内联 `min-height: 8562px` ⇒ **位置由微博 JS 预计算，隐藏一项不会让后续项上移**。<br>**⚠️ 首次真机实测（2026-10-13 16:13）作废 —— 测的对象不是信息流项**：`testHeight()` 打出 `delta: 0 / residual: 137`，看上去正好支持上面的结论，但目标是 `woo-box-item-inlineBlock _item_a3hty_47 __yawf_feed-picture_item`，即**卡片内九宫格的一张图片格**（高 137px，外层是 `_inlineNum3_*` 三列图网格）。隐藏一张图片格当然不会让后续信息流项上移 ⇒ 读数**无信息量**。**根因**：`findContainers()` 按「≥3 个同签名子节点」打分，一个 **9 宫格（9 个一模一样的图片格）得分高于信息流容器** ⇒ 抢走 `primary` ⇒ `_items` 变成图片格 ⇒ `testHeight()` 照单全收。<br>**已修（2026-10-13）**：① `feedItems()` 只认 `item-wrapper` 的**直接子槽位**；② `scoreContainer()` 给「子节点是虚拟槽位」的组 **+1000** 加权，嵌套网格再也抢不走；③ `testHeight()` 每次打印**目标身份**（tag / class / `data-index`）并校验 `sanity.targetIsScrollerSlot`，取错对象时 verdict 直接报警；④ 新增 2 条夹具回归测试把坑焊死（`_feedItems()` 只返回槽位 / 从图片格出发也必须纠正回槽位）。<br>**本轮同时加测**：新增「1px + **主动触发重测量**」（`handleResize` / `forceUpdate` / `window resize`）与「`visibility:hidden` 对照组」两组实验，并探测虚拟列表 **Vue 实例是否暴露 `sizes[]`** —— 若暴露，CSS 之外还有一条 JS 路径（改 size 缓存 + 触发重排）。<br>⇒ **待用户重跑一次 `SpecBaseRecon.testHeight()` 才能闭合 B2**。<br>**推论（不依赖重跑）**：§7.5.0「降显著度不是删除」从设计取向升级为**技术必需** |
 | B3 | ✅ **已确认** | 容器 `div.vue-recycle-scroller__item-wrapper` → 项 `div.vue-recycle-scroller__item-view`（虚拟槽位，带 `data-index`）→ 卡 `div.wbpro-scroller-item` → `article`。<br>**帖子稳定 ID = 时间链接 `https://weibo.com/<uid>/<bid>` 里的 `bid`**（base62，如 `Rmb9sjU1W`） |
 | B4 | ✅ **已确认（含一处重要修正）** | **① 可靠锚点**（两份快照都在）：`wbpro-*` 语义类 —— `wbpro-scroller-item` / `wbpro-feed-content` / `wbpro-feed-ogText` / `wbpro-feed-reText` / `wbpro-textcut`；`woo-*` 设计系统类 —— `woo-avatar-img` / `woo-icon-vipimg` / `woo-picture-main` / `woo-panel-main` / `woo-box-flex` …；以及 `vue-*` / `vjs-*`。<br>**② 构建哈希**：`_name_hash_lineno`（`_num_198pe_46`、`_normal_ecgcn_34`）⇒ **禁止写进选择器**（构建一变即失效）。<br>**③ ⚠️ 修正：`__yawf_*` 不是微博的。** 同一次构建（哈希 `198pe` / `ecgcn` 完全一致）下，第一份快照有 1928 处、第二份 0 处 ⇒ 它是**运行时被外部脚本注入**的（`__yawf_component_*__` / `__yawf_key___` / `__yawf_event_*` 是典型的 Vue 组件与事件注解）⇒ **绝不能依赖**（首轮据此得出的 B4 结论已作废） |
 | B5 | ✅ **已确认（单次采样）** | 右下角 24×24 无遮挡（`clean: true`，视口 1128×851）⇒ §8.2 隐藏热区可行 |
 | B6 | ✅ **已确认** | `.wbpro-scroller-item` 存在且每卡一个；上游情报成立 |
-| B7 | ⏳ **仍未实测** | `watchTitle(20)` 未跑（已改为**跑完自动下载 JSON**，不再需要从 Console 复制）。实测到的 title 有 `微博 – 随时随地发现新鲜事` 与 `最新微博 - 首页 - 微博` 两种（**跟随页面态变化**）；是否被微博改写仍未知，L0 的 `MutationObserver` 按「可能改写」实现。<br>⚠️ 若 title 本就随页面切换变化，L0 的「只写一次」策略会失效 ⇒ 这条要在 M2 前补测 |
+| B7 | 🟡 **已实测一次（静置期不改写）；但因「title 随页面态变化」⇒ 持续校正仍是必需** | `watchTitle(20)`（2026-10-13 16:13 实测）：20 秒静置期内 `changeCount: 0` —— title 稳定为 `微博 – 随时随地发现新鲜事`、favicon 稳定为 `https://weibo.com/favicon.ico`（`rel=icon`）⇒ **静置期微博不会自己改写**。<br>⚠️ 但这**不足以**支持「L0 只写一次」：跨快照实测到两种 title —— `微博 – 随时随地发现新鲜事`（首页）与 `最新微博 - 首页 - 微博`（另一页面态）⇒ **微博是 SPA，切页会改 title**（与「新消息计数 `(1) 我的首页 微博`」「favicon 红角标」是两条独立时机）。<br>⇒ **L0 结论：`MutationObserver` 持续校正是必需的**，监听时机要覆盖 **① SPA 换页 ② 新消息计数（若发生）**；不能只在启动时写一次。<br>本次实测的价值：排除了「静置几秒就与微博互改打架」的风险，为 §11 的 L0 验收补上依据 |
 | B8 | ✅ **初稿已出** | 探针清单已落在 `src/adapters/weibo-home.js` 的 `PROBES`（9 条：容器 / 虚拟槽位 / 卡片 / 原创正文 / 转发原文 / 头像 / 标签槽 / 关注按钮 / 广告 CDN 图），每条含 `selector + expect + failMeans`；`runProbes()` 可只读执行。<br>⚠️ 「广告 CDN 图」一条的 `expect` 是 `variable` —— **命中 0 属正常**（实测间歇投放），只有当肉眼可见广告而命中 0 时才算失效 |
 
 #### B1 专节 · 广告判据（✅ 已定稿 · 2026-10-13 第二轮；`natural` 降级见 2026-10-13 追加）
@@ -768,7 +768,12 @@ L2 的"工单式"重排**只允许用 CSS 改变已有节点的摆位**（`displ
 - ✅ **`__yawf_*` 的来源已查明并消除**：是上游油猴脚本（`tiansh/yawf` 系）运行时注入的 Vue 注解。用户已在第二轮采集前**卸载该脚本**，之后三份快照 `__yawf_*` 计数均为 0 ⇒ 后续夹具是干净基线。**但这条教训要记住：侦察前必须确认浏览器里没有别的微博脚本在改 DOM**，否则夹具不可比。
 
 **下一步**：B1 已定稿 ⇒ **M1 的广告识别已落地**（`src/core/ad-detect.js`、`src/adapters/weibo-home.js`）。
-仍欠两次实测（不阻塞编码，但阻塞 M1 的「隐藏」落地）：① 跑 `SpecBaseRecon.testHeight()` 定 B2；② 跑 `SpecBaseRecon.watchTitle(20)` 定 B7。
+**B7 已实测**（2026-10-13 16:13）⇒ L0 策略定案：`MutationObserver` 持续校正（覆盖 SPA 换页 + 新消息计数），**不能只写一次**。
+**B2 仍欠一次「有效」实测**：首测打空了 —— `testHeight()` 拿卡片内的**九宫格图片格**当了目标（`woo-box-item-inlineBlock _item_a3hty_47 __yawf_feed-picture_item`，高 137px），
+所以 `delta: 0 / residual: 137` 是假象（隐藏一张图片格当然不影响信息流项位置）。
+探针**已修**：`feedItems()` 只认 `item-wrapper` 的直接子槽位 · `scoreContainer()` 给「子节点是虚拟槽位」的组 **+1000** 加权 ·
+`testHeight()` 打印目标身份并在取错对象时用 `sanity.warning` 报警 · 新增 2 条夹具回归测试 · 实验组从 2 组扩到 **4 组**（+「1px + 主动触发重测量」+「`visibility:hidden` 对照组」）。
+⇒ **请重跑一次 `testHeight()`**；跑完看控制台有没有 `sanity.warning`（**有 → 本次读数作废**，把 JSON 原样发我）。
 **两个探针跑完都会自动下载 JSON 文件**（`probe-height-*.json` / `probe-title-*.json`），不需要从 Console 复制对象；
 若想一次全拿走，跑 `SpecBaseRecon.exportResults()`（汇总成 `probe-all-*.json`），下载被拦时用 `SpecBaseRecon.copyResult()`。
 另建议：`SpecBaseRecon.probeAds()` 可在任何时刻复跑，确认判据在**活页面**上仍然成立（现在会同时列出「推广卡」与「存疑卡」）。
@@ -783,6 +788,8 @@ L2 的"工单式"重排**只允许用 CSS 改变已有节点的摆位**（`displ
   - 进度：**适配层 ✅ 已落地** —— `src/adapters/weibo-home.js`：卡片信号抽取 + 页面广告位发现 + 9 条探针（`PROBES` / `runProbes()`）。
   - 进度：**夹具回放测试 ✅ 已就绪** —— `tests/fixture-ad.test.mjs`（linkedom 真 DOM，夹具缺失时自动跳过）。
   - **未做（有意）**：调度层与应用层**尚未接线** —— 因为「怎么隐藏才不留洞」取决于 B2 实测结论（§12-B2）。在 B2 定论前写隐藏逻辑 = 写注定要重写的代码。
+  - **2026-10-13 追加**：B7 已实测（⇒ L0 走 `MutationObserver` 持续校正）；B2 首测**因探针取错对象而作废**，探针已修（槽位锚定 + 加权 + 身份校验 + 2 条回归测试），**待用户重跑**。
+    重跑若确认「洞无法闭合」，M1 的应用层就按 §7.5.0「保高度、只降显著度」接线 —— 不再考虑任何「删除式」隐藏。
 - **M2 低调模式**：L1 + L2 落地，首帧注入，可逆。
 - **M3 入口与面板**：隐藏热区 + TM 菜单 + 首次提示 + 配置持久化 + 导出导入 + 可解释性 + **探针注册表与诊断页「适配自检」**（§6.1 / §8.3）。
 

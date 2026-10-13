@@ -98,9 +98,21 @@ npm test          # 等价于 node --test（无参数会自动发现测试文件
    - `SpecBaseRecon.saveSnapshot()` → HTML（放进 `tests/fixtures/`，作为离线单测输入）
 4. 需要时手动补跑：
    - `SpecBaseRecon.probeAds()` —— 广告判据实测（B1）：逐条打印 A 类广告位 / B 类推广卡 / **存疑卡**命中了哪条判据
-   - `SpecBaseRecon.testHeight()` —— 量隐藏一项后的上移量 / 残留空洞 / 延迟重排（B2）。**跑完自动下载 JSON**
+   - `SpecBaseRecon.testHeight()` —— 量隐藏一项后的上移量 / 残留空洞 / 延迟重排（B2）。**跑完自动下载 JSON**。
+     跑**四组**实验：`display:none` / `1px 容器` / `1px + 主动触发重测量` / `visibility:hidden`（对照组）；
+     并探测虚拟列表 Vue 实例是否暴露 `sizes[]`（决定 CSS 之外还有没有 JS 路径）。
    - `SpecBaseRecon.watchTitle(20)` —— 观察 20s，看微博是否自己改写 title/favicon（B7）。**跑完自动下载 JSON**
 5. 对**分组页 / 详情页 / 关注页**各存一份快照（§12 采集方式）。
+
+> ⚠️ **`testHeight()` 每次都会打印「目标身份」并把校验结果放在 `sanity` 里。**
+> 若 `sanity.warning` 非空（目标不是 `.vue-recycle-scroller__item-view` 槽位）⇒ **本次读数作废**。
+>
+> 这是 2026-10-13 踩过的真坑：探针按 `findContainers()` 的最高分容器取项，结果钻进了**卡片内的九宫格图片格**
+> （`woo-box-item-inlineBlock _item_a3hty_47 __yawf_feed-picture_item`，高 137px），打出 `delta: 0 / residual: 137`
+> —— 看着像结论、其实无意义。现在 `feedItems()` 只认 `item-wrapper` 的**直接子槽位**，
+> `scoreContainer()` 给「子节点是虚拟槽位」的组 **+1000** 加权，`tests/recon-smoke.test.mjs` 有 2 条夹具回归测试守着。
+> **教训（可迁移）**：靠「同签名子节点 ≥3」这类**结构启发式**找容器，一定会被嵌套网格抢走；
+> 必须优先用**语义锚点**（`item-wrapper` → `item-view`），启发式只当兜底，而且取到对象后要**校验身份**。
 
 **结果怎么拿走（不用从 Console 复制对象）**
 
@@ -191,15 +203,20 @@ node tools\recon\find-ad-slots.mjs tests\fixtures\snapshot-YYYYMMDD-HHMM.html --
 
 **活页面上随时复查**：Console 里跑 `SpecBaseRecon.probeAds()`，会分别列出「推广卡」与「存疑卡」并打印命中了哪条判据。
 
-仍未定：**高度行为 B2**（离线已定论一半：`translateY` 定位 ⇒ `display:none` 必留洞；1px 容器是否闭合缺口待实测）、
-**title/favicon 是否被改写 B7** —— 见 PROJECT.md §12-B。
+**B7 已定（2026-10-13 16:13）**：`watchTitle(20)` 实测 20s 静置期 `changeCount: 0`（title / favicon 都没被改写）；
+但实测到 title 有两种（`微博 – 随时随地发现新鲜事` / `最新微博 - 首页 - 微博`）⇒ **微博是 SPA，切页会改 title**
+⇒ L0 必须 `MutationObserver` **持续校正**（覆盖 SPA 换页 + 新消息计数），不能只写一次。
+
+**B2 仍未定，且首测作废**：离线已定论「`transform` 定位 ⇒ `display:none` 必留洞」；
+首测的 `delta: 0 / residual: 137` 是**探针取错对象**（拿卡片内的九宫格图片格当了信息流项，见 §5 的踩坑框）⇒ 待重跑。
+探针本次同时新增了「1px + 主动触发重测量」与「`visibility:hidden` 对照组」，并会探测 Vue 实例的 `sizes[]`。见 PROJECT.md §12-B。
 
 ## 6. 里程碑与进度（§13）
 
 | 里程碑 | 内容 | 状态 |
 | --- | --- | --- |
-| **M0 侦察** | 侦察采集 + DOM 快照夹具 + 结构报告 | 🟢 **B1/B3/B4/B5/B6 ✅ 已闭环**（4 份快照）；仅欠 **B2 高度实测**与 **B7 title 改写** |
-| **M1 管线** | 调度层 / 判定核心 / 应用层 + 广告识别 + 关键词过滤 | 🟡 **广告识别 ✅ 已落地**（`src/core/ad-detect.js` + `src/adapters/weibo-home.js` + 夹具回放 4 份真实快照，单测 **40/40 全绿**）；**调度层/应用层有意未接线** —— 等 B2 定论 |
+| **M0 侦察** | 侦察采集 + DOM 快照夹具 + 结构报告 | 🟢 **B1/B3/B4/B5/B6 ✅ 已闭环**（4 份快照）；**B7 ✅ 已实测**（⇒ L0 走持续校正）；仅欠 **B2 高度实测**（首测因探针取错对象作废，已修，待重跑） |
+| **M1 管线** | 调度层 / 判定核心 / 应用层 + 广告识别 + 关键词过滤 | 🟡 **广告识别 ✅ 已落地**（`src/core/ad-detect.js` + `src/adapters/weibo-home.js` + 夹具回放 4 份真实快照，单测 **49/49 全绿**）；**调度层/应用层有意未接线** —— 等 B2 定论（若确认洞不可闭合 ⇒ 按 §7.5.0 保高度、只降显著度接线） |
 | **M2 低调模式** | L1 + L2 落地、首帧注入、可逆 | 🟡 **L0 已落地**（零适配成本，不依赖侦察结论） |
 | **M3 入口与面板** | 隐藏热区 + TM 菜单 + 配置导入导出 + 可解释性 + 探针注册表 + 诊断页 | ⛔ （探针**注册表**已在 `src/adapters/weibo-home.js#PROBES` 先落好，M3 只差 UI） |
 
