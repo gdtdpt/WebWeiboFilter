@@ -30,6 +30,13 @@ export const SEL_ITEM_VIEW = ['.vue-recycle-scroller__item-view'];
 /** 卡片根 —— 稳定类名，实测每卡一个 */
 export const SEL_CARD = ['.wbpro-scroller-item'];
 
+/**
+ * 首页主栏 —— **A 类广告位的收口锚点**。
+ * 实测结构：`#homeWrap` 依次是「发布器卡 → A 类广告位（匿名 div）→ 时间线容器」，
+ * 所以「收掉整块 banner」= 把标记打在**它的直接子节点**上（见 scheduler 的 pageAdContainer）。
+ */
+export const SEL_HOME_WRAP = ['#homeWrap'];
+
 /** 原创正文 / 转发原文（§12-A3 关键词字段白名单的落点） */
 export const SEL_OG_TEXT = ['.wbpro-feed-ogText'];
 export const SEL_RE_TEXT = ['.wbpro-feed-reText'];
@@ -253,6 +260,13 @@ export const PROBES = [
     selector: SEL_CARD.join(' / '),
     expect: 'exists',
     failMeans: '卡片选择器失效 ⇒ 逐卡判定与隐藏全部停摆',
+  },
+  {
+    id: 'home-wrap',
+    desc: '首页主栏 #homeWrap（A 类 banner 的收口锚点）',
+    selector: SEL_HOME_WRAP.join(' / '),
+    expect: 'optional',
+    failMeans: 'A 类收口锚点失效 ⇒ banner 只会退回到「收图片那一层」，可能残留外层 padding 的空白（B 类过滤不受影响，因为用不到它）',
   },
   {
     id: 'og-text',

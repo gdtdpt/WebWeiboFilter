@@ -1,11 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { decide } from '../src/core/decision.js';
+import { decide, ACTION } from '../src/core/decision.js';
 import { loadConfig, DEFAULT_CONFIG, hasGM } from '../src/config.js';
 
-test('判定核心在 M1 前是空实现：一切保留，不碰 DOM', () => {
-  assert.deepEqual(decide({ id: '1', text: '任何内容' }, {}), { action: 'keep', reason: null });
+test('判定核心不碰 DOM：只吃数据包、只吐动作（M1 已接线）', () => {
+  const d = decide({ id: '1', text: '任何内容' }, {});
+  assert.equal(d.action, ACTION.KEEP);
+  assert.deepEqual(d.reasons, []);
+  assert.equal(d.suspect, false);
+  assert.equal(d.adScore, 0);
 });
 
 test('非 GM 环境（Node）下 loadConfig 回落到默认值', () => {
@@ -16,4 +20,6 @@ test('非 GM 环境（Node）下 loadConfig 回落到默认值', () => {
   assert.equal(c.appearance.thumbHeight, 60);
   assert.deepEqual(c.filter.keywords, []);
   assert.deepEqual(c.filter.detect, DEFAULT_CONFIG.filter.detect);
+  // 过滤总开关（§7.4 约束 3「可逆」的落点）
+  assert.equal(c.filter.enabled, true);
 });

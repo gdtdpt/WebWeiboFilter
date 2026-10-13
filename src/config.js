@@ -31,6 +31,8 @@ export const DEFAULT_CONFIG = {
     hotspotCorner: 'br',
   },
   filter: {
+    /** 过滤总开关（§7.4 约束 3「可逆」）—— 关掉即清掉页面上全部标记并停止调度 */
+    enabled: true,
     /** 关键词规则：[{ content, action: 'hide'|'highlight', fields: [...] }] */
     keywords: [],
     /** 正则模式（§8.3 过滤页） */

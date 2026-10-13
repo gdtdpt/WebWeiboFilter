@@ -4,17 +4,25 @@
  * 交付形态（PROJECT.md §4）：源码分模块 → esbuild 打包 → 单个 specbase-helper.user.js。
  * 本入口在 `@run-at document-start` 下执行，因此**任何 DOM 操作都必须容忍 head/body 尚未解析**。
  *
+ * 启动顺序（§5.2「首帧」与 §7.4 约束 1）：
+ *   ① **首帧**：注入压制样式（`apply/style.js`）—— 必须最早，否则先闪微博原皮/先露广告
+ *   ② **首帧**：外观档 L0（`features/l0.js`）—— 零适配成本，不依赖任何选择器
+ *   ③ **DOM 就绪后**：过滤管线（`scheduler.js`）—— 要等信息流渲染出来才有意义
+ *
  * 里程碑进度（§13）：
- *   M0 侦察  — 工具在 tools/recon/recon.js（尚未拿到真实页面数据）
- *   M1 管线  — src/core + 调度层 + 应用层（待 M0 结论）
- *   M2 低调  — L0 已落地本切片；L1/L2 待 M0 结论
- *   M3 面板  — 入口热区 / 面板 / 配置导入导出 / 探针注册表
+ *   M0 侦察  — ✅ 全部闭环（B1~B7，工具在 tools/recon/）
+ *   M1 管线  — ✅ 判定核心（广告 + 关键词）+ 调度层 + 应用层已接线
+ *   M2 低调  — L0 已落地；L1/L2 待做
+ *   M3 面板  — 入口热区 / 面板 / 配置导入导出 / 诊断页（探针注册表已在适配层就位）
  */
 
 import { loadConfig } from './config.js';
 import { applyL0 } from './features/l0.js';
+import { ensureStyle } from './apply/style.js';
+import { createScheduler } from './scheduler.js';
 
 const PREFIX = '[SpecBase]';
+const VERSION = '0.1.0';
 
 function log(...args) {
   try {
@@ -24,17 +32,31 @@ function log(...args) {
   }
 }
 
-function boot() {
-  let config;
+let config = null;
+let scheduler = null;
+let appearanceApplied = false;
+let filterStarted = false;
+
+/** 读一次配置并缓存（GM_* 不可用时退回默认值） */
+function readConfig() {
+  if (config) return config;
   try {
     config = loadConfig();
   } catch (e) {
     log('配置读取失败，使用默认值', e);
-    return;
+    config = null;
   }
+  return config;
+}
 
-  // L0：零适配成本、不依赖任何选择器，是当前唯一可独立成立的档（§7.3）
-  if (config.appearance && config.appearance.l0) {
+/** ② 外观：L0（+ M2 的 L1/L2 将挂在这里） */
+function applyAppearance() {
+  if (appearanceApplied) return;
+  const cfg = readConfig();
+  if (!cfg) return;
+  appearanceApplied = true;
+
+  if (cfg.appearance && cfg.appearance.l0) {
     try {
       const title = applyL0(document);
       log('L0 标签页伪装已启用 →', title);
@@ -44,8 +66,72 @@ function boot() {
   }
 }
 
-// document-start 时 head 可能还不存在；两个时机都尝试，applyL0 内部幂等且带防御性 observer。
-boot();
+/** ③ 过滤管线 */
+function startFilter() {
+  if (filterStarted) return;
+  const cfg = readConfig();
+  if (!cfg) return;
+
+  if (!(cfg.filter && cfg.filter.enabled)) {
+    log('过滤已关闭（config.filter.enabled = false）');
+    return;
+  }
+  filterStarted = true;
+
+  try {
+    scheduler = createScheduler(document, cfg, { log });
+    scheduler.start();
+  } catch (e) {
+    filterStarted = false;
+    log('过滤管线启动失败（页面不受影响）', e);
+  }
+}
+
+/**
+ * 首帧：样式注入 + L0。
+ * `document-start` 时 `documentElement` 可能还不存在 ⇒ 样式注入推后到 DOMContentLoaded 再补一次。
+ */
+function bootFirstFrame() {
+  if (ensureStyle(document)) log('压制样式已注入（首帧）');
+  applyAppearance();
+}
+
+bootFirstFrame();
+
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', boot, { once: true });
+  document.addEventListener('DOMContentLoaded', () => {
+    ensureStyle(document);   // 首帧没插进去时补一次
+    startFilter();
+  }, { once: true });
+} else {
+  ensureStyle(document);
+  startFilter();
+}
+
+/**
+ * 真机验收 / 调试用的最小把手（无界面、低调 —— §8.2「入口隐形」只约束**可见**入口）。
+ * 完整面板属 M3；这里只是让「关掉开关后页面是否完全恢复」能在控制台一句话验证（§7.4 约束 3）。
+ */
+try {
+  window.__spb = {
+    version: VERSION,
+    config: () => readConfig(),
+    rescan: () => (scheduler ? scheduler.rescan() : null),
+    stats: () => (scheduler ? scheduler.stats() : null),
+    recent: () => (scheduler ? scheduler.recent() : []),
+    /** 关掉过滤：清掉全部标记并停止观测 —— 用来肉眼确认「可逆」 */
+    off: () => {
+      if (!scheduler) return 0;
+      scheduler.stop();
+      filterStarted = false;
+      return true;
+    },
+    /** 重新打开过滤 */
+    on: () => {
+      startFilter();
+      return Boolean(scheduler && scheduler.isRunning());
+    },
+  };
+} catch (_e) {
+  /* 无 window（测试环境）时静默 */
 }

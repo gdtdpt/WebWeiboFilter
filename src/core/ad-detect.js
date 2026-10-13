@@ -218,6 +218,18 @@ export function isAdCloseIcon(src) {
  */
 
 /**
+ * 广告识别三项开关（§8.3「过滤」页的「广告识别三项开关：推广 / 荐读 / 嵌入广告」）。
+ *
+ * 映射到判据上（一一对应，不做交叉）：
+ *   - `promo`     = **推广**     → 外链广告埋点 + 卡内「关注」按钮（B 类商业推广的两路）
+ *   - `recommend` = **荐读**     → 头部标签槽文案（实测样本就是「荐读」）
+ *   - `embedded`  = **嵌入广告** → 卡内图片来自广告 CDN（嵌在卡里的广告素材）
+ *
+ * 默认全开。关掉某一路 ⇒ 该路判据不计分、理由里也不再出现。
+ */
+export const DETECT_GATE_DEFAULT = { promo: true, recommend: true, embedded: true };
+
+/**
  * 判定一张**信息流卡**是否为推广卡（B 类）。
  *
  * 实测支持：
@@ -228,45 +240,56 @@ export function isAdCloseIcon(src) {
  *   - 1440   无广告快照：四路全灭（8 张卡）
  *
  * @param {FeedItemSignals} sig
+ * @param {{promo?:boolean,recommend?:boolean,embedded?:boolean}} [gate] 三项开关（§8.3），缺省全开
  * @returns {AdVerdict}
  */
-export function classifyFeedItem(sig) {
+export function classifyFeedItem(sig, gate) {
   const s = sig || {};
+  const g = Object.assign({}, DETECT_GATE_DEFAULT, gate || {});
   const reasons = [];
   let score = 0;
 
-  // 埋点：每个 URL 只取第一个命中的标记（表序=优先级），再跨 URL 取**权重最高**的一条
-  const urlHits = [];
-  for (const u of (s.urls || [])) {
-    const id = matchAdUrl(u);
-    if (id && urlHits.indexOf(id) === -1) urlHits.push(id);
-  }
-  if (urlHits.length) {
-    let best = urlHits[0];
-    for (const id of urlHits) {
-      if (adMarkerWeight(id) > adMarkerWeight(best)) best = id;
+  // 「推广」开关：埋点 + 关注按钮
+  if (g.promo) {
+    // 埋点：每个 URL 只取第一个命中的标记（表序=优先级），再跨 URL 取**权重最高**的一条
+    const urlHits = [];
+    for (const u of (s.urls || [])) {
+      const id = matchAdUrl(u);
+      if (id && urlHits.indexOf(id) === -1) urlHits.push(id);
     }
-    const w = adMarkerWeight(best);
-    score += w;
-    // §9 可解释性：证据不足时必须说清「为什么只算线索」，否则用户看不懂为什么没被过滤
-    reasons.push(w < AD_THRESHOLD
-      ? `正文外链带广告埋点(${adMarkerLabel(best)}，证据不足仅记为线索)`
-      : `正文外链带广告埋点(${adMarkerLabel(best)})`);
+    if (urlHits.length) {
+      let best = urlHits[0];
+      for (const id of urlHits) {
+        if (adMarkerWeight(id) > adMarkerWeight(best)) best = id;
+      }
+      const w = adMarkerWeight(best);
+      score += w;
+      // §9 可解释性：证据不足时必须说清「为什么只算线索」，否则用户看不懂为什么没被过滤
+      reasons.push(w < AD_THRESHOLD
+        ? `正文外链带广告埋点(${adMarkerLabel(best)}，证据不足仅记为线索)`
+        : `正文外链带广告埋点(${adMarkerLabel(best)})`);
+    }
   }
 
-  const hostHit = (s.imgSrcs || []).map(matchAdHost).find(Boolean);
-  if (hostHit) {
-    score += WEIGHT.adHost;
-    reasons.push(`卡内图片来自广告 CDN(${hostHit})`);
+  // 「嵌入广告」开关：卡内广告 CDN 图
+  if (g.embedded) {
+    const hostHit = (s.imgSrcs || []).map(matchAdHost).find(Boolean);
+    if (hostHit) {
+      score += WEIGHT.adHost;
+      reasons.push(`卡内图片来自广告 CDN(${hostHit})`);
+    }
   }
 
-  const tagHit = (s.tagTexts || []).map(matchAdTag).find(Boolean);
-  if (tagHit) {
-    score += WEIGHT.tagText;
-    reasons.push(`头部推广标签「${tagHit}」`);
+  // 「荐读」开关：头部推广标签文案
+  if (g.recommend) {
+    const tagHit = (s.tagTexts || []).map(matchAdTag).find(Boolean);
+    if (tagHit) {
+      score += WEIGHT.tagText;
+      reasons.push(`头部推广标签「${tagHit}」`);
+    }
   }
 
-  if (s.hasFollowButton) {
+  if (g.promo && s.hasFollowButton) {
     score += WEIGHT.followButton;
     reasons.push('卡内出现「关注」按钮（首关时间线里不该有）');
   }

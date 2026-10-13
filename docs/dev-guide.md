@@ -21,11 +21,16 @@ WeiboFilter/
 ├── package.json
 ├── docs/dev-guide.md       本文件
 ├── src/                    源码（分模块，esbuild 会打成单文件）
-│   ├── main.js             入口：读配置 → 逐档应用；document-start 下执行
+│   ├── main.js             入口：首帧（样式 + L0）→ DOM 就绪后启动过滤管线
 │   ├── config.js           配置读写（GM_setValue）+ 默认值 + 深合并
+│   ├── scheduler.js        **调度层（§6 第①层）**：唯一接触 MutationObserver 的地方
 │   ├── core/               判定核心（纯函数，§6 第②层）—— 禁止引用 DOM
-│   │   ├── decision.js     动作判定骨架（关键词过滤待填）
-│   │   └── ad-detect.js    **广告识别（已落地，判据见 PROJECT.md §12-B1）**
+│   │   ├── decision.js     两条判定线的合成：广告 ∪ 关键词 → 一个动作
+│   │   ├── ad-detect.js    **广告识别**（判据见 PROJECT.md §12-B1）
+│   │   └── keyword.js      **关键词过滤**（字段白名单见 §12-A3）
+│   ├── apply/              **应用层**（§6 第③层出口）
+│   │   ├── style.js        样式（首帧注入）：一条属性 + 两条 CSS
+│   │   └── mark.js         幂等打标记 / 撤销标记
 │   ├── adapters/
 │   │   └── weibo-home.js   微博首页适配层：卡片信号抽取 + 页面广告位发现 + 探针注册表
 │   └── features/
@@ -39,10 +44,16 @@ WeiboFilter/
 │       └── find-ad-slots.mjs        离线「广告位定位」：真 DOM + 祖先链 + 稳定签名（parse5）
 └── tests/
     ├── fixtures/           DOM 快照夹具（⚠️ 含真实内容，已 gitignore）
+    ├── _fixture-expect.mjs     夹具期望值表（**唯一一份**，多个测试共用）
     ├── l0.test.mjs
     ├── core.test.mjs
-    ├── ad-detect.test.mjs      广告判据单测（31 条，全部基于实测字符串）
-    └── fixture-ad.test.mjs     夹具回放：真快照上跑适配层 + 判定核心（夹具缺失时自动跳过）
+    ├── ad-detect.test.mjs      广告判据单测（全部基于实测字符串）
+    ├── keyword.test.mjs        关键词过滤单测（核心是 §12-A3 字段白名单）
+    ├── decision.test.mjs       两条判定线合成的边界（并集 / 优先级 / 存疑不动手）
+    ├── fixture-ad.test.mjs     夹具回放：真快照上跑适配层 + 判定核心
+    ├── pipeline.test.mjs       **端到端**：调度层 + 核心 + 应用层跑在真快照上
+    ├── probes.test.mjs         探针注册表结构 + 真快照自检（§6.1）
+    └── recon-smoke.test.mjs    recon.js 无浏览器冒烟（vm 沙箱 + 真快照 + 合成页）
 ```
 
 ## 3. 构建
@@ -220,9 +231,40 @@ node tools\recon\find-ad-slots.mjs tests\fixtures\snapshot-YYYYMMDD-HHMM.html --
 | 里程碑 | 内容 | 状态 |
 | --- | --- | --- |
 | **M0 侦察** | 侦察采集 + DOM 快照夹具 + 结构报告 | 🟢 **全部闭环**：B1 ✅（广告判据）· B2 ✅（2026-10-13 16:21 实测 ⇒ **隐藏不可行**）· B3~B7 ✅（含 B7 ⇒ L0 走持续校正） |
-| **M1 管线** | 调度层 / 判定核心 / 应用层 + 广告识别 + 关键词过滤 | 🟡 **广告识别 ✅ 已落地**（`src/core/ad-detect.js` + `src/adapters/weibo-home.js` + 夹具回放 4 份真实快照，单测 **49/49 全绿**）；**调度层/应用层未接线** —— B2 已定论，接线路径 = §7.5.0 **保高度 + 降显著度**（具体形式待拍板） |
-| **M2 低调模式** | L1 + L2 落地、首帧注入、可逆 | 🟡 **L0 已落地**（零适配成本，不依赖侦察结论） |
-| **M3 入口与面板** | 隐藏热区 + TM 菜单 + 配置导入导出 + 可解释性 + 探针注册表 + 诊断页 | ⛔ （探针**注册表**已在 `src/adapters/weibo-home.js#PROBES` 先落好，M3 只差 UI） |
+| **M1 管线** | 调度层 / 判定核心 / 应用层 + 广告识别 + 关键词过滤 | 🟢 **已接线**（2026-10-13）：判定核心（`ad-detect` + `keyword` + `decision`）+ 调度层（`scheduler.js`）+ 应用层（`apply/`）；单测 **86/86 全绿**（含 4 份真快照上的端到端管线）；**真机冒烟待做**（见 §8 的验收清单） |
+| **M2 低调模式** | L1 + L2 落地、首帧注入、可逆 | 🟡 **L0 已落地**（零适配成本，不依赖侦察结论）；L1/L2 待做 |
+| **M3 入口与面板** | 隐藏热区 + TM 菜单 + 配置导入导出 + 可解释性 + 探针注册表 + 诊断页 | ⛔ （探针**注册表**已在 `src/adapters/weibo-home.js#PROBES` 落好并有测试守着，M3 只差 UI；`scheduler.recent()` / `stats()` 已备好数据源） |
+
+## 6.5 M1 管线怎么跑（接线后的数据流）
+
+```
+[DOM] ──适配层(readCardSignals)──▶ [数据包] ──判定核心(decide)──▶ [动作]
+  ▲                                     ▲                          │
+  │                            core/ad-detect.js（广告，§12-B1）    │
+  │                            core/keyword.js   （关键词，§12-A3）  │
+  │                                     ▲                          ▼
+  └──调度层(scheduler.js)───────────────┘              应用层(apply/mark.js)
+      MutationObserver + scroll 去抖(120ms)                data-spb="hidden" / "ad"
+      每轮对**当前渲染的每个槽位重新判定**                      │
+                                                        apply/style.js（首帧注入 CSS）
+```
+
+**四条必须记住的约束**（都有测试守着）：
+
+1. **标记不持久**：槽位会被回收复用，所以每轮扫描都**重新判定 + 幂等设置/清除**标记（§5.2 第 ④ 条）。`pipeline.test.mjs` 有一条「槽位复用后标记必须跟着内容走」。
+2. **两种广告、两套机制**：B 类（信息流内）`visibility:hidden` **保高度**（§12-B2 定论，不能删）；A 类（流外 banner）`display:none` 真正收掉。
+3. **不观察 attributes**：虚拟列表疯狂写 `style.transform`，观察它会互相触发；只 observe `childList + subtree + characterData` + scroll(capture) 兜底。
+4. **可逆**：`scheduler.stop()` 清空全部标记；`config.filter.enabled = false` 即不启动。
+
+**页面上的调试把手**（无界面，低调 —— §8.2 只约束「可见」入口）：
+
+```js
+__spb.stats()    // { scans, slots, hidden, pageAds, records, lastScanAt, hidden/pageAd 当前计数 }
+__spb.recent()   // 最近命中（内存态，最多 200 条；刷新即清）
+__spb.rescan()   // 立刻重扫一次
+__spb.off()      // 停掉过滤并清空全部标记 —— 用来肉眼验证「关掉后完全恢复」
+__spb.on()       // 再打开
+```
 
 ## 7. 三条不可违背的工程纪律（摘自 PROJECT.md）
 
@@ -235,5 +277,15 @@ node tools\recon\find-ad-slots.mjs tests\fixtures\snapshot-YYYYMMDD-HHMM.html --
 1. 构建：`tools\build.ps1` 产出 `.user.js` 无报错
 2. 自测：`npm test` 全绿
 3. **真机冒烟**：Chrome 里加载脚本，肉眼确认过滤生效、无首帧闪烁、关掉后页面完全恢复
+
+### 8.1 M1 的真机冒烟清单（自动化测不了的部分）
+
+| # | 要确认的事 | 怎么看 |
+| --- | --- | --- |
+| 1 | 广告卡消失了，**位置留空**而不是「后面的卡跳上来」 | 滚到广告卡处：应看到一块与原卡等高的空白；页面上下的卡位置不动 |
+| 2 | **反复上下滚动后没有串号** —— 普通微博不会被误隐藏，广告卡也不会又露出来 | 来回滚十几屏，扫一遍 `__spb.stats()` 的 `hidden` 是否稳定；发现异常卡用 `__spb.recent()` 查理由 |
+| 3 | A 类 banner 收掉后**内容上移是否顺滑**（虚拟列表会不会跳变） | 刷新页面时盯着发布器下方：banner 应直接不出现，其余内容不闪动 |
+| 4 | **首帧不闪**：既不闪微博原皮，也不闪广告 | 硬刷新（Ctrl+Shift+R）时观察 |
+| 5 | **可逆**：`__spb.off()` 之后页面与没装脚本时一模一样 | 控制台跑 `__spb.off()`，确认被隐藏的卡全部回来、banner 也回来 |
 
 > `git push` 由用户手动执行（本机凭据助手非交互）。
