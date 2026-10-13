@@ -1,0 +1,20 @@
+# ---- Node ----
+node_modules/
+
+# ---- 构建产物 ----
+dist/
+
+# ---- 侦察临时产物 ----
+recon-out/
+
+# ---- Agent 本地工作记忆（非项目源码；如需版本化可删掉这行）----
+.workbuddy/
+
+# ---- DOM 快照夹具：含真实微博内容，属私有数据，禁止提交 ----
+tests/fixtures/*
+!tests/fixtures/.gitkeep
+
+# ---- 其他 ----
+*.log
+.DS_Store
+Thumbs.db

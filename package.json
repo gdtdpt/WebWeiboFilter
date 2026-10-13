@@ -1,0 +1,15 @@
+{
+  "name": "weibo-filter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SpecBase Helper - internal reference toolkit (Tampermonkey userscript)",
+  "license": "MIT",
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}
