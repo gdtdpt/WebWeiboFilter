@@ -813,8 +813,13 @@ L2 的"工单式"重排**只允许用 CSS 改变已有节点的摆位**（`displ
     机制：**保高度 + 降显著度**（B2 定论）—— B 类卡整槽 `visibility:hidden`、A 类流外 banner `display:none`；
     **每轮对当前渲染的每个槽位重新判定**（槽位会被回收复用，DOM 标记不能当状态）；不 observe `attributes`（避免与虚拟列表写 `transform` 互相触发）。
   - 进度：**端到端测试 ✅** —— `tests/pipeline.test.mjs`：在 4 份真快照上跑「调度层 + 核心 + 应用层」，断言标记数 = 侦察期望、幂等、可逆、槽位复用后标记跟着内容走。
-    **单测 86/86 全绿、0 跳过**；构建 32.1 KB。
-  - **待做**：**真机冒烟**（自动化测不了，清单见 `docs/dev-guide.md §8.1`）—— 尤其 ① 广告卡处是否留空而非跳变 ② 反复滚动后有无串号 ③ A 类收掉后是否跳变 ④ 可逆。
+    **单测 89/89 全绿、0 跳过**；构建 32.5 KB。
+  - 进度：**首次真机冒烟（2026-10-13）** —— 过滤表现正常（广告消失、无首帧闪烁）。
+    唯一问题：控制台 `Uncaught ReferenceError: __spb is not defined` —— **TM 沙箱**所致（脚本声明了 `@grant GM_*` ⇒
+    脚本里的 `window` 是沙箱对象，`window.__spb = …` 页面上看不见；而过滤只用 `document`，所以**功能全程正常**，
+    这个错只在「想用把手调试」时暴露）。已修：`main.js` 经 `unsafeWindow` 挂到**页面 window**（`build.mjs` 元数据补 `@grant unsafeWindow`，
+    **不可删**），非 TM 环境退回 `window`；`tests/userscript-expose.test.mjs` 用 `node:vm` 造出两个不同的 window 把这条焊死。
+  - **待做**：真机冒烟剩余项（清单见 `docs/dev-guide.md §8.1`）—— ① 反复滚动后有无串号 ② A 类收掉后是否跳变 ③ `__spb.off()` 可逆性。
 - **M2 低调模式**：L1 + L2 落地，首帧注入，可逆。
 - **M3 入口与面板**：隐藏热区 + TM 菜单 + 首次提示 + 配置持久化 + 导出导入 + 可解释性 + **探针注册表与诊断页「适配自检」**（§6.1 / §8.3）。
   - 数据源已备好：`scheduler.stats()` / `scheduler.recent()`（内存态、上限 200 条，§9）。

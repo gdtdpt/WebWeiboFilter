@@ -22,6 +22,12 @@ const outFile = resolve(root, 'dist', 'specbase-helper.user.js');
  * userscript 元数据块。
  * §7.5-G「成套要求延伸」：@name 用中性英文（不出现"微博"），避免 TM 菜单自曝。
  * @description 同样保持中性；@match 无法隐藏（可接受，§7.2）。
+ *
+ * ⚠️ `@grant unsafeWindow` **不能删**（2026-10-13 真机踩到）：
+ *   只要有任意 `@grant`（这里是 GM_getValue/GM_setValue，配置要存 TM 存储），
+ *   Tampermonkey 就启用**沙箱** ⇒ 脚本里的 `window` 是沙箱对象，
+ *   `window.__spb = ...` 页面上看不到（`Uncaught ReferenceError: __spb is not defined`）。
+ *   调试把手必须经 `unsafeWindow` 挂到页面 window，而取 `unsafeWindow` 需要这条 grant。
  */
 const metadata = `// ==UserScript==
 // @name         SpecBase Helper
@@ -32,6 +38,7 @@ const metadata = `// ==UserScript==
 // @match        https://weibo.com/*
 // @match        https://www.weibo.com/*
 // @run-at       document-start
+// @grant        unsafeWindow
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_addStyle

@@ -231,7 +231,7 @@ node tools\recon\find-ad-slots.mjs tests\fixtures\snapshot-YYYYMMDD-HHMM.html --
 | 里程碑 | 内容 | 状态 |
 | --- | --- | --- |
 | **M0 侦察** | 侦察采集 + DOM 快照夹具 + 结构报告 | 🟢 **全部闭环**：B1 ✅（广告判据）· B2 ✅（2026-10-13 16:21 实测 ⇒ **隐藏不可行**）· B3~B7 ✅（含 B7 ⇒ L0 走持续校正） |
-| **M1 管线** | 调度层 / 判定核心 / 应用层 + 广告识别 + 关键词过滤 | 🟢 **已接线**（2026-10-13）：判定核心（`ad-detect` + `keyword` + `decision`）+ 调度层（`scheduler.js`）+ 应用层（`apply/`）；单测 **86/86 全绿**（含 4 份真快照上的端到端管线）；**真机冒烟待做**（见 §8 的验收清单） |
+| **M1 管线** | 调度层 / 判定核心 / 应用层 + 广告识别 + 关键词过滤 | 🟢 **已接线 + 首次真机冒烟通过**（2026-10-13）：判定核心（`ad-detect` + `keyword` + `decision`）+ 调度层（`scheduler.js`）+ 应用层（`apply/`）；单测 **89/89 全绿**（含 4 份真快照上的端到端管线）。<br>真机结果：过滤表现正常；唯一问题 = 调试把手 `__spb` 在控制台 `not defined`（TM 沙箱，见 §6.5 的 ⚠️），**已修**；`__spb.off()` 可逆性验证仍待做 |
 | **M2 低调模式** | L1 + L2 落地、首帧注入、可逆 | 🟡 **L0 已落地**（零适配成本，不依赖侦察结论）；L1/L2 待做 |
 | **M3 入口与面板** | 隐藏热区 + TM 菜单 + 配置导入导出 + 可解释性 + 探针注册表 + 诊断页 | ⛔ （探针**注册表**已在 `src/adapters/weibo-home.js#PROBES` 落好并有测试守着，M3 只差 UI；`scheduler.recent()` / `stats()` 已备好数据源） |
 
@@ -266,6 +266,16 @@ __spb.off()      // 停掉过滤并清空全部标记 —— 用来肉眼验证�
 __spb.on()       // 再打开
 ```
 
+⚠️ **把手挂在「页面 window」上，不是脚本沙箱**（2026-10-13 真机踩到，已修）：
+脚本声明了 `@grant GM_getValue/GM_setValue`（配置存 TM 存储，§9）⇒ Tampermonkey 启用**沙箱**，
+脚本里的 `window` 是**沙箱对象** ⇒ `window.__spb = ...` 只写进沙箱，页面控制台访问不到
+（症状：`Uncaught ReferenceError: __spb is not defined`，而**过滤本身完全正常** —— 所以这个错只在
+「想用把手调试」的那一刻才暴露，最容易蒙混过关）。
+实现改为经 `unsafeWindow` 挂到页面 window（元数据里的 `@grant unsafeWindow` **不能删**，
+否则沙箱里取不到它），非 TM 环境退回 `window`。
+`tests/userscript-expose.test.mjs` 用 `node:vm` 造出**两个不同的 window** 把这条焊住：
+谁改回 `window.__spb = ...`，测试立刻变红。
+
 ## 7. 三条不可违背的工程纪律（摘自 PROJECT.md）
 
 1. **不动信息流 DOM 结构**：L2 重排只允许 CSS（`grid/flex/order/absolute`），禁止移动/克隆/删除节点（§7.5.4）。
@@ -287,5 +297,8 @@ __spb.on()       // 再打开
 | 3 | A 类 banner 收掉后**内容上移是否顺滑**（虚拟列表会不会跳变） | 刷新页面时盯着发布器下方：banner 应直接不出现，其余内容不闪动 |
 | 4 | **首帧不闪**：既不闪微博原皮，也不闪广告 | 硬刷新（Ctrl+Shift+R）时观察 |
 | 5 | **可逆**：`__spb.off()` 之后页面与没装脚本时一模一样 | 控制台跑 `__spb.off()`，确认被隐藏的卡全部回来、banner 也回来 |
+
+> 前置检查：控制台里 `typeof __spb` 应返回 `"object"`。若报 `__spb is not defined` ⇒ TM 沙箱问题（见 §6.5 的 ⚠️），
+> 先确认用的是最新 `dist/specbase-helper.user.js`（元数据里带 `@grant unsafeWindow`）并重新导入。
 
 > `git push` 由用户手动执行（本机凭据助手非交互）。

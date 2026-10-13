@@ -109,29 +109,56 @@ if (document.readyState === 'loading') {
 }
 
 /**
+ * 取**页面 window**（而不是脚本沙箱的 window）。
+ *
+ * ⚠️ 为什么必须走 `unsafeWindow`（2026-10-13 真机踩到）：
+ *   脚本声明了 `@grant GM_getValue/GM_setValue`（配置落在 TM 存储里，§9）
+ *   ⇒ Tampermonkey 会启用**沙箱**，脚本里的 `window` 是**沙箱对象**。
+ *   于是 `window.__spb = {...}` 只写进了沙箱，页面控制台访问的是页面 window
+ *   ⇒ `Uncaught ReferenceError: __spb is not defined`。
+ *   要命之处在于：过滤**本身完全正常**（它只用 document），所以这个错只在
+ *   「想用把手调试/验收」的那一刻才暴露 —— 属于最容易蒙混过关的一类问题。
+ *
+ * 非 TM 环境（离线单测、`@grant none`）下没有 `unsafeWindow` ⇒ 退回 `window`。
+ */
+function pageWindow() {
+  try {
+    if (typeof unsafeWindow !== 'undefined' && unsafeWindow) return unsafeWindow;
+  } catch (_e) {
+    /* 某些沙箱里读 unsafeWindow 会抛 —— 忽略，退回下面的 window */
+  }
+  return typeof window !== 'undefined' ? window : null;
+}
+
+/**
  * 真机验收 / 调试用的最小把手（无界面、低调 —— §8.2「入口隐形」只约束**可见**入口）。
  * 完整面板属 M3；这里只是让「关掉开关后页面是否完全恢复」能在控制台一句话验证（§7.4 约束 3）。
+ *
+ * ⚠️ 挂在**页面 window** 上（见 `pageWindow()`）；名字刻意取短且不自述。
  */
-try {
-  window.__spb = {
-    version: VERSION,
-    config: () => readConfig(),
-    rescan: () => (scheduler ? scheduler.rescan() : null),
-    stats: () => (scheduler ? scheduler.stats() : null),
-    recent: () => (scheduler ? scheduler.recent() : []),
-    /** 关掉过滤：清掉全部标记并停止观测 —— 用来肉眼确认「可逆」 */
-    off: () => {
-      if (!scheduler) return 0;
-      scheduler.stop();
-      filterStarted = false;
-      return true;
-    },
-    /** 重新打开过滤 */
-    on: () => {
-      startFilter();
-      return Boolean(scheduler && scheduler.isRunning());
-    },
-  };
-} catch (_e) {
-  /* 无 window（测试环境）时静默 */
+const page = pageWindow();
+if (page) {
+  try {
+    page.__spb = {
+      version: VERSION,
+      config: () => readConfig(),
+      rescan: () => (scheduler ? scheduler.rescan() : null),
+      stats: () => (scheduler ? scheduler.stats() : null),
+      recent: () => (scheduler ? scheduler.recent() : []),
+      /** 关掉过滤：清掉全部标记并停止观测 —— 用来肉眼确认「可逆」 */
+      off: () => {
+        if (!scheduler) return 0;
+        scheduler.stop();
+        filterStarted = false;
+        return true;
+      },
+      /** 重新打开过滤 */
+      on: () => {
+        startFilter();
+        return Boolean(scheduler && scheduler.isRunning());
+      },
+    };
+  } catch (e) {
+    log('调试把手挂载失败（不影响过滤）', e);
+  }
 }
