@@ -12,6 +12,12 @@
  * 3. 控制台会打印一份报告；点 `SpecBaseRecon.downloadReport()` 存 JSON。
  * 4. 点 `SpecBaseRecon.saveSnapshot()` 存 DOM 快照 HTML，放进 tests/fixtures/。
  * 5. 找广告：`SpecBaseRecon.huntAds(12)`（自动滚动；报告卡片类型分布 + 结构异常卡；**一旦发现带广告文案的卡会自动存快照**）。
+ * 5b. **广告判据实测（B1 已定稿）**：`SpecBaseRecon.probeAds()` —— 一次列出页面上的
+ *     A 类页面 banner 广告位与 B 类信息流推广卡，并逐条打印**命中了哪条判据**。
+ *     四路判据（任一单独成立即可）：外链埋点（`3_reallog_mark_ad` 商业投放 /
+ *     `999_reallog_mark_ad|WeiboADNatural` 原生视频广告 / `_weiboad=` / `/h5/sclick/` / `spm_mark=`）；
+ *     广告 CDN 图 `kadmimage.biz.weibo.com`；头部标签槽文案（荐读 / 推广 / 广告）；
+ *     卡内「关注」按钮 `_followbtn_`（需与其它信号同现）。详见 PROJECT.md §12-B1。
  * 6. 其余手动：`SpecBaseRecon.testHeight()`（量高度行为）/ `SpecBaseRecon.watchTitle(20)`（看 title/favicon 是否被改写）。
  *
  * ⚠️ 夹具与报告含真实微博内容，属私有数据 —— 仓库已把 tests/fixtures 排除在 git 之外。
@@ -563,12 +569,164 @@
     return html.length;
   }
 
+  // ---- B1 定稿：广告判据实测（2026-10-13 第二轮）---------------------------------------------
+  // 离线在四份快照上已确证；这里是在**活页面上**复跑同一套判据，随时可再验一次。
+
+  // 广告 CDN（A 类页面 banner 实测来源）
+  var AD_HOSTS = ['kadmimage.biz.weibo.com', 'kadm.biz.weibo.com', 'sinaads.cn', 'ad.sina.com.cn', 'sax.sina.com.cn'];
+  // 广告跳转埋点（B 类推广卡的正文外链）—— 三个变体，与 src/core/ad-detect.js 保持一致
+  var AD_URLS = [
+    { id: 'campaign', re: /3_reallog_mark_ad/i },
+    { id: 'natural', re: /999_reallog_mark_ad|WeiboADNatural/i },
+    { id: 'reallog_mark_ad', re: /reallog_mark_ad/i },
+    { id: 'weiboad', re: /_weiboad=/i },
+    { id: 'sclick', re: /\/h5\/sclick\//i },
+    { id: 'spm_mark', re: /[?&]spm_mark=/i }
+  ];
+  // 推广标签文案（**整串精确比对**）
+  var AD_TAGS = ['广告', '推广', '荐读', '热推', '品牌推广', '商业推广', '赞助', 'Sponsored', 'Promoted'];
+
+  function adUrlOf(url) {
+    for (var i = 0; i < AD_URLS.length; i++) { if (AD_URLS[i].re.test(url)) return AD_URLS[i].id; }
+    return null;
+  }
+  function adHostOf(src) {
+    for (var i = 0; i < AD_HOSTS.length; i++) { if (src.indexOf(AD_HOSTS[i]) !== -1) return AD_HOSTS[i]; }
+    return null;
+  }
+  function adTagOf(t) {
+    t = (t || '').trim();
+    for (var i = 0; i < AD_TAGS.length; i++) { if (t === AD_TAGS[i]) return t; }
+    return null;
+  }
+
+  /** 逐条列出卡片的四路判据命中矩阵 */
+  function cardAdSignals(card) {
+    var hits = [], urls = [], tags = [], imgs = [];
+
+    var as = card.querySelectorAll('a[href]');
+    for (var i = 0; i < as.length; i++) {
+      var u = as[i].getAttribute('href') || '';
+      urls.push(u);
+      var m = adUrlOf(u);
+      if (m && hits.indexOf('url:' + m) === -1) hits.push('url:' + m);
+    }
+
+    var tNodes = card.querySelectorAll('[class*="wbpro-tag"]');
+    for (var j = 0; j < tNodes.length; j++) {
+      // wbpro-tag-img = 认证图标（自然卡也有），不是广告信号
+      if (/(^|\s)wbpro-tag-img/.test(tNodes[j].className || '')) continue;
+      var tt = txt(tNodes[j]);
+      if (!tt) continue;
+      tags.push(tt);
+      var tg = adTagOf(tt);
+      if (tg) hits.push('tag:' + tg);
+    }
+
+    var im = card.querySelectorAll('img');
+    for (var k = 0; k < im.length; k++) {
+      var s = im[k].currentSrc || im[k].src || '';
+      imgs.push(s);
+      var h = adHostOf(s);
+      if (h && hits.indexOf('img:' + h) === -1) hits.push('img:' + h);
+    }
+
+    // 卡内「关注」按钮 —— 首关时间线里不该出现
+    var follow = false;
+    var btns = card.querySelectorAll('button');
+    for (var b = 0; b < btns.length; b++) {
+      if (/(^|\s)_followbtn_/.test(btns[b].className || '')) { follow = true; break; }
+    }
+    if (!follow) {
+      var hd = card.querySelector('header');
+      if (hd) {
+        var hb = hd.querySelectorAll('button');
+        for (var c = 0; c < hb.length; c++) {
+          if (txt(hb[c]).indexOf('关注') !== -1) { follow = true; break; }
+        }
+      }
+    }
+    if (follow) hits.push('followBtn');
+
+    var score = 0;
+    hits.forEach(function (h) {
+      if (h.indexOf('followBtn') === 0) score += 2; else score += 3;
+    });
+
+    return { hits: hits, score: score, isAd: score >= 3, tags: tags, followBtn: follow };
+  }
+
+  /** B1 主入口：一次回答「这一页上有哪些广告、各自命中哪条判据」 */
+  function probeAds() {
+    var out = { pageAds: [], feedAds: [], cleanCards: 0, totalCards: 0 };
+
+    // ① A 类：页面级 banner 广告位（锚「广告 CDN 图片」而不是结构 —— 结构类名是构建哈希）
+    var allImgs = document.querySelectorAll('img');
+    var seen = {};
+    for (var i = 0; i < allImgs.length; i++) {
+      var src = allImgs[i].currentSrc || allImgs[i].src || '';
+      var host = adHostOf(src);
+      if (!host) continue;
+      var inFeed = !!allImgs[i].closest('.wbpro-scroller-item');
+      // 同一广告位的多张图只报一次
+      var holder = allImgs[i].closest('div');
+      var key = host + '|' + (holder ? (classes(holder).join('.') || 'anon') : 'null');
+      if (seen[key]) continue;
+      seen[key] = 1;
+      out.pageAds.push({
+        host: host,
+        src: src.slice(0, 120),
+        inFeed: inFeed,
+        hasCloseIcon: !!(holder && holder.querySelector('img[src*="948/2022/09/21/close.png"]')),
+        parent: holder ? sigOf(holder) : null,
+        grandparent: holder && holder.parentElement ? sigOf(holder.parentElement) : null
+      });
+    }
+
+    // ② B 类：信息流推广卡
+    var cards = document.querySelectorAll('.wbpro-scroller-item');
+    out.totalCards = cards.length;
+    for (var c = 0; c < cards.length; c++) {
+      var s = cardAdSignals(cards[c]);
+      var id = itemId(cards[c]);
+      var row = {
+        bid: id ? id.bid : null,
+        author: (cards[c].querySelector('a[usercard] span[title]') || {}).textContent || null,
+        hits: s.hits,
+        score: s.score,
+        isAd: s.isAd,
+        tags: s.tags,
+        preview: txt(cards[c]).slice(0, 70)
+      };
+      if (s.isAd) out.feedAds.push(row); else out.cleanCards++;
+    }
+
+    out.verdict = (out.pageAds.length || out.feedAds.length)
+      ? '页面广告位 ' + out.pageAds.length + ' 个 / 信息流推广卡 ' + out.feedAds.length + ' 张（共 ' + out.totalCards + ' 张卡）'
+      : '本页未检出广告（共 ' + out.totalCards + ' 张卡）—— 注意 A 类 banner 是间歇投放，此刻为空属正常';
+
+    console.log('%c[SpecBase Recon] probeAds 结果', 'background:#2f3e34;color:#fff;padding:1px 4px', out);
+    window.SpecBaseRecon._ads = out;
+    return out;
+  }
+
+  function sigOf(el) {
+    var t = el.tagName.toLowerCase();
+    if (el.id) t += '#' + el.id;
+    var cs2 = classes(el).filter(function (x) { return !isHashedClass(x); });
+    if (cs2.length) t += '.' + cs2.join('.');
+    var n = classes(el).length - cs2.length;
+    if (n) t += ' [+' + n + ' hashed]';
+    return t;
+  }
+
   window.SpecBaseRecon = {
     version: VERSION,
     report: report,
     testHeight: testHeight,
     watchTitle: watchTitle,
     huntAds: huntAds,
+    probeAds: probeAds,
     findContainers: findContainers,
     _container: null,
     _items: [],

@@ -10,6 +10,8 @@
     "test": "node --test"
   },
   "devDependencies": {
-    "esbuild": "^0.28.2"
+    "esbuild": "^0.28.2",
+    "linkedom": "^0.18.13",
+    "parse5": "^8.0.1"
   }
 }

@@ -667,31 +667,90 @@ L2 的"工单式"重排**只允许用 CSS 改变已有节点的摆位**（`displ
 - 抓到的 HTML 存进仓库的夹具目录（如 `tests/fixtures/`），直接作为 §6 的离线测试输入。
 - ⚠️ **夹具里含真实微博内容，属私有数据**：M0 要顺手配好 `.gitignore`，避免夹具被 commit 到远端。
 
-#### B 组 · 侦察结果（2026-10-13 · home 时间线 ×2）
+#### B 组 · 侦察结果（2026-10-13 · home 时间线 ×4）
 
-采集物：`tests/fixtures/snapshot-20261013-1440.html`（299 KB / 8 卡）、`snapshot-20261013-1449.html`（318 KB / 13 卡）+ `specbase-recon-20261013-1439.json`。
-离线结构报告由 `tools/recon/analyze-snapshot.mjs` 生成（产物在 `recon-out/`，已 gitignore）。
+采集物：`snapshot-20261013-1440.html`（8 卡）、`snapshot-20261013-1449.html`（13 卡）、
+`snapshot-20261013-1505.html`（12 卡）、`snapshot-20261013-1505 (1).html`（6 卡）+ `specbase-recon-20261013-1439.json`。
+离线报告由 `tools/recon/analyze-snapshot.mjs`（class 词汇表 / 逐卡对照表）与
+`tools/recon/find-ad-slots.mjs`（parse5 真 DOM：广告位祖先链 + 稳定签名）生成（产物在 `recon-out/`，已 gitignore）。
+
+> ⚠️ 环境说明：首轮快照里的 `__yawf_*` 是**上游油猴脚本**（`tiansh/yawf` 系）注入的，第二、三轮采集前用户
+> 已卸载该脚本，之后三份快照 `__yawf_*` 计数为 0 ⇒ 后续侦察结果**不再受该注入污染**。
 
 | 编号 | 状态 | 结论 / 缺口 |
 | --- | --- | --- |
-| B1 | ⏳ **未定（头号缺口）** | 两份快照共 21 张卡**全是自然内容**：`推广/广告/荐读/Sponsored` 文案计数全 0，`sinaads/adbox/feedAd` 痕迹全 0；13 张卡的类型令牌**完全一致**（`_wrap_ecgcn_2 _normal_ecgcn_34`）⇒ **连结构异常卡都没有** ⇒ 广告判据未定，且**需换页面采集**（首页吸附不到推广卡） |
-| B2 | ⏳ **未实测** | `testHeight()` 未跑。虚拟列表下的头号风险，见 §5.3 |
+| B1 | ✅ **已确认（2026-10-13 第二轮）** | 微博的广告是**两类**，判据完全不同 —— **完整判据见下方「B1 专节」**：<br>**A 类 · 页面级 banner 广告位**（发布器正下方，**不在信息流里**）：纯图片，来源为广告投放 CDN `kadmimage.biz.weibo.com`，自带关闭按钮 ⇒ **间歇投放**（1440 无 / 1449、1505、1505(1) 有），不能假设常在。<br>**B 类 · 信息流内的推广卡**：四路判据（外链埋点 / 广告 CDN 图 / 头部推广标签 / 卡内「关注」按钮），已实测命中 **3 张真广告卡**。<br>**⛔ 反面结论（同样重要）**：① 卡片修饰符**区分不了**广告 —— 广告卡与自然卡同为 `_wrap_ecgcn_2 _normal_ecgcn_34`（**上一轮「广告卡会换 modifier」的猜测作废**）；② class 里**没有** `ad/promo/sponsor` 任何令牌（四份快照全为 0）；③ DOM 里搜不到「广告」二字 —— banner 上的标识是**烤在图片里**的；④ `div.wbpro-tag-img`（认证图标 `icon_auth_black.png`）出现在**自然卡**上，**不是**广告信号 |
+| B2 | 🟡 **已部分定论（离线）+ 仍需一次实测** | **离线已定论**：项容器是 `transform` 定位的虚拟列表 —— `div.vue-recycle-scroller__item-view` 带内联 `transform: translateY(0 / 443 / 900 / 1331 / 1666px)`，回收槽为 `translateY(-9999px); opacity: 0`；外层 `item-wrapper` 带内联 `min-height: 8562px`。⇒ **位置由微博 JS 预先算好，隐藏一项不会让后续项上移** ⇒ `display:none` **必留洞**，§5.3 的 1px 容器能否闭合缺口**取决于微博是否重测该项尺寸**（ResizeObserver）⇒ **这一条仍需一次真机实测**（`SpecBaseRecon.testHeight()`，已改写为同时报告相邻项的 `translateY` 变化）。<br>**推论**：§7.5.0「降显著度不是删除」从设计取向升级为**技术必需** |
 | B3 | ✅ **已确认** | 容器 `div.vue-recycle-scroller__item-wrapper` → 项 `div.vue-recycle-scroller__item-view`（虚拟槽位，带 `data-index`）→ 卡 `div.wbpro-scroller-item` → `article`。<br>**帖子稳定 ID = 时间链接 `https://weibo.com/<uid>/<bid>` 里的 `bid`**（base62，如 `Rmb9sjU1W`） |
 | B4 | ✅ **已确认（含一处重要修正）** | **① 可靠锚点**（两份快照都在）：`wbpro-*` 语义类 —— `wbpro-scroller-item` / `wbpro-feed-content` / `wbpro-feed-ogText` / `wbpro-feed-reText` / `wbpro-textcut`；`woo-*` 设计系统类 —— `woo-avatar-img` / `woo-icon-vipimg` / `woo-picture-main` / `woo-panel-main` / `woo-box-flex` …；以及 `vue-*` / `vjs-*`。<br>**② 构建哈希**：`_name_hash_lineno`（`_num_198pe_46`、`_normal_ecgcn_34`）⇒ **禁止写进选择器**（构建一变即失效）。<br>**③ ⚠️ 修正：`__yawf_*` 不是微博的。** 同一次构建（哈希 `198pe` / `ecgcn` 完全一致）下，第一份快照有 1928 处、第二份 0 处 ⇒ 它是**运行时被外部脚本注入**的（`__yawf_component_*__` / `__yawf_key___` / `__yawf_event_*` 是典型的 Vue 组件与事件注解）⇒ **绝不能依赖**（首轮据此得出的 B4 结论已作废） |
 | B5 | ✅ **已确认（单次采样）** | 右下角 24×24 无遮挡（`clean: true`，视口 1128×851）⇒ §8.2 隐藏热区可行 |
 | B6 | ✅ **已确认** | `.wbpro-scroller-item` 存在且每卡一个；上游情报成立 |
-| B7 | ⏳ **未实测** | `watchTitle(20)` 未跑。当前 title = `微博 – 随时随地发现新鲜事`，只挂一个 `favicon.ico`；是否被微博改写仍未知，L0 的 `MutationObserver` 按「可能改写」实现 |
-| B8 | ⏳ 待 B1 后定稿 | 探针清单依赖广告判据 |
+| B7 | ⏳ **仍未实测** | `watchTitle(20)` 未跑。实测到的 title 有 `微博 – 随时随地发现新鲜事` 与 `最新微博 - 首页 - 微博` 两种（**跟随页面态变化**）；是否被微博改写仍未知，L0 的 `MutationObserver` 按「可能改写」实现。<br>⚠️ 若 title 本就随页面切换变化，L0 的「只写一次」策略会失效 ⇒ 这条要在 M2 前补测 |
+| B8 | ✅ **初稿已出** | 探针清单已落在 `src/adapters/weibo-home.js` 的 `PROBES`（9 条：容器 / 虚拟槽位 / 卡片 / 原创正文 / 转发原文 / 头像 / 标签槽 / 关注按钮 / 广告 CDN 图），每条含 `selector + expect + failMeans`；`runProbes()` 可只读执行。<br>⚠️ 「广告 CDN 图」一条的 `expect` 是 `variable` —— **命中 0 属正常**（实测间歇投放），只有当肉眼可见广告而命中 0 时才算失效 |
+
+#### B1 专节 · 广告判据（✅ 已定稿 · 2026-10-13 第二轮）
+
+样本：**三张真广告卡** —— 1449「饼干姐 / Rmd6xreW1」（转发卡，埋点在**转发原文**的视频链接上）、
+1449「OiiOii_AI / R7RCuh927」（原创推广，含「关注」按钮）、1505(1)「叫我老伯 / 京东双11红包」（含「荐读」标签）；
+**两张干净快照** 1440（8 卡）、1505（12 卡）。
+`src/core/ad-detect.js` 把这套判据实现为纯函数，`tests/ad-detect.test.mjs` 用实测字符串回归，
+`tests/fixture-ad.test.mjs` 在**真快照**上跑完整链路（4 份夹具全部判对）。
+
+**A 类 · 页面级 banner 广告位**（不在信息流里，**不涉及虚拟列表高度问题**）
+
+| 项 | 实测值 |
+| --- | --- |
+| 位置 | `#homeWrap` 内、发布器卡片之后的**匿名 `<div>`**（无 class）里 |
+| 形态 | **纯图片**，`img.woo-picture-img` |
+| 唯一可靠判据 | `img[src*="kadmimage.biz.weibo.com"]` —— 微博广告投放 CDN |
+| 佐证 | 自带关闭按钮 `img[src*="948/2022/09/21/close.png"]`（微博给的「可关广告位」） |
+| ⛔ 不可用 | 组件类名 `_wrap_rhdi0_2` / `_iconClass2_rhdi0_36` / `_visable_r36s9_8` **全是构建哈希** |
+| 出现规律 | 1440 **无** / 1449、1505、1505(1) **有** ⇒ 间歇投放 |
+
+**B 类 · 信息流内的推广卡**（在 `.wbpro-scroller-item` 里）
+
+| # | 判据 | 实测支持 | 单独成立？ |
+| --- | --- | --- | --- |
+| 1 | **外链带广告埋点**（三种变体，按可信度排序） | 见下表 | ✅ 可以（权重 3） |
+| 2 | **卡内图片来自广告 CDN**（同 A 类） | — | ✅ 可以（权重 3） |
+| 3 | **头部推广标签文案**：`div.wbpro-tag` 的文本为「荐读 / 推广 / 广告」等；⚠️ **整串精确比对**，且**必须跳过 `wbpro-tag-img`**（认证图标，自然卡也有） | 1505(1) 命中「荐读」；1449 两张广告卡**都无文字标签**也仍是广告 ⇒ 不能当唯一判据 | ✅ 可以（权重 3） |
+| 4 | **卡内出现「关注」按钮** `button[_followbtn_*]` | 1449/1505(1) 各 1 个；两张干净快照各 0 个。**原理**：首页时间线只来自已关注账号，不该出现「关注」按钮 | ❌ 单独不够（权重 2，判「可疑」不判广告）—— 微博的社交推荐卡也有「关注」，避免误杀 |
+
+**广告埋点的三个变体**（都在 `reallog_mark_ad` 家族里，`src/core/ad-detect.js` 已分别命名）：
+
+| 变体 | 实测原文（已解码） | 命中计数 1440/1449/1505/1505(1) | 备注 |
+| --- | --- | --- | --- |
+| `campaign` 商业投放 | `mark=3_reallog_mark_ad:8\|3_<19位活动ID>` | 0 / **12** / 0 / **6** | 最硬：带具体活动 ID |
+| `natural` 原生·视频广告 | `mark_id=999_reallog_mark_ad:999\|WeiboADNatural` | 0 / **2** / 0 / 0 | ⚠️ 见下方「待确认」 |
+| `weiboad` 广告短链 | `…_weiboad=`（`shorturl.biz.weibo.cn`） | 0 / **4** / 0 / 0 | 与 campaign 同现 |
+| （另有 `sclick` / `spm_mark` 两个电商跳转与投放位标记） | | | |
+
+**关键对照（判据精度）**：同一份快照里，自然卡的商品外链是
+`shop.sc.weibo.com/h5/goods/index?…&vs=weibo_feed`（**不带**埋点），
+广告卡是 `shop.sc.weibo.com/h5/sclick/index?mark=3_reallog_mark_ad%3A8%7C3_…` ⇒ 两者可干净区分。
+且干净快照 1505 有 3 条 `video.weibo.com/show` 链接、**全部不带** `WeiboADNatural` ⇒ 「凡视频都算」的误判不成立。
+
+**其它广告样本特征**（可作补充线索，未纳入判据）：
+推广卡的时间戳**远早于相邻卡**（「23小时前」/「10-11 20:47」夹在「3~5 分钟前」之间）⇒ 广告是**往时间线里插入的旧博文**。
+
+**⚠️ 待确认（需要与用户敲定）**：
+1449 的「饼干姐」卡是**转发卡**，埋点落在**转发原文**的视频链接上，其原创正文完全正常。
+当前实现按「卡的范畴」判定 ⇒ 该卡判为广告。若要改成「只看原创正文」，1449 的广告卡数会从 2 变 1。
+**建议**：先按现在的实现（更贴合「用户看到的就是广告」），攒到更多样本后再定。
 
 **顺带确认的结构事实（供 M1 适配层用）**：
 - 卡内正文分块：`.wbpro-feed-ogText` = **原创正文**、`.wbpro-feed-reText` = **转发原文** ⇒ 正好对上 §12-A3 的关键词字段白名单。
 - 头像：`img.woo-avatar-img`（52 px）—— 稳定，可直接支撑 §7.5.5 三个变体。
 - ⚠️ **头区的「作者 / 时间 / 来源」在真实 DOM 里没有语义类名**（只有构建哈希 `_nick_ygi5b_25` / `_name_ygi5b_120` / `_info_1tpft_10`）。可用稳定钩子只有：`woo-avatar-img`、`woo-icon-vipimg`（VIP 角标）、以及 **`usercard="<uid>"` 属性**（头像与昵称链接都带）⇒ M1 适配层必须为此设计「多级回退选择器 + 探针」，不能指望单一类名。
 - 昵称文本在 `a[usercard] > span[title]`；VIP 角标 `span[title="微博社交会员"] / img.woo-icon-vipimg`。
-- ⚠️ 夹具里还有 `data-shipian-state` / `data-shipian-btn` —— 用户自装**拾片扩展**注入的节点，分析时应排除。
-- ⚠️ **外部注入的环境噪声**：`__yawf_*`（见 B4-③）说明当前浏览器里**还有别的微博相关脚本/扩展在改 DOM**。自测本项目时应先关掉它们，否则快照不可比。
+- **稳定 `id` 锚点**（比类名更可靠）：`#scroller`（虚拟列表容器）、`#homeWrap`（首页整个主栏 —— 依次是 发布器卡 → A 类广告位 → 时间线容器）、`#app`（应用根）。
+- **页面外壳结构**：`#app > div.woo-box-flex.woo-box-column > div.woo-box-flex > div > main.woo-box-flex > div > div > div#homeWrap`；其中 `_noside1_*` 表示**单栏布局**（无右侧栏）。
+- ⚠️ 夹具里还有 `data-shipian-state` / `data-shipian-btn` —— 用户自装**拾片扩展**注入的节点，分析时应排除（1505 快照有 8 处、1505(1) 为 0 ⇒ 时有时无）。
+- ✅ **`__yawf_*` 的来源已查明并消除**：是上游油猴脚本（`tiansh/yawf` 系）运行时注入的 Vue 注解。用户已在第二轮采集前**卸载该脚本**，之后三份快照 `__yawf_*` 计数均为 0 ⇒ 后续夹具是干净基线。**但这条教训要记住：侦察前必须确认浏览器里没有别的微博脚本在改 DOM**，否则夹具不可比。
 
-**下一步（阻塞 M1）**：① 换页面采到**含推广卡**的快照（首页多刷 / 详情页推荐流 / 热搜页；`huntAds()` 已支持「发现即自动存快照」）；② 跑 `testHeight()`；③ 跑 `watchTitle(20)`。
+**下一步**：B1 已定稿 ⇒ **M1 的广告识别可以开工了**（判定核心 + 适配层已落地，见 `src/core/ad-detect.js`、`src/adapters/weibo-home.js`）。
+仍欠两次实测（不阻塞编码，但阻塞 M1 的「隐藏」落地）：① 跑 `SpecBaseRecon.testHeight()` 定 B2；② 跑 `SpecBaseRecon.watchTitle(20)` 定 B7。
+另建议：`SpecBaseRecon.probeAds()` 可在任何时刻复跑，确认判据在**活页面**上仍然成立。
 
 ---
 
@@ -699,6 +758,10 @@ L2 的"工单式"重排**只允许用 CSS 改变已有节点的摆位**（`displ
 
 - **M0 侦察**：产出侦察采集（一次性）+ 一批 DOM 快照夹具 + 一份结构报告（回答 §12-B 全部问题，执行要点见 §12-B 末）。
 - **M1 管线**：调度层 / 判定核心 / 应用层骨架 + 广告识别 + 关键词过滤走通，可在真机稳定过滤且不留空白、不跳变。
+  - 进度：**广告识别（判定核心）✅ 已落地** —— `src/core/ad-detect.js` + `tests/ad-detect.test.mjs`（31 条断言，全部基于实测字符串）。
+  - 进度：**适配层 ✅ 已落地** —— `src/adapters/weibo-home.js`：卡片信号抽取 + 页面广告位发现 + 9 条探针（`PROBES` / `runProbes()`）。
+  - 进度：**夹具回放测试 ✅ 已就绪** —— `tests/fixture-ad.test.mjs`（linkedom 真 DOM，夹具缺失时自动跳过）。
+  - **未做（有意）**：调度层与应用层**尚未接线** —— 因为「怎么隐藏才不留洞」取决于 B2 实测结论（§12-B2）。在 B2 定论前写隐藏逻辑 = 写注定要重写的代码。
 - **M2 低调模式**：L1 + L2 落地，首帧注入，可逆。
 - **M3 入口与面板**：隐藏热区 + TM 菜单 + 首次提示 + 配置持久化 + 导出导入 + 可解释性 + **探针注册表与诊断页「适配自检」**（§6.1 / §8.3）。
 
