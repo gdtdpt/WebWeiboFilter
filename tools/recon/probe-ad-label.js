@@ -15,6 +15,11 @@
  *   ③ F12 → Console，把本文件全部内容粘进去（挂上 window.probeAdLabel）
  *   ④ 跑：`probeAdLabel($0)`
  *   ⑤ 先看 `cardText` 对不对得上那张广告卡，再复制全部输出
+ *
+ * v3（2026-10-14 晚）：用户确认「长江证券」卡**就是**广告卡（截图为证）⇒ v1 落空的真正原因不是
+ * 采错卡，而是**徽章不是文本节点**（全卡 textContent 无「广告」）—— 只剩 CSS 伪元素 / 图片两种可能。
+ * v3 加 `imgs`（卡内全部 <img>：src / class / 父类 / 宽度；主脚本 imgSrcs 只收 woo-picture，
+ * 徽章小图会漏）+ verdict 增加「有 tag/ad 类图片」分支；headerHtml 截断放宽到 2200。
  */
 
 function probeAdLabel(target) {
@@ -101,6 +106,18 @@ function probeAdLabel(target) {
     if (all[k].tagName !== 'A') continue;
     m = /weibo\.com\/\d+\/([A-Za-z0-9]+)/.exec(all[k].getAttribute('href') || '');
   }
+  // ⑥ 卡内**全部** <img>（主脚本 imgSrcs 只收 woo-picture —— 徽章小图会漏；
+  //    「广告」若是烤进图片像素里的，只能靠 src / class 认出来）
+  var imgs = [];
+  var im = card.querySelectorAll('img');
+  for (var q = 0; q < im.length; q++) {
+    imgs.push({
+      src: clip(im[q].getAttribute('src') || '', 110),
+      cls: clsOf(im[q]),
+      parent: desc(im[q].parentElement),
+      w: im[q].getBoundingClientRect().width.toFixed(0),
+    });
+  }
 
   return {
     cardText: clip(card.textContent, 150),   // ⚠️ 先核对这个！对不上就是采错卡了
@@ -111,11 +128,14 @@ function probeAdLabel(target) {
     pseudoHits: pseudoHits,
     attrHits: attrHits,
     tagSlots: tagSlots,
-    headerHtml: hdr ? clip(hdr.outerHTML.replace(/<!---->/g, ''), 1800) : null,
+    imgs: imgs,                              // ⭐ 徽章若是图片，答案就在这（src / class / 宽度）
+    headerHtml: hdr ? clip(hdr.outerHTML.replace(/<!---->/g, ''), 2200) : null,
     verdict: (leafHits.length || pseudoHits.length || anyHits.length)
       ? '✅ 找到「广告」来源：看 ownHits / pseudoHits / anyHits 里的 chain'
-      : '⚠️ 这张卡里根本没有「广告」文本 —— ① 先看 cardText 确认是不是那张广告卡；'
-        + '② 若确实是广告却没文本 ⇒ 它多半是图片 / 背景 / 颜色块，看 headerHtml',
+      : (imgs.some(function (x) { return /tag|ad|label|promo/i.test(x.cls + ' ' + x.parent); })
+        ? '⚠️ 卡内没有「广告」文本，但有 tag/ad 类图片 —— 看 imgs（徽章多半烤在图里）'
+        : '⚠️ 卡内没有「广告」文本 —— ① 先看 cardText 确认是不是那张广告卡；'
+          + '② 若确实是广告却没文本 ⇒ 看 imgs 和 headerHtml（图片 / 背景 / 颜色块）'),
   };
 }
 
