@@ -99,6 +99,43 @@ export const SEL_VIDEO_TECH = ['video.vjs-tech'];
  */
 export const SEL_TIME_ANCHOR = ['a[title^="20"]'];
 
+/**
+ * 社交归因条（「xx 赞过」/「xx 关注了」）—— **刻意保留项**，不是隐藏项。
+ *
+ * 2026-10-14 用户定调：这一行回答的是「**这条我没关注的人发的微博，为什么会出现在这里**」
+ * ⇒ 信息有价值，必须保留；只做**中性化降权**（§7.5-E）。
+ *
+ * 结构（快照 + 真机双向确认，§12-B13 ②）：
+ *   article
+ *     ├ div._wrap_sssx9_11                                 ← 归因条本体（h 恒 35px）
+ *     │   └ div.woo-box-flex.woo-box-alignCenter._titleBox_sssx9_43
+ *     │       ├ div.woo-box-item-flex → span._title_sssx9_28 → a.feed-title_a + 文案
+ *     │       └ div.woo-box-flex → … i.woo-font--angleDown[title=更多]  ← 「更多」下拉
+ *     ├ div._body_ecgcn_63
+ *     └ footer
+ *
+ * 为什么这么锚：
+ *   ✅ `a.feed-title_a` 是**库类名**，且实测**专属此组件** —— 卡片 header 里的昵称用的是
+ *      另一个类（`a._default_fvu9w_3`，构建哈希）⇒ 拿它反推祖先不会误伤别处。
+ *   ✅ `:has()` 表达的是**意图**（「含社交昵称的那一层」）而非形状 —— 比 `[class*="_wrap_"]` 稳：
+ *      `_wrap_` 词干同时出现在 `article` 自身（`_wrap_ecgcn_2`）与全页 624 处类名里，语义太泛。
+ *   ℹ️ 兼容性：`:has()` 需 Chrome 105+ / Firefox 121+（本项目基线 Chrome 154 ✅）。
+ *   ℹ️ 已验证在测试用的 linkedom 下同样可用（命中数与浏览器语义一致）。
+ */
+export const SEL_SOCIAL_ROW = ['article > div:has(a.feed-title_a)'];
+
+/** 归因条里的昵称链接（库类名，实测专属此组件） */
+export const SEL_SOCIAL_NAME = ['a.feed-title_a'];
+
+/**
+ * 归因条尾部的「更多」下拉箭头图标。
+ *
+ * ⛔ **必须与 `SEL_SOCIAL_ROW` 组合使用** —— `woo-font--angleDown` 是通用字体图标，
+ *    实测一页 12 个里只有 6 个属于归因条（其余是别处的展开箭头）⇒ 裸锚会误伤。
+ *    `tests/l1.test.mjs` 有一条守卫专门拦裸锚。
+ */
+export const SEL_SOCIAL_MORE = ['.woo-font--angleDown'];
+
 /** 答案选择：返回第一个命中的元素 */
 function pick(root, selectors) {
   for (const s of selectors) {
@@ -443,6 +480,15 @@ export const PROBES = [
     selector: SEL_TIME_ANCHOR.join(' / '),
     expect: 'exists',   // 时间锚点与卡片一一对应：卡片在，时间就必然在 ⇒ 为空即失效
     failMeans: '时间锚点失效 ⇒ L1「相对时间 → 绝对短格式」不生效（不影响过滤）',
+  },
+  {
+    id: 'social-row',
+    desc: '社交归因条（L1 中性化落点；**刻意保留项** —— 不隐藏，只降权）',
+    selector: SEL_SOCIAL_ROW.join(' / '),
+    expect: 'optional',   // 条件渲染：实测 13 张卡里 6 张有 ⇒ 为空**不代表失效**
+    failMeans: '归因条锚点失效 ⇒「xx 赞过 / xx 关注了」不再中性化（仍是微博原生蓝链）。'
+      + '⚠️ 本探针为空属正常（条件渲染，没人赞过/关注过就不渲染）—— '
+      + '只有当页面上肉眼可见归因条却命中 0 时，才算真失效',
   },
 ];
 

@@ -30,13 +30,16 @@
  * ⚠️ **已知未做**（都缺确定锚点或属改高度，见 §7.5 与 PROJECT.md §13-M2）：
  *    隐藏右栏（实测窄窗口下**微博自己就收起了**：内容宽 < `--main-width` 1122px ⇒ simple 布局，§12-B9 ⑥；
  *      要落地得先在更宽的窗口复采锚点）· 底部推荐（实测首页不存在）、
- *    媒体缩略化（视频封面同样是"降饱和已做、缩略化待做"）/ 隐藏统计行 / 隐藏互动按钮行
+ *    媒体缩略化（视频封面同样是"降饱和已做、缩略化待做"）/ 隐藏互动按钮行
  *      （**改高度** ⇒ 第二批，需先验洞）。
+ * ⚠️ 已**不**在"待隐藏"名单里：**社交归因条**（「xx 赞过 / xx 关注了」）——
+ *    2026-10-14 用户定调「**保留信息、只做中性化**」（§7.5-E），见下面 ③b。
  */
 
 import {
   SEL_CARD, SEL_AVATAR, SEL_OG_TEXT, SEL_RE_TEXT, SEL_TEXTCUT, SEL_MEDIA,
   SEL_VIDEO_PLAYER, SEL_VIDEO_POSTER, SEL_VIDEO_TECH,
+  SEL_SOCIAL_ROW, SEL_SOCIAL_NAME, SEL_SOCIAL_MORE,
 } from '../adapters/weibo-home.js';
 import { SEL_BADGE, SEL_LOGO } from '../adapters/weibo-shell.js';
 
@@ -95,6 +98,23 @@ export function l1Css() {
     rule(TEXT_LINK_SEL,
       'color:var(--w-sub) !important;text-decoration:none !important;background:none !important'),
 
+    // ③b 社交归因条（「xx 赞过」/「xx 关注了」）—— **刻意保留、只做中性化**（2026-10-14 用户定调，§7.5-E）
+    //     它回答「**这条我没关注的人发的微博，为什么出现在这里**」⇒ 有信息价值，**不进隐藏名单**。
+    //     做法与正文链接同构（去蓝、去下划线、转中性色）—— 它本质就是「几个链接 + 一句文案」。
+    //     ⚠️ 昵称必须**单独覆盖**：微博给链接显式设了色（蓝），父级的 color 继承会被它盖住。
+    rule(SEL_SOCIAL_NAME[0],
+      'color:var(--w-sub) !important;text-decoration:none !important;background:none !important'),
+    //     整行设色 ⇒ 「和」「关注了」这些**文本节点**跟着继承（它们自己没有选择器可锚）。
+    rule(SEL_SOCIAL_ROW[0], 'color:var(--w-sub) !important'),
+    //     行尾「更多」下拉箭头（微博原生的「不感兴趣 / 屏蔽此类」入口）：用户 2026-10-14 决定隐藏。
+    //     手法同认证角标 —— **只隐藏叶子图标本身**。
+    //     🔴 **这是本批唯一"可能改高度"的一条**：`_titleBox_*` 实测 h=35，而它内部文本只有 h=21，
+    //        差值说明高度很可能由**固定内边距**撑住（而不是内容）—— 那样隐藏图标就是零布局变化。
+    //        但这一点**未实测** ⇒ 真机验收时必须**专门量**「归因条是否仍为 35px / 卡片是否留洞」；
+    //        若高度变了，退回 `visibility:hidden`（那**确定**不占布局，代价只是右侧留一小块空白）。
+    //     ⛔ 绝不裸锚 `.woo-font--angleDown` —— 它是通用字体图标，实测一页 12 个里只有 6 个属于归因条。
+    rule(`${SEL_SOCIAL_ROW[0]} ${SEL_SOCIAL_MORE[0]}`, 'display:none !important'),
+
     // ④ 卡片：去阴影、去圆角，改用一条 1px 的**内阴影**做分割线
     //    ⚠️ 用 box-shadow 而不是 border-bottom —— border 会占 1px 布局 ⇒ 改高度。
     //    颜色取 `--w-dividing-line`（浅色≈#f2f2f2，深色=#222）—— 写死颜色会在另一套主题上变成白线。
@@ -111,4 +131,4 @@ export function l1Css() {
 }
 
 /** 规则条数（探针 / 诊断页断言用；改 `l1Css()` 时记得同步） */
-export const L1_RULE_COUNT = 10;
+export const L1_RULE_COUNT = 13;

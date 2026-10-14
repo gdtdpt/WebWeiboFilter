@@ -6,7 +6,11 @@
  *   ① **零高度影响** —— B2 已证虚拟列表位置来自预计算的 `translateY` 缓存、从不重测尺寸
  *      ⇒ 这一批任何改动卡片高度的属性都可能留洞 / 漂移。所以用一张「会改尺寸的属性」黑名单
  *      逐条扫描 `l1Css()`：谁不小心写了 `font-size` / `padding` / `border` / `height`，测试立刻红。
- *      （唯一的白名单：`display:none`，但只允许出现在行内角标规则上 —— 行内小图标不占行高。）
+ *      （白名单只有一类：**行内叶子图标**的 `display:none` —— 认证角标 `woo-icon*` 与字体图标
+ *        `woo-font--*`。它们藏在 flex 行里，父容器高度由行盒 / 内边距决定 ⇒ 期望零布局变化。
+ *        ⚠️ `display` 是 2026-10-14 才纳入审查的 —— 此前它**压根不在黑名单里**，是个盲区：
+ *        意味着「有人把一个内容块 `display:none` 掉」这类改动**测试拦不住**。
+ *        ⚠️ 而「期望零布局变化」≠「已验」：测试环境没有布局引擎 ⇒ **真机验收仍是唯一防线**。）
  *
  *   ② **锚点纪律** —— 选择器里不许出现构建哈希（`_logo_18dhr_77`）或 `__yawf_*`（外部注入）。
  *      这两样一出现，微博改版 / 关掉别的脚本后就静默失效，而且很难查。
@@ -57,6 +61,9 @@ const SIZE_AFFECTING = [
   'border', 'border-top', 'border-bottom', 'border-width', 'border-style',
   'font-size', 'font-family', 'line-height', 'letter-spacing', 'word-spacing',
   'position', 'top', 'left', 'right', 'bottom', 'overflow', 'flex', 'order',
+  // ⚠️ 2026-10-14 补：`display` 此前不在名单里（盲区）—— 而 `display:none` 掉一个**内容块**
+  //    当然是改高度（卡片直接变矮）。现在它会被逐条审查，白名单见下面那条断言。
+  'display',
 ];
 
 /** 构建哈希（`_logo_18dhr_77` / `_wrap_ecgcn_2`）—— 禁止进选择器 */
@@ -79,10 +86,25 @@ test('L1：零高度影响 —— 不许出现任何会改变盒子尺寸的属�
     for (const d of r.decls) {
       if (!SIZE_AFFECTING.includes(d.prop)) continue;
       const bare = d.value.replace(/\s*!important$/, '').trim();
-      const whitelisted = d.prop === 'display' && bare === 'none' && r.selector.includes('woo-icon');
+      // 白名单：**行内叶子图标**的 display:none（认证角标 woo-icon* / 字体图标 woo-font--*）。
+      // 它们不占行高、父容器尺寸另有来源 ⇒ 期望零布局变化；任何**内容块**被 display:none 都会被这里拦住。
+      const whitelisted = d.prop === 'display' && bare === 'none'
+        && (r.selector.includes('woo-icon') || r.selector.includes('woo-font--'));
       assert.ok(whitelisted,
         `${r.selector} 用了会改尺寸的属性「${d.prop}: ${bare}」—— 这一批必须零高度影响（§12-B2）`);
     }
+  }
+});
+
+test('L1：白名单只放行「行内叶子图标」—— 别拿它给内容块的 display:none 开后门', () => {
+  // 反向守卫：如果哪天黑名单里的 display 白名单被扩成"什么都放行"，这条会红。
+  const rules = parseRules(l1Css()).filter((r) => r.decls.some(
+    (d) => d.prop === 'display' && d.value.replace(/\s*!important$/, '').trim() === 'none'));
+
+  assert.ok(rules.length > 0, 'L1 里应当还有行内图标的 display:none（认证角标 / 归因条「更多」箭头）');
+  for (const r of rules) {
+    assert.ok(r.selector.includes('woo-icon') || r.selector.includes('woo-font--'),
+      `${r.selector}：display:none 只允许用在行内叶子图标上（woo-icon* / woo-font--*）`);
   }
 });
 
@@ -175,6 +197,82 @@ test('L1：降饱和纪律 —— grayscale(1) 只许出现在 logo（伪装层�
       assert.match(body, /saturate\((?:0?\.[1-9])\)/, `${r.selector} 缺 saturate(α) 降饱和`);
     }
   }
+});
+
+test('L1：社交归因条是**保留**项 —— 只许中性化，绝不许把整行藏掉', () => {
+  // 2026-10-14 用户定调：「xx 赞过 / xx 关注了」回答的是
+  //   「这条我没关注的人发的微博，为什么会出现在这里」⇒ **信息必须保留**（§7.5-E）。
+  // 这条守卫防止将来有人把它「顺手」并进隐藏名单 —— 它是 §12-B10 那类翻版的翻版
+  //（一次误收就会把有用的来源信息整条抹掉，而且没人会立刻发现）。
+  const css = l1Css();
+  const social = parseRules(css)
+    .filter((r) => r.selector.includes('feed-title_a'))
+    .filter((r) => !r.selector.includes('angleDown'));   // 「更多」按钮那条**允许** display:none
+
+  assert.ok(social.length >= 2, '社交归因条的中性化规则不见了（昵称 + 整行应各一条）');
+
+  for (const r of social) {
+    for (const d of r.decls) {
+      const bare = d.value.replace(/\s*!important$/, '').trim();
+      assert.ok(!(d.prop === 'display' && bare === 'none'),
+        `${r.selector}：归因条是**刻意保留**项，不许 display:none（用户 2026-10-14 定调）`);
+      assert.ok(!(d.prop === 'visibility' && bare === 'hidden'),
+        `${r.selector}：归因条是**刻意保留**项，不许 visibility:hidden`);
+    }
+  }
+
+  // 中性化的具体落点（防止「规则还在但改错了属性」）
+  assert.match(css, /a\.feed-title_a\{color:var\(--w-sub\)/,
+    '昵称链接没有转中性色 —— 它会继续是微博原生蓝');
+  assert.match(css, /a\.feed-title_a\{[^}]*text-decoration:none/,
+    '昵称链接没有去下划线');
+  assert.match(css, /article > div:has\(a\.feed-title_a\)\{color:var\(--w-sub\)/,
+    '归因条整行没有转中性色 ——「和」「关注了」这些文本节点会仍是原色');
+});
+
+test('L1：「更多」箭头的隐藏必须限定在归因条内（同名图标全页共用，裸锚会误伤）', () => {
+  // 实测（四份快照）：`.woo-font--angleDown` 全页 12 个，其中只有 6 个属于归因条
+  // ⇒ 裸锚 `.woo-font--angleDown{display:none}` 会把别处的展开箭头一起抹掉。
+  const arrow = parseRules(l1Css()).filter((r) => r.selector.includes('angleDown'));
+
+  assert.equal(arrow.length, 1, '「更多」箭头的规则应恰好一条');
+  assert.match(arrow[0].selector, /^article > div:has\(a\.feed-title_a\) /,
+    `${arrow[0].selector}：必须带归因条前缀 —— .woo-font--angleDown 是通用字体图标，裸锚会误伤别处`);
+});
+
+test('L1：社交归因条的选择器在真实快照上确实命中（不是空转规则）', { skip: skipVideo }, () => {
+  const ROW = 'article > div:has(a.feed-title_a)';
+  let sawRow = 0, sawArrowTotal = 0, sawArrowInRow = 0;
+
+  for (const file of fixtures) {
+    const { document } = parseHTML(readFileSync(join(FIXTURE_DIR, file), 'utf8'));
+    const n = (s) => document.querySelectorAll(s).length;
+
+    sawRow += n(ROW);
+    sawArrowTotal += n('.woo-font--angleDown');
+    sawArrowInRow += n(`${ROW} .woo-font--angleDown`);
+
+    // 不变量 ①：命中的每个元素都真的含昵称链接 —— 同时验证 `:has()` 在本 DOM 实现下
+    // 与浏览器语义一致（不一致 ⇒ 线上选择器会静默失效，而测试却绿）
+    for (const el of document.querySelectorAll(ROW)) {
+      assert.ok(el.querySelector('a.feed-title_a'),
+        `${file}: 归因条命中了一个不含昵称链接的元素 —— :has() 语义与预期不符`);
+      assert.equal(el.tagName.toLowerCase(), 'div', `${file}: 归因条应是 div`);
+    }
+
+    // 不变量 ②：归因条**不是**互动按钮行（footer）—— 后者是 A1 的隐藏目标，两者别混
+    assert.equal(n('footer:has(a.feed-title_a)'), 0,
+      `${file}: footer 里出现了昵称链接 —— 归因条与互动按钮行可能被搞混了`);
+  }
+
+  assert.ok(sawRow > 0,
+    '所有夹具里都没有社交归因条 ⇒ 这条守卫在空转（锚点可能已失效，或夹具换了一批）');
+
+  // 关键证据：`.woo-font--angleDown` 在归因条**之外**也存在 ⇒ 这就是「必须行内限定」的理由。
+  // 若哪天这条不再成立（全部箭头都进了归因条），测试会红 —— 那是**复核**的信号，不是直接放开。
+  assert.ok(sawArrowTotal > sawArrowInRow,
+    `实测应存在归因条之外的 angleDown 图标（全页 ${sawArrowTotal} / 行内 ${sawArrowInRow}）`
+    + ' —— 若已不存在，需重新评估这条限制');
 });
 
 test('appearanceCss：L2 蕴含 L1；两个都关时一条规则都不注入', () => {
