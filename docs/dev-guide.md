@@ -262,7 +262,7 @@ node tools\recon\find-ad-slots.mjs tests\fixtures\snapshot-YYYYMMDD-HHMM.html --
 | --- | --- | --- |
 | **M0 侦察** | 侦察采集 + DOM 快照夹具 + 结构报告 | 🟢 **全部闭环**：B1 ✅（广告判据）· B2 ✅（2026-10-13 16:21 实测 ⇒ **隐藏不可行**）· B3~B7 ✅（含 B7 ⇒ L0 走持续校正） |
 | **M1 管线** | 调度层 / 判定核心 / 应用层 + 广告识别 + 关键词过滤 | 🟢 **已接线 + 真机验收通过**（2026-10-13）：判定核心（`ad-detect` + `keyword` + `decision`）+ 调度层（`scheduler.js`）+ 应用层（`apply/`）；单测 **89/89 全绿**（含 4 份真快照上的端到端管线）。<br>真机：过滤生效、滚动无异常、A 类收掉无跳变、可逆。<br>遗留：关键词 `highlight` 只留接口未落样式；关键词规则暂无配置 UI（M3） |
-| **M2 低调模式** | L1 + L2 落地、首帧注入、可逆 | 🟡 **L0 已落地**；**L1 第一批（零高度影响子集）已落地且真机验收通过**（`src/features/l1.js` + `features/appearance.js`，**10 条规则**，`l1.test.mjs` 用「会改尺寸的属性」黑名单 + 锚点纪律 + **禁写死颜色** + **grayscale 白名单**四条守卫）；**「全局去橙红」已落地并验收**（`src/features/theme.js`：**零选择器**，只覆盖 26 个 CSS 变量；2026-10-14 用户定调「降彩度、不灭色相」⇒ 取值为同色相哑色 hsl，`theme.test.mjs` 守着色相/饱和度纪律；产物已改 `minify:true` 剥注释）；**L1 第二批开工：① 时间相对 → 绝对短格式已落地**（`core/time-text.js` + `apply/time.js`，JS 改写 + `data-spb-t` 存原文可逆，`time-apply.test.mjs` 10 条守着）**② 视频封面 / 暂停帧降饱和已落地**（视频走 **video.js** 而不是 `woo-picture` ⇒ 单加 `.vjs-poster img` + `.video-js.vjs-paused video.vjs-tech` 两条规则，**限定在卡内**；`l1.test.mjs` 三条守卫 + 探针 `video`）；L2 重排与其余改高度项待做 |
+| **M2 低调模式** | L1 + L2 落地、首帧注入、可逆 | 🟡 **L0 已落地**；**L1 第一批（零高度影响子集）已落地且真机验收通过**（`src/features/l1.js` + `features/appearance.js`，**10 条规则**，`l1.test.mjs` 用「会改尺寸的属性」黑名单 + 锚点纪律 + **禁写死颜色** + **grayscale 白名单**四条守卫）；**「全局去橙红」已落地并验收**（`src/features/theme.js`：**零选择器**，只覆盖 26 个 CSS 变量；2026-10-14 用户定调「降彩度、不灭色相」⇒ 取值为同色相哑色 hsl，`theme.test.mjs` 守着色相/饱和度纪律；产物已改 `minify:true` 剥注释）；**L1 第二批开工：① 时间相对 → 绝对短格式已落地 + 真机验收通过**（`core/time-text.js` + `apply/time.js`，JS 改写 + `data-spb-t` 存原文可逆，`time-apply.test.mjs` 10 条守着）**② 视频封面 / 暂停帧降饱和已落地 + 真机验收通过**（视频走 **video.js** 而不是 `woo-picture` ⇒ 单加 `.vjs-poster img` + `.video-js.vjs-paused video.vjs-tech` 两条规则，**限定在卡内**；`l1.test.mjs` 三条守卫 + 探针 `video`。真机确认：封面变淡 / 播放恢复全彩 / 暂停又淡 / 小窗播放器不受影响）；L2 重排与其余改高度项待做 |
 | **M3 入口与面板** | 隐藏热区 + TM 菜单 + 配置导入导出 + 可解释性 + 探针注册表 + 诊断页 | ⛔ （探针**注册表**已在 `src/adapters/weibo-home.js#PROBES` 落好并有测试守着，M3 只差 UI；`scheduler.recent()` / `stats()` 已备好数据源） |
 
 ## 6.5 M1 管线怎么跑（接线后的数据流）
@@ -379,4 +379,5 @@ __spb.css()                       // 看当前实际注入了哪些 CSS（排查
 | 14 | **点开播放恢复全彩、暂停又淡回去**（2026-10-14 新增） | 点播放：画面/封面恢复正常（规则靠 `.vjs-paused` 限定，播放时自动失效）；暂停后停在的那一帧重新变淡；**全屏播放时不淡** |
 | 15 | **小窗播放器不受影响**（2026-10-14 新增） | 把视频弹成**小窗播放**（卡片外的 `div.mini-player`）：它不该被淡化 —— 我们的视频规则只作用于信息流卡内 |
 
+> ✅ **2026-10-14 09:09 用户「验收通过」**：第 10~15 项（时间改写 + 视频降饱和）全部通过。
 > `git push` 由用户手动执行（本机凭据助手非交互）。
