@@ -2028,15 +2028,22 @@
       } : null;
 
       // ② 统计行（「xx 等 N 人赞过」）—— 条件渲染，快照里从来没出现过
+      //    取**文本最短**的命中 = **最深**的那一层（祖先的 textContent 必然包含后代文本）。
+      //    ⚠️ 早先取「第一个命中」是错的 —— DOM 顺序里第一个命中的**永远是 `article` 自己**
+      //    （它的文本最长、必然包含统计行）⇒ `chain` 只有一层、毫无定位价值。2026-10-14 修。
       var likeRow = { found: false, byText: null, placebox: null };
-      var scan = card.querySelectorAll('*');
+      var scan = card.querySelectorAll('*'), best = null, bestLen = Infinity;
       for (var s = 0; s < scan.length; s++) {
         var t = txt(scan[s]);
-        if (t && t.length < 90 && /赞过|人赞|觉得很赞/.test(t)) {
-          likeRow.found = true;
-          likeRow.byText = { text: t.slice(0, 60), chain: chainOf(scan[s], art) };
-          break;
+        // `<=` 而不是 `<`：父元素只含一个子元素时**父子文本完全相同**（长度相等），
+        // 严格小于会停在祖先上 ⇒ 必须让后来者（更深）顶掉，链才会走到叶子。2026-10-14 修。
+        if (t && t.length < 90 && /赞过|人赞|觉得很赞/.test(t) && t.length <= bestLen) {
+          best = scan[s]; bestLen = t.length;
         }
+      }
+      if (best) {
+        likeRow.found = true;
+        likeRow.byText = { text: txt(best).slice(0, 60), chain: chainOf(best, art) };
       }
       // placebox：用属性**子串**匹配能绕过那个短 hash（`[class*="placebox"]` 不依赖 `ecgcn`）
       var pb = null;
@@ -2044,9 +2051,19 @@
       if (pb) {
         likeRow.placebox = {
           rawClass: classOf(pb), h: rect(pb).h, text: txt(pb).slice(0, 60),
-          children: pb.children.length, tree: treeOf(pb, 3)
+          children: pb.children.length,
+          // 祖先链（article → placebox）—— 一眼看出它挂在 feed_body 的哪一格（§12-B13 说「最后一格」）
+          chain: chainOf(pb, art),
+          tree: treeOf(pb, 3)
         };
         if (!likeRow.found && txt(pb).trim()) likeRow.found = true;
+        // ⭐ 最值钱的一个字段：命中的统计行**是不是就在 placebox 里面**
+        //   ⇒ 直接就验证了「placebox = 统计行容器」这个假设（是 ⇒ 锚点就是 `[class*="placebox"]`）
+        if (likeRow.byText) {
+          var q = best, inside = false;
+          while (q && q !== art) { if (q === pb) { inside = true; break; } q = q.parentElement; }
+          likeRow.byText.insidePlacebox = inside;
+        }
       }
 
       rows.push({ id: itemId(card), cardH: rect(card).h, articleChildren: art.children.length, blocks: blocks, footer: foot, likeRow: likeRow });
@@ -2070,6 +2087,11 @@
     // 但每个 footer 的 rect 已归零、子树也量不全。§12-B10「读数看着干净、其实无效」的翻版。
     var footersHidden = withFooter > 0 && footersZeroH === withFooter;
 
+    // 全页兜底：卡内没抓到 ≠ 本屏没有 —— 「赞过」也可能在 `article` 之外、或文案写法不同。
+    // 一次 textContent 全页扫描（比逐元素快几个数量级），只给布尔，用来分清
+    // 「继续往下滚找一屏」还是「它压根不在卡内」。
+    var pageHasLikeText = /赞过|人赞|觉得很赞/.test((document.body && document.body.textContent) || '');
+
     var out = {
       sampledCards: rows.length,
       boxesMissing: boxesMissing,
@@ -2078,6 +2100,7 @@
       footerOnEveryCard: rows.length > 0 && withFooter === rows.length,
       cardsWithPlacebox: withPb,
       cardsWithLikeRowText: withLikeRow,
+      pageHasLikeText: pageHasLikeText,
       rows: rows
     };
 
@@ -2096,7 +2119,11 @@
       + '采样 ' + rows.length + ' 张卡：`article > footer` 命中 ' + withFooter + '/' + rows.length
       + '；`[class*=placebox]` 容器 ' + withPb + ' 张；**带「N 人赞过」文本的卡 ' + withLikeRow + ' 张**'
       + (withLikeRow === 0
-        ? ' ⇒ ⚠️ 本页没抓到统计行（它是条件渲染）—— 继续往下滚，找到一条**有人赞过**的微博再跑一次'
+        ? (pageHasLikeText
+          ? ' ⇒ ⚠️ 卡内没抓到、但**全页有**「赞过」文本 ⇒ 它**不在 `article` 内**（或文案是别的写法）——'
+            + '别急着改锚点，先看 `rows[].likeRow` 与全页命中'
+          : ' ⇒ ⚠️ **全页都没有**「赞过」文本 ⇒ 本屏确实没渲染统计行（它是条件渲染）——'
+            + '换「关注」tab 或继续往下滚，找一条**有人赞过**的微博再跑一次')
         : ' ⇒ ✅ 抓到统计行：看 rows[].likeRow.byText.chain 的**祖先链**定锚点');
 
     console.log('%c[SpecBase Recon] probeCardRows 结果', 'background:#2f3e34;color:#fff;padding:1px 4px', out);

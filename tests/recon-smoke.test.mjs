@@ -609,8 +609,13 @@ test('recon 冒烟：`probeHeightCache()` 两段式跑得通并各自下载 JSON
 // 还会打出「footer 命中 N/N ✅」的**假好消息**（§12-B10「读数看着干净、其实无效」的翻版）。
 // 两个世界：footer 高 48（正常）vs 高 0（被 display:none）。
 
-/** 造 N 张**带 `article > footer`** 的卡；`footerH` = footer 实测高度（0 模拟被 display:none） */
-function syntheticCardsWithFooter(n, footerH) {
+/**
+ * 造 N 张带 `article > footer` 的卡（结构与真机一致：`article > div.feed_body > [header, content, placebox]` + `article > footer`）。
+ * @param {number} n        卡数
+ * @param {number} footerH  footer 实测高度（0 模拟被 display:none）
+ * @param {string} [likeText] 塞进 placebox 的「xx 等 N 人赞过」文本；不传 = 空壳（真机常态）
+ */
+function syntheticCardsWithFooter(n, footerH, likeText) {
   const inner = [];
   for (let i = 0; i < n; i++) {
     inner.push(
@@ -618,8 +623,13 @@ function syntheticCardsWithFooter(n, footerH) {
       `style="transform: translateY(${i * 300}px) translateX(0px); opacity: 1;">` +
       `<div class="wbpro-scroller-item" data-index="${i}" data-h="300">` +
       '<article data-h="300">' +
+      '<div class="_body_x_1" data-h="252">' +
       '<header class="woo-box-flex" data-h="60">昵称</header>' +
       '<div class="wbpro-feed-content" data-h="200">正文</div>' +
+      `<div class="_placebox_ecgcn_150" data-h="${likeText ? 30 : 0}">` +
+      (likeText ? `<span data-h="30">${likeText}</span>` : '') +
+      '</div>' +
+      '</div>' +
       `<footer data-h="${footerH}">` +
       `<div class="woo-box-flex woo-box-alignCenter" data-h="${footerH}">` +
       '<i class="woo-font woo-font--retweet" data-h="20"></i>' +
@@ -659,6 +669,28 @@ test('recon 冒烟：probeCardRows —— footer 被 display:none（卡片仍有
     '卡片因 header 仍在而高度非零 ⇒ 旧闸本该不报警（这正是要被堵住的缺口）');
   assert.equal(out.footersZeroH, 3);
   assert.equal(out.footersHidden, true);
+  assert.equal(out.pageHasLikeText, false, '合成页没有「赞过」文本');
   assert.ok(/高度全是 0/.test(out.verdict), '应报「footer 被藏」：' + out.verdict);
   assert.ok(/firstframe-probe/.test(out.verdict), '要指名最可能的原因：' + out.verdict);
+});
+
+test('recon 冒烟：probeCardRows —— 抓到统计行时给出**最深**命中的祖先链', { skip: skipLinkedom }, () => {
+  const out = runCardRows(syntheticCardsWithFooter(2, 48, '张三 等 3 人赞过'));
+  assert.equal(out.cardsWithLikeRowText, 2, '应抓到统计行');
+  assert.equal(out.pageHasLikeText, true, '全页兜底也应说 true');
+  const lr = out.rows[0].likeRow;
+  assert.ok(lr.byText && lr.byText.chain, '应给出 byText + 祖先链');
+  assert.equal(lr.byText.text, '张三 等 3 人赞过');
+  // 🔴 关键：链必须一层层走到**叶子**，不能只有 `article` 自己
+  //    （早先取「第一个命中」⇒ 链首恒为 article、长度 1 ⇒ 等于没给锚点）
+  const tags = lr.byText.chain.map((c) => c.tag);
+  assert.deepEqual(tags, ['article', 'div', 'div', 'span'],
+    '祖先链应是 article → feed_body → placebox → span，实际 ' + JSON.stringify(tags));
+  assert.ok(/抓到统计行/.test(out.verdict), 'verdict 应说抓到了：' + out.verdict);
+  assert.equal(lr.byText.insidePlacebox, true,
+    '统计行就在 placebox 内 —— 这个字段直接验证「placebox = 统计行容器」');
+  // placebox 自身也带链
+  assert.equal(lr.placebox.rawClass, '_placebox_ecgcn_150');
+  assert.equal(lr.placebox.h, 30);
+  assert.deepEqual(lr.placebox.chain.map((c) => c.tag), ['article', 'div', 'div']);
 });

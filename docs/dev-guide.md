@@ -188,6 +188,9 @@ npm test          # 等价于 node --test（无参数会自动发现测试文件
        **主脚本 SpecBase Helper 不用停**（理由见 PROJECT.md §12-B13 ⑤）。
        探针已有 **`footersHidden` 第二道闸**把「footer 全高 0」直接判成**无效读数**（`boxesMissing`
        只看卡片高，拦不住这种「卡片有高、只有 footer 被藏」的情况 —— 会打出假好消息）。
+     · ⭐ 关键字段：`pageHasLikeText`（**全页**有没有「赞过」文本 ⇒ 分清「本屏真没有」与「在别处」）、
+       `rows[].likeRow.byText.insidePlacebox`（命中点是否在 placebox 内 ⇒ **直接验证「placebox = 统计行容器」**）、
+       `rows[].footer.h`（**真机实测恒 40px** = A1「隐藏互动按钮行」的确切改高量）。
      用途：外壳类名**全是构建哈希**，只能靠取样拿锚点 —— 不猜（§6.1）。
 
 > ⚠️ **颜色规则一律走主题令牌，禁止写死明暗色**（2026-10-13 真机取样后的硬纪律，PROJECT.md §12-B9）。
