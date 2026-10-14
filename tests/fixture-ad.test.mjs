@@ -149,16 +149,54 @@ test('适配层：A 类收口落点＝广告 banner 自己，而不是装着时�
   assert.ok(checked > 0, '夹具里应当至少有一处 A 类广告位（否则这条回归形同虚设）');
 });
 
-test('适配层：自然卡的认证图标 wbpro-tag-img 不得进入 tagTexts', { skip }, () => {
+test('适配层：图片型标签槽（wbpro-tag-img）折算成 tagTexts「广告」—— 1449 OiiOii 卡实证', { skip }, () => {
+  // 🔴 旧断言「wbpro-tag-img 是自然卡认证图标、适配层必须跳过」**前提错误**（2026-10-14 定案，§12-B13 ⑨）：
+  // 该型唯一已知资源 icon_auth_black.png（56×30）下载验看 = 「广告」二字（文件名有误导性）。
+  // 1449 快照里带这个槽的正是 OiiOii 广告卡 —— 当年靠 URL 埋点判中，图片标签被白白跳过；
+  // 同型但**无埋点**的卡（真机实证：长江证券投教卡）就漏了。
   const file = fixtures.find((f) => f.includes('1449'));
   if (!file) return;
 
   const doc = loadDoc(file);
   const cards = Array.from(doc.querySelectorAll(SEL_CARD[0]));
-  const allTags = cards.flatMap((c) => readCardSignals(c).tagTexts);
-  // icon_auth_black.png 是**自然卡**的认证图标，适配层必须跳过 img 型标签
-  assert.ok(!allTags.some((t) => t === ''), '不应有空标签');
-  assert.ok(!allTags.includes('认证'), 'img 型标签不应被当作文案标签');
+  const withImgTag = cards.filter((c) => c.querySelector('[class*="wbpro-tag"] img'));
+  assert.equal(withImgTag.length, 1, '1449 应恰好 1 张卡带图片型标签（OiiOii）');
+
+  const sig = readCardSignals(withImgTag[0]);
+  assert.ok(sig.tagTexts.includes('广告'),
+    `图片型标签应折算为「广告」，实际 ${JSON.stringify(sig.tagTexts)}`);
+
+  const v = classifyFeedItem(sig);
+  assert.equal(v.isAd, true, 'OiiOii 卡仍应判为广告');
+  assert.ok(v.reasons.some((r) => r.includes('广告')), `理由里应出现图片标签，实际 ${JSON.stringify(v.reasons)}`);
+
+  // 波及面保护：其余卡不得因这条新规则变成广告（期望表 1449.feedAds = 1 不变）
+  const others = cards.filter((c) => c !== withImgTag[0])
+    .map((c) => classifyFeedItem(readCardSignals(c)));
+  assert.equal(others.filter((x) => x.isAd).length, 0, '其余卡不得被图片标签规则误判');
+});
+
+test('适配层：长江证券型漏网卡（图片标签 + 关注按钮、无埋点）现在能判广告', { skip: parseHTML ? false : 'linkedom 未安装' }, () => {
+  // 真机实证的漏网形态（2026-10-14 用户截图 + __spb.inspect 回传）：
+  // urls 全是微博自身链接（埋点全落空）、无广告 CDN 图，旧逻辑只有 followButton 2 分 ⇒ keep。
+  const html = '<!DOCTYPE html><html><body><div class="wbpro-scroller-item"><article>' +
+    '<div class="_body_ecgcn_63"><header class="woo-box-flex">' +
+    '<span class="_name_ygi5b_120"><span title="长江证券股份有限公司无锡五爱路">长江证券股份有限公司无锡五爱路</span></span>' +
+    '<div class="wbpro-tag-img _tag_1tpft_55"><img src="https://d.sinaimg.cn/prd/1005/891/2025/03/21/icon_auth_black.png"></div>' +
+    '<a class="_time_1tpft_33" title="2026-10-08 15:21" href="https://weibo.com/7849811318/RlIGIpfPR">10-8</a>' +
+    '<span class="_src_x">来自 Weibo.Nexus</span>' +
+    '<button class="_followbtn_x_7"><span class="woo-button-content">关注</span></button>' +
+    '</header><div class="wbpro-feed-content">正文</div></div>' +
+    '<footer></footer></article></div></body></html>';
+  const doc = parseHTML(html).document;
+  const card = doc.querySelector(SEL_CARD[0]);
+  const sig = readCardSignals(card);
+
+  assert.deepEqual(sig.tagTexts, ['广告'], `图片型标签应折算为「广告」，实际 ${JSON.stringify(sig.tagTexts)}`);
+  assert.equal(sig.hasFollowButton, true);
+
+  const v = classifyFeedItem(sig);
+  assert.equal(v.isAd, true, `应判广告：score=${v.score} reasons=${JSON.stringify(v.reasons)}`);
 });
 
 test('适配层：转发原文上的埋点要抓到，但该卡只判存疑（1449 饼干姐）', { skip }, () => {

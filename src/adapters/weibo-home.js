@@ -162,9 +162,6 @@ function pickAll(root, selectors) {
  *   - `classList` 在部分 DOM 实现（如测试用的 linkedom）里不可按下标访问。
  *   字符串解析在浏览器与 Node 测试环境里行为一致。
  */
-function hasClassPrefix(el, prefix) {
-  return classTokens(el).some((c) => c.indexOf(prefix) === 0);
-}
 
 /** 取元素的 class 令牌数组（跨浏览器 / 跨 DOM 实现安全） */
 function classTokens(el) {
@@ -223,14 +220,20 @@ export function readCardSignals(card) {
     imgSrcs.push(imgs[i].currentSrc || imgs[i].getAttribute('src') || '');
   }
 
-  // 标签槽：div.wbpro-tag*（注意 wbpro-tag-img 是认证图标，属自然卡，靠 matchAdTag 整串比对挡掉）
+  // 标签槽：div.wbpro-tag*，两种已知渲染（§12-B13 ⑨，2026-10-14 定案）：
+  //   文本型：div.wbpro-tag.wbpro-tag-c2 > div「荐读」
+  //   图片型：div.wbpro-tag-img > img —— ⚠️ 旧注释「这是认证图标，跳过」是**错的**：
+  //     该型唯一已知资源 icon_auth_black.png（56×30）经下载验看，**像素就是「广告」二字**
+  //     （文件名有误导性；深色主题下显示 26px 宽 = 截图上的广告徽章）。
+  //     跳过它的代价是真机实证过的漏判：长江证券投教卡（图片标签 + 关注按钮、无 URL 埋点）
+  //     只得 followButton 2 分 ⇒ keep。图片型标签必须计入 tagTexts。
   const tagTexts = [];
   const tagNodes = card.querySelectorAll('[class*="wbpro-tag"]');
   for (let i = 0; i < tagNodes.length; i++) {
     const el = tagNodes[i];
-    if (hasClassPrefix(el, 'wbpro-tag-img')) continue;   // 认证图标，跳过
     const t = (el.textContent || '').trim();
-    if (t) tagTexts.push(t);
+    if (t) { tagTexts.push(t); continue; }
+    if (el.querySelector('img')) tagTexts.push('广告');   // 图片型标签：资源像素已验为「广告」
   }
 
   // 「关注」按钮：class 含 _followbtn_ 的 button，回退到头部里文案为「关注」的 button
@@ -434,7 +437,7 @@ export const PROBES = [
   },
   {
     id: 'tag-slot',
-    desc: '卡片头部标签槽 [class*=wbpro-tag]',
+    desc: '卡片头部标签槽 [class*=wbpro-tag]（文本型 / 图片型两种渲染，§12-B13 ⑨）',
     selector: '[class*="wbpro-tag"]',
     expect: 'optional',
     failMeans: '标签槽失效 ⇒ 推广标签这条广告判据失效（还有另外三条兜底）',

@@ -243,11 +243,15 @@ test('B 类推广卡 · 只有「关注」按钮时判为可疑、不判广告�
   assert.equal(v.score, 2);
 });
 
-test('B 类推广卡 · 认证图标 wbpro-tag-img 不是广告信号（适配层会跳过它）', () => {
-  // 实测：`div.wbpro-tag-img > img(icon_auth_black.png)` 出现在 **自然卡** 上。
-  // 适配层不把 img 型标签塞进 tagTexts ⇒ 这里传空数组即可复现。
-  const v = classifyFeedItem({ urls: ['//weibo.com/u/1'], tagTexts: [], imgSrcs: [], hasFollowButton: false });
-  assert.equal(v.isAd, false);
+test('B 类推广卡 · 图片型标签（wbpro-tag-img）就是「广告」徽章：图片标签 + 关注按钮 ⇒ 判广告', () => {
+  // 🔴 2026-10-14 定案（§12-B13 ⑨）：旧断言「wbpro-tag-img 是认证图标、不是广告信号」**前提错误** ——
+  // 该型唯一已知资源 icon_auth_black.png（56×30）下载验看，**像素就是「广告」二字**（文件名有误导性）。
+  // 真机实证：长江证券投教卡（图片标签 + 关注按钮、无 URL 埋点）在旧逻辑下只得 followButton
+  // 2 分 ⇒ 漏判（用户截图：信息流里原样出现）。适配层现把图片型标签折算成 tagTexts「广告」。
+  const v = classifyFeedItem({ urls: ['//weibo.com/u/1'], tagTexts: ['广告'], imgSrcs: [], hasFollowButton: true });
+  assert.equal(v.isAd, true, `score=${v.score}`);
+  assert.ok(v.reasons.some((r) => r.includes('广告')), '理由里应出现图片标签');
+  // 没有图片标签时，「只有关注按钮」仍是存疑不判广告（上方的既有断言继续看住这条路）
 });
 
 test('B 类推广卡 · 空信号与 undefined 都安全返回', () => {

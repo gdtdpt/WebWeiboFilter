@@ -374,6 +374,9 @@ __spb.inspect($0) // ⭐ 现场判定一张卡（2026-10-14 新增）：Elements
                   // 用与管线同一套 readCardSignals + decide 吐出 signals + decision
                   //（action / adScore / reasons / suspect）。专门回答「这张卡为什么**没**被处理」——
                   // recent() 只记「动作非 KEEP」的卡，漏网卡恰好不留痕。
+                  // ✅ 首战战果（同日）：定位到漏网广告卡 = 「广告」徽章**烤在图片里**
+                  //（wbpro-tag-img > img[icon_auth_black.png]，56×30 像素即「广告」二字），
+                  // 旧代码把它当认证图标跳过 ⇒ 已修复：图片型标签折算 tagTexts「广告」（§12-B13 ⑨）。
 ```
 
 ⚠️ `pageAdsRefused`（2026-10-14 事故后新增）= 这一轮有**几处 A 类广告位找不到安全落点而放弃收掉**。
