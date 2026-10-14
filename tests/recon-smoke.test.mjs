@@ -610,12 +610,13 @@ test('recon 冒烟：`probeHeightCache()` 两段式跑得通并各自下载 JSON
 // 两个世界：footer 高 48（正常）vs 高 0（被 display:none）。
 
 /**
- * 造 N 张带 `article > footer` 的卡（结构与真机一致：`article > div.feed_body > [header, content, placebox]` + `article > footer`）。
+ * 造 N 张带 `article > footer` 的卡（结构与真机一致：`article > [社交提示行?, div.feed_body, footer]`）。
  * @param {number} n        卡数
  * @param {number} footerH  footer 实测高度（0 模拟被 display:none）
- * @param {string} [likeText] 塞进 placebox 的「xx 等 N 人赞过」文本；不传 = 空壳（真机常态）
+ * @param {string} [likeText] 塞进 placebox 的文本；不传 = 空壳（真机常态）
+ * @param {string} [hintText] 塞进**社交提示行** `article > div._wrap_*` 的文本（如「xx 赞过」/「xx 关注了」）
  */
-function syntheticCardsWithFooter(n, footerH, likeText) {
+function syntheticCardsWithFooter(n, footerH, likeText, hintText) {
   const inner = [];
   for (let i = 0; i < n; i++) {
     inner.push(
@@ -623,6 +624,11 @@ function syntheticCardsWithFooter(n, footerH, likeText) {
       `style="transform: translateY(${i * 300}px) translateX(0px); opacity: 1;">` +
       `<div class="wbpro-scroller-item" data-index="${i}" data-h="300">` +
       '<article data-h="300">' +
+      (hintText
+        ? '<div class="_wrap_sssx9_11" data-h="35">' +
+          '<div class="woo-box-flex woo-box-alignCenter _titleBox_sssx9_43" data-h="35">' +
+          `<span class="_title_sssx9_28" data-h="17">${hintText}</span></div></div>`
+        : '') +
       '<div class="_body_x_1" data-h="252">' +
       '<header class="woo-box-flex" data-h="60">昵称</header>' +
       '<div class="wbpro-feed-content" data-h="200">正文</div>' +
@@ -674,9 +680,10 @@ test('recon 冒烟：probeCardRows —— footer 被 display:none（卡片仍有
   assert.ok(/firstframe-probe/.test(out.verdict), '要指名最可能的原因：' + out.verdict);
 });
 
-test('recon 冒烟：probeCardRows —— 抓到统计行时给出**最深**命中的祖先链', { skip: skipLinkedom }, () => {
+test('recon 冒烟：probeCardRows —— 最深命中 + 祖先链逐层（文本落在 placebox 内的世界）', { skip: skipLinkedom }, () => {
   const out = runCardRows(syntheticCardsWithFooter(2, 48, '张三 等 3 人赞过'));
-  assert.equal(out.cardsWithLikeRowText, 2, '应抓到统计行');
+  assert.equal(out.cardsWithLikeRowText, 2, '应抓到提示行文本');
+  assert.equal(out.cardsWithSocialRow, 0, '这个合成世界里没有 `_wrap_` 结构行');
   assert.equal(out.pageHasLikeText, true, '全页兜底也应说 true');
   const lr = out.rows[0].likeRow;
   assert.ok(lr.byText && lr.byText.chain, '应给出 byText + 祖先链');
@@ -686,11 +693,25 @@ test('recon 冒烟：probeCardRows —— 抓到统计行时给出**最深**命�
   const tags = lr.byText.chain.map((c) => c.tag);
   assert.deepEqual(tags, ['article', 'div', 'div', 'span'],
     '祖先链应是 article → feed_body → placebox → span，实际 ' + JSON.stringify(tags));
-  assert.ok(/抓到统计行/.test(out.verdict), 'verdict 应说抓到了：' + out.verdict);
-  assert.equal(lr.byText.insidePlacebox, true,
-    '统计行就在 placebox 内 —— 这个字段直接验证「placebox = 统计行容器」');
-  // placebox 自身也带链
+  assert.ok(/抓到社交提示行/.test(out.verdict), 'verdict 应说抓到了：' + out.verdict);
+  // 这个字段只说明「命中点相对 placebox 的位置」，**不**证明真机里 placebox 就是统计行容器
+  assert.equal(lr.byText.insidePlacebox, true, '此世界里文本确实落在 placebox 内');
   assert.equal(lr.placebox.rawClass, '_placebox_ecgcn_150');
   assert.equal(lr.placebox.h, 30);
   assert.deepEqual(lr.placebox.chain.map((c) => c.tag), ['article', 'div', 'div']);
+  // 两条判据不一致时探针要自己喊 —— 这个合成世界正是如此（有文本命中、无结构行）
+  assert.ok(/不一致/.test(out.verdict), '两条判据不一致应提示：' + out.verdict);
+});
+
+test('recon 冒烟：probeCardRows —— 提示行显示「关注了」时也要认（真机踩过：13 张卡漏报 5 张）', { skip: skipLinkedom }, () => {
+  const out = runCardRows(syntheticCardsWithFooter(3, 48, null, '李四 关注了'));
+  assert.equal(out.cardsWithSocialRow, 3, '结构判据：article 直接子里的 `_wrap_*`');
+  assert.equal(out.cardsWithLikeRowText, 3, '文本判据也必须认「关注了」');
+  const lr = out.rows[0].likeRow;
+  assert.equal(lr.socialRow.index, 0, '提示行是 article 的**第一个子**');
+  assert.equal(lr.socialRow.h, 35, '真机实测高度恒 35px');
+  assert.equal(lr.socialRow.cls, '_wrap_sssx9_11');
+  assert.equal(lr.byText.text, '李四 关注了');
+  assert.equal(lr.byText.insidePlacebox, false, '⚠️ 真机实测：它**不在** placebox 里');
+  assert.ok(!/不一致/.test(out.verdict), '两条判据应一致：' + out.verdict);
 });

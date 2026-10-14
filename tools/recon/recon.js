@@ -2027,17 +2027,35 @@
         tree: treeOf(footer, 2)
       } : null;
 
-      // ② 统计行（「xx 等 N 人赞过」）—— 条件渲染，快照里从来没出现过
+      // ② 社交提示行（卡片**顶部**那一行，真机实测 h 恒 35px）—— 两种文案：
+      //    「xx 赞过」/「xx 关注了」。⚠️ 2026-10-14 真机发现：原先只认「赞过」，
+      //    于是**同一行显示「关注了」时被判成「没抓到」**（13 张卡里 6 张有、却只报 1 张）
+      //    ⇒ 会误报「本屏没有统计行」而让人白跑。判据必须同时认这两种。
+      var SOCIAL_HINT = /赞过|人赞|觉得很赞|关注了/;
+      var likeRow = { found: false, byText: null, placebox: null, socialRow: null };
+
+      // 结构特征（**不依赖文案**）：`article` 的**直接子**里类名带 `_wrap_` 的那个。
+      // 与文本判据互为对照 —— 两者不一致时，就是文案改了而我们没跟上。
+      for (var w = 0; w < art.children.length; w++) {
+        var wk = art.children[w];
+        if (/(^|\s)_wrap_/.test(classOf(wk))) {
+          likeRow.socialRow = {
+            index: w, h: rect(wk).h, kids: wk.children.length,
+            cls: classOf(wk).slice(0, 60), text: txt(wk).slice(0, 60)
+          };
+          break;
+        }
+      }
+
       //    取**文本最短**的命中 = **最深**的那一层（祖先的 textContent 必然包含后代文本）。
       //    ⚠️ 早先取「第一个命中」是错的 —— DOM 顺序里第一个命中的**永远是 `article` 自己**
       //    （它的文本最长、必然包含统计行）⇒ `chain` 只有一层、毫无定位价值。2026-10-14 修。
-      var likeRow = { found: false, byText: null, placebox: null };
       var scan = card.querySelectorAll('*'), best = null, bestLen = Infinity;
       for (var s = 0; s < scan.length; s++) {
         var t = txt(scan[s]);
         // `<=` 而不是 `<`：父元素只含一个子元素时**父子文本完全相同**（长度相等），
         // 严格小于会停在祖先上 ⇒ 必须让后来者（更深）顶掉，链才会走到叶子。2026-10-14 修。
-        if (t && t.length < 90 && /赞过|人赞|觉得很赞/.test(t) && t.length <= bestLen) {
+        if (t && t.length < 90 && SOCIAL_HINT.test(t) && t.length <= bestLen) {
           best = scan[s]; bestLen = t.length;
         }
       }
@@ -2069,7 +2087,7 @@
       rows.push({ id: itemId(card), cardH: rect(card).h, articleChildren: art.children.length, blocks: blocks, footer: foot, likeRow: likeRow });
     }
 
-    var withFooter = 0, footersZeroH = 0, withPb = 0, withLikeRow = 0, boxesMissing = rows.length > 0;
+    var withFooter = 0, footersZeroH = 0, withPb = 0, withLikeRow = 0, withSocialRow = 0, boxesMissing = rows.length > 0;
     for (var r = 0; r < rows.length; r++) {
       if (rows[r].footer) {
         withFooter++;
@@ -2077,6 +2095,7 @@
       }
       if (rows[r].likeRow.placebox) withPb++;
       if (rows[r].likeRow.found) withLikeRow++;
+      if (rows[r].likeRow.socialRow) withSocialRow++;
       if (rows[r].cardH !== 0) boxesMissing = false;
     }
 
@@ -2099,6 +2118,7 @@
       footersHidden: footersHidden,
       footerOnEveryCard: rows.length > 0 && withFooter === rows.length,
       cardsWithPlacebox: withPb,
+      cardsWithSocialRow: withSocialRow,
       cardsWithLikeRowText: withLikeRow,
       pageHasLikeText: pageHasLikeText,
       rows: rows
@@ -2117,14 +2137,17 @@
     }
     out.verdict = warn
       + '采样 ' + rows.length + ' 张卡：`article > footer` 命中 ' + withFooter + '/' + rows.length
-      + '；`[class*=placebox]` 容器 ' + withPb + ' 张；**带「N 人赞过」文本的卡 ' + withLikeRow + ' 张**'
+      + '；`[class*=placebox]` 容器 ' + withPb + ' 张；'
+      + '**社交提示行（「xx 赞过 / xx 关注了」）文本判据 ' + withLikeRow + ' 张 / 结构判据 '
+      + '`article > div[class*=_wrap_]` ' + withSocialRow + ' 张**'
       + (withLikeRow === 0
         ? (pageHasLikeText
-          ? ' ⇒ ⚠️ 卡内没抓到、但**全页有**「赞过」文本 ⇒ 它**不在 `article` 内**（或文案是别的写法）——'
-            + '别急着改锚点，先看 `rows[].likeRow` 与全页命中'
-          : ' ⇒ ⚠️ **全页都没有**「赞过」文本 ⇒ 本屏确实没渲染统计行（它是条件渲染）——'
-            + '换「关注」tab 或继续往下滚，找一条**有人赞过**的微博再跑一次')
-        : ' ⇒ ✅ 抓到统计行：看 rows[].likeRow.byText.chain 的**祖先链**定锚点');
+          ? ' ⇒ ⚠️ 卡内没抓到、但**全页有**提示文本 ⇒ 它可能在 `article` 之外，或文案又变了 —— 看 `rows[].likeRow`'
+          : ' ⇒ ⚠️ **全页都没有**提示文本 ⇒ 本屏确实没渲染这一行 —— 往下滚 / 换一屏再跑')
+        : ' ⇒ ✅ 抓到社交提示行：看 `rows[].likeRow.socialRow`（结构）与 `byText.chain`（文案）')
+      + (withSocialRow !== withLikeRow
+        ? ' ⚠️ 两条判据**不一致** ⇒ 文案可能又变了（看 `rows[].likeRow`）'
+        : '');
 
     console.log('%c[SpecBase Recon] probeCardRows 结果', 'background:#2f3e34;color:#fff;padding:1px 4px', out);
     console.log('[SpecBase Recon] ' + out.verdict);

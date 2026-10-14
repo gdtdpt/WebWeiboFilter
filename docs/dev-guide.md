@@ -176,11 +176,12 @@ npm test          # 等价于 node --test（无参数会自动发现测试文件
      时间线 1693ms）全过 ⇒ 首帧注入的 CSS 被算进尺寸，**§12-B12 定案**。该工具使命已完成，**可从 TM 卸掉**。
    - `SpecBaseRecon.probeCardRows()` —— **卡片内部结构（A0 取样，2026-10-14 新增，§12-B13）**。
      列出每张卡的「`article` 直接子块 + 各自高度 + 可锚性分类（库类 / 语义类 / 构建哈希 / ⛔外部注入）」，
-     并专门去抓 **「xx 等 N 人赞过」头像行**（§7.5-E 的「统计行」）—— 它是**条件渲染**，
-     4 份快照里搜「赞过」**0 命中**，只有空占位 `_placebox_<hash>`。
-     ⚠️ 跑之前**先往下滚几屏**，找到一条**有人赞过**的微博；`verdict` 会直说抓没抓到。
+     并专门去抓**社交提示行**（§7.5-E 的「统计行」）—— 它是**条件渲染**。
+     ✅ **已定案（2026-10-14 16:28 真机）**：它就是 `article` 的**第一个子** `div._wrap_sssx9_11`
+     （**h 恒 35px**），文案有**「xx 赞过」与「xx 关注了」两种**，锚 `article > div[class*="_wrap_"]`。
+     ⚠️ 早先「`_placebox_*` 是统计行容器」的推断**已被真机证伪**（§12-B13 ②-cold）。
      · 离线那半（结构树，不开浏览器）：`node tools/recon/inspect-card.mjs [-d 6] [--find 文本] [--only 1449]`
-     · 已确认的结论：`article > footer` = **互动按钮行**（39/39 张卡恰好 1 个），可直接作 `display:none` 的落点。
+     · 已确认的结论：`article > footer` = **互动按钮行**（39/39 张卡恰好 1 个、**h 恒 40px**），可直接作 `display:none` 的落点。
      · 🔴 **采集前先卸掉首帧探针** `firstframe-probe.user.js` —— 它注入的
        `.wbpro-scroller-item article > footer{display:none}` 藏的正是本次目标。TM 里禁用后**要刷新**
        （它注入的 `<style id="spb-ffprobe-style">` 不会被卸载带走），或就地跑
@@ -188,9 +189,9 @@ npm test          # 等价于 node --test（无参数会自动发现测试文件
        **主脚本 SpecBase Helper 不用停**（理由见 PROJECT.md §12-B13 ⑤）。
        探针已有 **`footersHidden` 第二道闸**把「footer 全高 0」直接判成**无效读数**（`boxesMissing`
        只看卡片高，拦不住这种「卡片有高、只有 footer 被藏」的情况 —— 会打出假好消息）。
-     · ⭐ 关键字段：`pageHasLikeText`（**全页**有没有「赞过」文本 ⇒ 分清「本屏真没有」与「在别处」）、
-       `rows[].likeRow.byText.insidePlacebox`（命中点是否在 placebox 内 ⇒ **直接验证「placebox = 统计行容器」**）、
-       `rows[].footer.h`（**真机实测恒 40px** = A1「隐藏互动按钮行」的确切改高量）。
+     · ⭐ 关键字段：`cardsWithSocialRow`（**结构判据** `article > div[class*=_wrap_]`）vs `cardsWithLikeRowText`
+       （**文本判据** 赞过/关注了）—— **两者不一致时探针会自己喊**（真机就发生过：只认「赞过」时 13 张漏报 5 张）、
+       `rows[].likeRow.socialRow`（`index` / `h` / 原文案）、`rows[].footer.h`（**恒 40px**）。
      用途：外壳类名**全是构建哈希**，只能靠取样拿锚点 —— 不猜（§6.1）。
 
 > ⚠️ **颜色规则一律走主题令牌，禁止写死明暗色**（2026-10-13 真机取样后的硬纪律，PROJECT.md §12-B9）。
