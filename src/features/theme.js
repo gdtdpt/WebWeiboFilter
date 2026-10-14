@@ -22,10 +22,14 @@
  * 它同时压过我们的 `:root`（优先级 0,1,1 > 0,1,0）**且**打断 `--w-color-orange-*` 的级联链。
  * 所以两件事都要做：① 覆盖中继层本身 ② 一律 `!important`。
  *
- * ── 取值纪律：只用微博自己的中性色令牌 ───────────────────────────
- * 取 `var(--w-main)` / `var(--w-sub)`（= 当前主题的正文色 / 次级灰度），**绝不写死明暗色**：
- *   · 浅色主题下 `--w-main` ≈ 深灰，深色主题下 ≈ `#bfbfbf` ⇒ 同一份 CSS 两套主题都成立；
- *   · 写死 `#333` 在深色主题上就是「深灰字压深灰底」，等于把正文抹掉（L1 第一批真踩过，见 §12-B9）。
+ * ── 取值纪律：哑色（低饱和同色相），不是灰（2026-10-14 用户定调）──────────
+ * 最初这版把橙红映射到 `var(--w-main)` / `var(--w-sub)`（中性灰）—— 用户真机看后否决：
+ * 「全局变灰效果不好，某些情况确实需要颜色，希望别那么鲜艳但**保留色相区分**」。
+ * ⇒ 现在这张表把每个暖色映射到**同色相、低饱和（≤35%）**的哑色：
+ *   · 橙系 → `hsl(28,…)` 暖灰   · 红系 → `hsl(13,…)` 砖红   · 金系 → `hsl(40,…)` 哑金；
+ *   · 用 `hsl()` 而非十六进制，就是为了能让守卫测试**直接校验色相与饱和度**；
+ *   · 明度取中段（48~58%），深浅两套主题上都可读（我们覆盖的是中继层，两套主题共用同一值）；
+ *   · `var(--w-main)` / `var(--w-sub)` 只留给**本来就是中性**的变量（正文类），不作为"去色"手段。
  *
  * ── 有意**不**覆盖的两类 ─────────────────────────────────────────
  *   ① **语义色**：`--w-error` / `--w-color-red-2`（错误提示）、`--w-tip-fill-*`（提示图标）、
@@ -38,51 +42,51 @@
  */
 
 /**
- * 变量覆盖表：变量名 → 替换值。
+ * 变量覆盖表：变量名 → 替换值（哑色，不是灰）。
  *
- * ⚠️ 这张表**只允许**出现三类值：
- *   ① `var(--w-main)` / `var(--w-sub)` —— 微博当前主题的中性令牌；
- *   ② 中性半透明灰 `rgba(128,128,128,α)`（用于「橙色 10% 悬停底」这类带透明度的暖色）；
- *   ③ 视频播放器用的 `rgba(0,0,0,.55)`（播放器底色恒为深色，与主题无关）。
- * 测试 `tests/theme.test.mjs` 会逐条校验 —— 任何人往里塞十六进制色都会立刻变红。
+ * ⚠️ 这张表**只允许**出现三类值（`tests/theme.test.mjs` 逐条校验）：
+ *   ① `hsl()/hsla()` —— **哑色**：色相只许橙 28° / 红 13° / 金 40°，饱和度 ≤ 35%；
+ *   ② `var(--w-main)` / `var(--w-sub)` —— 只用于**本来就是中性**的变量（正文类）；
+ *   ③ 播放器深色片 `rgba(0,0,0,.55)`（视频角标，与主题无关，不是"去色"）。
+ * 色相基准（probeTheme 实测）：橙 `#ea8011` ≈ 28° · 红 `#f33705` ≈ 13° · 金 V ≈ 40°。
  */
 export const NEUTRALIZE_VARS = {
   // ── ① 级联链根（浅色主题的路径：`--w-brand: var(--w-color-orange-1)`）────────
-  '--w-color-orange-1': 'var(--w-main)',   // → --w-brand（主强调）
-  '--w-color-orange-2': 'var(--w-main)',   // → --w-brand-hover
-  '--w-color-orange-3': 'var(--w-sub)',    // → --w-alink（热搜条目色）
-  '--w-color-red': 'var(--w-sub)',         // → --w-special → --w-liked-color（点赞色）
+  '--w-color-orange-1': 'hsl(28,28%,55%)',   // → --w-brand（主强调）暖灰
+  '--w-color-orange-2': 'hsl(28,26%,48%)',   // → --w-brand-hover（悬停略深一档）
+  '--w-color-orange-3': 'hsl(28,24%,58%)',   // → --w-alink（热搜条目色）
+  '--w-color-red': 'hsl(13,30%,55%)',        // → --w-special → --w-liked-color 砖红
 
   // ── ② 中继层（深色主题用字面量重定义这些 ⇒ 必须显式覆盖）──────────────────
-  '--w-brand': 'var(--w-main)',
-  '--w-brand-hover': 'var(--w-main)',
-  '--w-alink': 'var(--w-sub)',
-  '--w-special': 'var(--w-sub)',
+  '--w-brand': 'hsl(28,28%,55%)',
+  '--w-brand-hover': 'hsl(28,26%,48%)',
+  '--w-alink': 'hsl(28,24%,58%)',
+  '--w-special': 'hsl(13,30%,55%)',
 
-  // ── ③ 带透明度的暖色底（悬停 / 高亮），换成中性灰的同透明度 ──────────────
-  '--w-hover': 'rgba(128,128,128,.12)',
-  '--w-b-line-primary-bg-hover': 'rgba(128,128,128,.12)',
-  '--w-history-tag-hover-background': 'rgba(128,128,128,.12)',
+  // ── ③ 带透明度的暖色底（悬停 / 高亮），换成同色相哑色的同透明度 ─────────────
+  '--w-hover': 'hsla(28,28%,55%,.12)',
+  '--w-b-line-primary-bg-hover': 'hsla(28,28%,55%,.12)',
+  '--w-history-tag-hover-background': 'hsla(28,28%,55%,.12)',
 
   // ── ④ 角标 / 标签 / 气泡 ────────────────────────────────────────────
   // `--w-badge-background` 同时是中继：`--weibo-top-nav-icon-badge-color` 引用它
-  // ⇒ 顶栏「新消息」红角标会跟着变灰（仍是角标，可辨；属"降显著度"不属"删除"）
-  '--w-badge-background': 'var(--w-sub)',
-  '--bubble-bg': 'rgba(128,128,128,.95)',
-  '--w-bubble-bg': 'rgba(128,128,128,.95)',
-  '--feed-picture-tag-bg': 'rgba(0,0,0,.55)',   // 图片/视频角上的时长标签：换成播放器通用深色片
-  '--w-icon-skin-spe': 'var(--w-sub)',          // 金 V 皮肤的底色（图形本身由 L1 隐藏）
+  // ⇒ 顶栏「新消息」红角标变砖红（仍是红系角标，可辨；属"降显著度"不属"删除"）
+  '--w-badge-background': 'hsl(13,30%,55%)',
+  '--bubble-bg': 'hsla(13,26%,55%,.95)',
+  '--w-bubble-bg': 'hsla(13,26%,55%,.95)',
+  '--feed-picture-tag-bg': 'rgba(0,0,0,.55)',   // 图片/视频角上的时长标签：播放器通用深色片，保持
+  '--w-icon-skin-spe': 'hsl(40,22%,55%)',       // 金 V 皮肤的底色：哑金（图形本身由 L1 隐藏）
 
   // ── ⑤ 杂项暖色 ──────────────────────────────────────────────────────
-  '--head-info-source-hover-color': 'var(--w-main)',   // "来自 xxx" 悬停变橙
-  '--w-option-color': 'var(--w-main)',
-  '--icon-bg-spe-1': 'var(--w-sub)',
-  '--icon-bg-spe-2': 'var(--w-sub)',
-  '--icon-bg-spe-3': 'var(--w-sub)',
-  '--icon-bg-spe-5': 'var(--w-sub)',
-  '--icon-bg-spe-6': 'var(--w-sub)',
-  '--chaohua-filter-item-active-color': 'var(--w-main)',
-  '--chaohua-filter-item-active-border': 'var(--w-main)',
+  '--head-info-source-hover-color': 'hsl(28,24%,58%)',  // "来自 xxx" 悬停变橙
+  '--w-option-color': 'var(--w-main)',          // 本来就是正文类中性色
+  '--icon-bg-spe-1': 'hsl(40,22%,55%)',
+  '--icon-bg-spe-2': 'hsl(40,22%,55%)',
+  '--icon-bg-spe-3': 'hsl(40,22%,55%)',
+  '--icon-bg-spe-5': 'hsl(40,22%,55%)',
+  '--icon-bg-spe-6': 'hsl(40,22%,55%)',
+  '--chaohua-filter-item-active-color': 'hsl(28,24%,58%)',
+  '--chaohua-filter-item-active-border': 'hsl(28,24%,58%)',
   '--vs-dropdown-option--deselect-bg': 'var(--w-sub)',
 };
 

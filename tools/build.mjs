@@ -55,6 +55,11 @@ const result = await build({
   // 目标环境为本机最新 Chromium（Chrome 154 / Edge 154，§3），可放心用较新语法
   target: ['chrome120'],
   charset: 'utf8', // 保留中文原文，不转义成 \uXXXX
+  // 🔴 必须压缩输出（2026-10-14 发现）：esbuild 在**非 minify** 输出里会保留普通注释，
+  //    源码里的中文设计注释（「伪装」「微博」「广告」…）会整段进产物 ——
+  //    产物是要导入 TM 的， anyone 打开 .user.js 就能读到全部意图，违背 §7.5-G 伪装纪律。
+  //    minify 会把注释全部剥掉（字符串字面量不受影响）；调试靠 src/ + 单测，不靠读产物。
+  minify: true,
   legalComments: 'none',
   banner: { js: metadata },
   write: false,

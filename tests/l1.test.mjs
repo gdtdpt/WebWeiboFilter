@@ -104,14 +104,38 @@ test('L1：主题无关 —— 颜色只许走微博的中性令牌，不许写�
 
 test('L1：关键规则确实覆盖了预期目标（防止"规则还在但选择器被改错"）', () => {
   const css = l1Css();
-  assert.match(css, /woo-avatar-img/, '头像灰度规则丢了');
+  assert.match(css, /woo-avatar-img/, '头像降饱和规则丢了');
   assert.match(css, /woo-icon-vipimg/, '认证角标规则丢了');
-  assert.match(css, /woo-picture/, '媒体灰度规则丢了');
+  assert.match(css, /woo-picture/, '媒体降饱和规则丢了');
   assert.match(css, /\.wbpro-feed-ogText/, '正文规则丢了');
   assert.match(css, /\.wbpro-scroller-item/, '卡片规则丢了');
   assert.match(css, /a\[href="\/"\]\[aria-label\]/, 'logo 规则丢了');
   // 分割线必须用 box-shadow 的写法（border-bottom 会占 1px 布局 ⇒ 改高度）
   assert.match(css, /box-shadow:0 1px 0/, '卡片分割线没有用 box-shadow');
+});
+
+test('L1：降饱和纪律 —— grayscale(1) 只许出现在 logo（伪装层）；头像 / 媒体必须保色相', () => {
+  // 起因（2026-10-14 用户定调）：全灰丢掉色相区分，「别那么鲜艳，但保留颜色」。
+  // ⇒ 头像 / 媒体一律 saturate(α)（α>0 才保色相）；唯一的 grayscale 白名单是 logo ——
+  //   它是伪装层（§7.5-G），品牌红的识别度必须压掉，属刻意例外。
+  const rules = parseRules(l1Css());
+
+  for (const r of rules) {
+    const filters = r.decls.filter((d) => d.prop === 'filter');
+    if (!filters.length) continue;
+    const isLogo = r.selector.includes('a[href="/"]');
+    const body = filters.map((d) => d.value).join(' ');
+
+    if (isLogo) {
+      assert.match(body, /grayscale\(1\)/, 'logo 应保持灰度（伪装层例外）');
+      continue;
+    }
+    assert.ok(!/grayscale\((?:0?\.[1-9]|1)\)/.test(body),
+      `${r.selector} 用了灰度滤镜 —— 内容配色请用 saturate(α) 降彩度、保色相（2026-10-14 用户定调）`);
+    if (r.selector.includes('woo-avatar-img') || r.selector.includes('woo-picture')) {
+      assert.match(body, /saturate\((?:0?\.[1-9])\)/, `${r.selector} 缺 saturate(α) 降饱和`);
+    }
+  }
 });
 
 test('appearanceCss：L2 蕴含 L1；两个都关时一条规则都不注入', () => {

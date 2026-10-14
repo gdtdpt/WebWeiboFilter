@@ -57,14 +57,15 @@ function rule(selector, body) {
  */
 export function l1Css() {
   return [
-    // ① 身份信号：头像灰度（**保持原尺寸**）· 身份徽标隐藏（行内小图标，不占行高）
-    rule(SEL_AVATAR.join(','), 'filter:grayscale(1) !important;opacity:.7 !important'),
+    // ① 身份信号：头像降饱和（**保持原尺寸与色相**，2026-10-14 用户定调「降彩度不灭色相」）
+    //    ⚠️ 不用 grayscale(1) —— 全灰会丢掉头像的可辨识度；saturate(.4) 只是让它不扎眼。
+    rule(SEL_AVATAR.join(','), 'filter:saturate(.4) !important;opacity:.8 !important'),
     // ⚠️ 只隐藏**徽标图形本身**（叶子节点）：父级 `woo-icon-main` 带内联 16×16，
     //    留着它 ⇒ 宽度也没变，是真正的零布局变化（隐藏父级会少 16px 宽）。
     rule(SEL_BADGE.join(','), 'display:none !important'),
 
-    // ② 媒体：灰度 + 降饱和（**不改尺寸**；缩略化属第二批）
-    rule(`${SEL_MEDIA[0]} img`, 'filter:grayscale(1) saturate(.55) !important;opacity:.85 !important'),
+    // ② 媒体：降饱和（**不改尺寸、不灭色相**；缩略化属第二批）
+    rule(`${SEL_MEDIA[0]} img`, 'filter:saturate(.4) !important;opacity:.85 !important'),
 
     // ③ 正文：文字色转中性；链接 / 话题 / @ 去蓝、去下划线、去话题底色（颜色不占布局 ⇒ 零高度影响）
     //    `var(--w-main)` = 当前主题的正文色（浅色≈#333，深色≈#bfbfbf）
@@ -80,7 +81,9 @@ export function l1Css() {
     // 只走两层，避免把视频控件等深层元素的样式一起杀掉。
     rule(`${SEL_CARD[0]} > *,${SEL_CARD[0]} > * > *`, 'border-radius:0 !important;box-shadow:none !important'),
 
-    // ⑤ 外壳：logo 灰化（SVG 内的 fill 是硬编码的微博红，只能用滤镜压）
+    // ⑤ 外壳：logo 灰化（SVG 内的 fill 是硬编码的微博红，只能用滤镜压）。
+    //    ⚠️ logo 是**伪装层**（§7.5-G「SpecBase」身份的一部分），不是内容配色 ——
+    //    这里保持 grayscale 而不是降饱和：品牌红的识别度必须压掉，属刻意的例外。
     rule(`${SEL_LOGO[0]} svg`, 'filter:grayscale(1) !important;opacity:.5 !important'),
   ].join('\n') + '\n';
 }

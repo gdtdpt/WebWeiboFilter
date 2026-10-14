@@ -7,8 +7,10 @@
  *
  *   ① **只许出现自定义属性** —— 一旦有人往这张表里塞 `color:` / `font-size:` 这类真实属性，
  *      它就变成"一套碰尺寸的样式"，B2 那条零高度影响的前提当场失效。
- *   ② **取值只许是主题令牌或中性灰** —— 写死 `#ea8011` 之类等于没去橙红；写死 `#333`
+ *   ② **取值只许哑色（低饱和同色相）/ 中性令牌** —— 写死 `#ea8011` 之类等于没去橙红；写死 `#333`
  *      会在另一套主题上翻车（这正是 L1 第一批踩过的坑，见 §12-B9）。
+ *      2026-10-14 起口径更新：**映射目标从"灰"改为"哑色"**（用户定调：降彩度、保留色相区分），
+ *      所以守卫从「只许中性灰」改成「校验色相 ∈ {28,13,40} 且饱和度 ≤ 35%」。
  *   ③ **语义色必须放过** —— `--w-error` / `--w-color-red-2` 是**功能反馈**，
  *      按 §7.5.0「降显著度不是删除」，把错误提示也弄灰属功能退化。
  *   ④ **必须带 `!important`** —— 深色主题在 `[data-theme="dark"]:root` 里用字面量
@@ -50,17 +52,45 @@ test('theme：每条覆盖都带 !important（不带就压不过深色主题的 
   }
 });
 
-test('theme：取值只用主题令牌或中性灰，不许写死明暗色', () => {
-  const ALLOWED_VAR = /^var\(--w-(main|sub)\)$/;
-  const ALLOWED_NEUTRAL = /^rgba\((128,128,128|0,0,0),\.\d+\)$/;
+test('theme：取值只用哑色 / 中性令牌 / 播放器深色片 —— 哑色必须低饱和且色相受控', () => {
+  // 哑色纪律（2026-10-14 用户定调「降彩度不灭色相」）：
+  //   色相只许 28°(橙) / 13°(红) / 40°(金)，饱和度 ≤ 35% —— 防止有人塞回艳色或随手换个色相。
+  const ALLOWED_HUE = [28, 13, 40];
+  const MAX_SAT = 35;
+  const HSL_RE = /^hsla?\((\d{1,3}),(\d{1,3})%,(\d{1,3})%(?:,(\.\d+))?\)$/;
+  const ALLOWED_VAR = /^var\(--w-(main|sub)\)$/;                 // 只给本来中性的变量用
+  const ALLOWED_NEUTRAL = /^rgba\(0,0,0,\.\d+\)$/;               // 播放器深色片，与主题无关
+
+  function parseHsl(v) {
+    const m = HSL_RE.exec(v);
+    if (!m) return null;
+    return { h: Number(m[1]), s: Number(m[2]), a: m[4] !== undefined };
+  }
 
   for (const [k, v] of decls()) {
     const bare = v.replace(/\s*!important$/, '');
-    assert.ok(ALLOWED_VAR.test(bare) || ALLOWED_NEUTRAL.test(bare),
-      `${k} 的取值「${bare}」不合规 —— 只许 var(--w-main) / var(--w-sub) 或中性半透明灰`);
+    const hsl = parseHsl(bare);
 
-    assert.ok(!/#[0-9a-fA-F]{3,8}\b/.test(bare), `${k} 用了写死的十六进制色：${bare}`);
+    if (hsl) {
+      assert.ok(ALLOWED_HUE.includes(hsl.h),
+        `${k} 的色相 ${hsl.h}° 不在受控清单 [${ALLOWED_HUE}] 里`);
+      assert.ok(hsl.s <= MAX_SAT,
+        `${k} 的饱和度 ${hsl.s}% 超过哑色上限 ${MAX_SAT}% —— 要的是「不鲜艳」，不是「看不见」`);
+      continue;
+    }
+
+    assert.ok(ALLOWED_VAR.test(bare) || ALLOWED_NEUTRAL.test(bare),
+      `${k} 的取值「${bare}」不合规 —— 只许哑色 hsl / var(--w-main|--w-sub) / 播放器深色片`);
   }
+
+  // 每个受控色相至少要被用到一次（表改版后不许悄悄退化回全灰）
+  const usedHues = new Set(decls().map(([, v]) => parseHsl(v.replace(/\s*!important$/, '')))
+    .filter(Boolean).map((c) => c.h));
+  for (const h of ALLOWED_HUE) {
+    assert.ok(usedHues.has(h), `色相 ${h}° 一个都没用到 —— 哑色映射表可能被改回了全灰`);
+  }
+
+  assert.ok(!/#[0-9a-fA-F]{3,8}\b/.test(themeCss()), '覆盖表里不许出现写死的十六进制色');
 });
 
 test('theme：语义色必须放过（错误提示是功能反馈，不是装饰）', () => {
