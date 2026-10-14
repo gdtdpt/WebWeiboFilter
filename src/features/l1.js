@@ -30,12 +30,13 @@
  * ⚠️ **已知未做**（都缺确定锚点或属改高度，见 §7.5 与 PROJECT.md §13-M2）：
  *    隐藏右栏（实测窄窗口下**微博自己就收起了**：内容宽 < `--main-width` 1122px ⇒ simple 布局，§12-B9 ⑥；
  *      要落地得先在更宽的窗口复采锚点）· 底部推荐（实测首页不存在）、
- *    时间改绝对格式（`title` 里确有绝对时间，但需先由适配层打标 —— 与 L2 时间列同一套机制）、
- *    媒体缩略化 / 隐藏统计行 / 隐藏互动按钮行（**改高度** ⇒ 第二批，需先验洞）。
+ *    媒体缩略化（视频封面同样是"降饱和已做、缩略化待做"）/ 隐藏统计行 / 隐藏互动按钮行
+ *      （**改高度** ⇒ 第二批，需先验洞）。
  */
 
 import {
   SEL_CARD, SEL_AVATAR, SEL_OG_TEXT, SEL_RE_TEXT, SEL_TEXTCUT, SEL_MEDIA,
+  SEL_VIDEO_PLAYER, SEL_VIDEO_POSTER, SEL_VIDEO_TECH,
 } from '../adapters/weibo-home.js';
 import { SEL_BADGE, SEL_LOGO } from '../adapters/weibo-shell.js';
 
@@ -67,6 +68,27 @@ export function l1Css() {
     // ② 媒体：降饱和（**不改尺寸、不灭色相**；缩略化属第二批）
     rule(`${SEL_MEDIA[0]} img`, 'filter:saturate(.4) !important;opacity:.85 !important'),
 
+    // ②b 视频：封面 / 暂停帧降饱和 —— 和图片同一套手法（用户反馈 2026-10-14：视频封面一直全彩）。
+    //     根因：视频卡里**没有 `woo-picture`**（见适配层 `SEL_VIDEO_PLAYER` 的注释），
+    //     上面那条媒体规则盖不到它 ⇒ 未播放的视频封面就是整页最扎眼的一块。
+    //     · 只作用于**信息流卡片内**的播放器（`SEL_CARD` 前缀）。这不只是"缩小打击面"，而是**语义**：
+    //       卡片外还挂着微博自己的小窗播放器（`div.mini-player` → `div#vjs_video_3`，
+    //       实测每个页面恒定 1 个、静态时 `display:none`、无封面）—— 那是**用户主动弹出的**播放器，
+    //       不该被我们按"躺在时间线上没人看"的待遇处理。实测三层相等：
+    //       卡内 `.video-js` == 卡内 `.vjs-poster img` == 卡内 `video.vjs-tech`（四份夹具全部成立，有测试守着）。
+    //     · 封面 `vjs-poster img`：注入一条 filter 就够 —— video.js 起播后会把 poster 层自己
+    //       `display:none`，所以**不需要**再写「未播放」的状态判断。
+    //     · 暂停帧 `video.vjs-tech`：**选择器里带上 `.vjs-paused`** —— 播放时 video.js 会把
+    //       根节点的 `vjs-paused` 换成 `vjs-playing`，规则自然失效、颜色自动回来
+    //       （因此不必再补一条 `filter:none` 的反向覆盖，少一条规则就少一个漂移点）。
+    //       ⚠️ 全屏时（`.vjs-fullscreen`）不淡化：那时用户是**主动在看**，画面不该被我们动手。
+    //     · ⛔ 绝不把 filter 打在播放器根 `.video-js` 上：那会新建层叠上下文，把播放按钮与
+    //       控制条一起卷进滤镜，还会把整块播放器提成一个合成层。
+    rule(`${SEL_CARD[0]} ${SEL_VIDEO_POSTER[0]} img`,
+      'filter:saturate(.4) !important;opacity:.85 !important'),
+    rule(`${SEL_CARD[0]} ${SEL_VIDEO_PLAYER[0]}.vjs-paused:not(.vjs-fullscreen) ${SEL_VIDEO_TECH[0]}`,
+      'filter:saturate(.4) !important'),
+
     // ③ 正文：文字色转中性；链接 / 话题 / @ 去蓝、去下划线、去话题底色（颜色不占布局 ⇒ 零高度影响）
     //    `var(--w-main)` = 当前主题的正文色（浅色≈#333，深色≈#bfbfbf）
     rule(TEXT_SEL, 'color:var(--w-main) !important'),
@@ -89,4 +111,4 @@ export function l1Css() {
 }
 
 /** 规则条数（探针 / 诊断页断言用；改 `l1Css()` 时记得同步） */
-export const L1_RULE_COUNT = 8;
+export const L1_RULE_COUNT = 10;

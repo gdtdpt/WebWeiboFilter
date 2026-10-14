@@ -49,11 +49,31 @@ export const SEL_TEXTCUT = ['.wbpro-textcut'];
 
 /**
  * 媒体容器（单图 / 九宫格共用，实测 `woo-picture-main`）。
- * L1 的灰度规则打在这上面（§7.5 B 组）。
+ * L1 的降饱和规则打在这上面（§7.5 B 组）。
+ * ⚠️ **盖不到视频卡** —— 视频走 video.js，见下面的 `SEL_VIDEO_*`。
  * ⚠️ 用 `[class*=]` 部分匹配而不是完整类名：`woo-picture-main` 之外还有
  * `woo-picture-*` 家族成员，且部分匹配对新增变体更宽容（`woo-` 是稳定前缀，不是构建哈希）。
  */
 export const SEL_MEDIA = ['[class*="woo-picture"]'];
+
+/**
+ * 视频播放器 —— L1 视频降饱和的落点。
+ *
+ * ⚠️ **视频卡不是 `woo-picture`**（2026-10-14 复核四份夹具）：真实结构是
+ *   `div._videoBox_12xiz_132`（构建哈希）→ `div._placeholder_*` → `div._feedVideo_*`（构建哈希）
+ *     → `div#vjs_video_*`**.video-js**.vjs-paused…      ← video.js 播放器根
+ *       → `video.vjs-tech`                              ← 视频本体
+ *       → `div.vjs-poster` → `picture.vjs-poster` → `img[src=wx*.sinaimg.cn/…]`  ← 封面
+ *   ⇒ 只锚 `woo-picture` 的媒体规则**盖不到视频** ⇒ 视频封面一直全彩（用户反馈的现象）。
+ *
+ * ✅ 可锚的是 **`vjs-*`**：它们来自 **video.js 库**（不是微博的 CSS Modules 构建哈希）⇒
+ *    与 `woo-*` / `wbpro-*` 同级的抗改版锚点；外层的 `_videoBox_*` / `_feedVideo_*` 才是构建哈希。
+ * ℹ️ 包装元素上另有 Vue 渲染的 `video-active="true|false"` 属性（可读、但语义未验）⇒
+ *    **播放状态以 video.js 的 `vjs-playing` / `vjs-paused` 为准**（那是库保证会翻转的类）。
+ */
+export const SEL_VIDEO_PLAYER = ['.video-js'];
+export const SEL_VIDEO_POSTER = ['.vjs-poster'];
+export const SEL_VIDEO_TECH = ['video.vjs-tech'];
 
 /**
  * 卡内时间锚点（L1「相对时间 → 绝对短格式」的落点，§7.5 D 组）。
@@ -333,10 +353,17 @@ export const PROBES = [
   },
   {
     id: 'media',
-    desc: '媒体容器 [class*=woo-picture]（L1 灰度落点）',
+    desc: '媒体容器 [class*=woo-picture]（L1 图片降饱和落点）',
     selector: SEL_MEDIA.join(' / '),
     expect: 'optional',   // 纯文字微博本就没有图 ⇒ 为空不算失效
-    failMeans: '媒体锚点失效 ⇒ L1 的图片灰度不生效（不影响过滤）',
+    failMeans: '媒体锚点失效 ⇒ L1 的图片降饱和不生效（不影响过滤）',
+  },
+  {
+    id: 'video',
+    desc: '视频播放器 .video-js（L1 视频降饱和落点，video.js 库类名）',
+    selector: SEL_VIDEO_PLAYER.join(' / '),
+    expect: 'optional',   // 纯文字 / 纯图片的首页本就没有视频 ⇒ 为空不算失效
+    failMeans: '视频锚点失效 ⇒ 视频封面与暂停帧不再降饱和（不影响过滤）',
   },
   {
     id: 'text-link',

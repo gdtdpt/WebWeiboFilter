@@ -288,7 +288,7 @@ B2 已实测定论：虚拟列表的槽位位置来自**预计算的 `translateY
 | 对象 | L1 | L2 | 备注 |
 | --- | --- | --- | --- |
 | **图片** | **保留为小缩略图**：固定高度 + `grayscale(1)` + 低不透明度 | 同 | **v2 变更：不再隐藏。** 取舍解法见 §7.5.3 |
-| 视频 | 封面同样缩略化；时长角标改灰 | 同 | |
+| 视频 | **封面 / 暂停帧降饱和**（`saturate(.4)`，**播放中自动恢复原色**）✅ 已落地；封面缩略化待做 | 同 | ✅ 2026-10-14 落地（用户反馈"视频封面没淡化"）：视频卡**不是 `woo-picture`** 而是 **video.js**（`.video-js` / `.vjs-poster` / `video.vjs-tech`，`vjs-*` 是库类名不是构建哈希）；规则限定在**卡内** —— 卡外还有微博自己的小窗播放器（`div.mini-player` → `#vjs_video_3`，每页恒定 1 个），用户主动弹出的不该被淡化 |
 | 多图 / 九宫格 | 收成**单行缩略图条**（横向排列，超高裁切或折行） | 同 | |
 | "查看大图"等角标 | 去掉或灰化 | 同 | |
 | 表情 / emoji 图片 | **保留原样**（不灰度、不缩放） | **保留原样** | 它是正文的一部分，缩了会读不通 |
@@ -707,7 +707,7 @@ L2 的"工单式"重排**只允许用 CSS 改变已有节点的摆位**（`displ
 | B1 | ✅ **已确认（2026-10-13 第二轮；`natural` 埋点同日降级）** | 微博的广告是**两类**，判据完全不同 —— **完整判据见下方「B1 专节」**：<br>**A 类 · 页面级 banner 广告位**（发布器正下方，**不在信息流里**）：纯图片，来源为广告投放 CDN `kadmimage.biz.weibo.com`，自带关闭按钮 ⇒ **间歇投放**（1440 无 / 1449、1505、1505(1) 有），不能假设常在。<br>**B 类 · 信息流内的推广卡**：四路判据按权重累加，**≥3 判广告、1~2 判存疑** ⇒ 实测 **2 张真广告卡 + 1 张存疑卡**。<br>**⛔ 反面结论（同样重要）**：① 卡片修饰符**区分不了**广告 —— 广告卡与自然卡同为 `_wrap_ecgcn_2 _normal_ecgcn_34`（**上一轮「广告卡会换 modifier」的猜测作废**）；② class 里**没有** `ad/promo/sponsor` 任何令牌（四份快照全为 0）；③ DOM 里搜不到「广告」二字 —— banner 上的标识是**烤在图片里**的；④ `div.wbpro-tag-img`（认证图标 `icon_auth_black.png`）出现在**自然卡**上，**不是**广告信号；⑤ **广告在 UI 上可能完全没有可见标识**（饼干姐卡）⇒ 埋点是唯一兜底 |
 | B2 | ✅ **已定论（2026-10-13 16:21 真机实测）：隐藏不可行 ——「保高度 + 降显著度」是唯一路径** | **实测结论**（`probe-height-20261013-1621.json`，`sanity.warning: null` ⇒ 目标确为信息流槽位）：取 `item-view` 槽位（内联 `transform: translateY(0px)`，高 287.6px）与其下一槽（`translateY(287px)`，高 588.2px），跑**四组**实验 —— ① `display:none` ② `height:1px; overflow:hidden` ③ `1px` + **主动触发重测量**（`handleResize`/`forceUpdate`/`window resize`）④ `visibility:hidden`（对照组）⇒ **四组结果完全一致：后续项上移 `0px`、残留空洞 `287px`、无延迟重排**（采样 0/400/1200ms 三次读数相同）。<br>**决定性证据**：`item-wrapper` 的 `scrollHeight`/`clientHeight` 前后恒为 **5311px** 不变 ⇒ **虚拟列表从未重测尺寸、也没重算总高**（槽位位置来自预计算的 `translateY`，与内容实际高度无关）⇒ 洞**不可能**被 CSS 闭合，主动触发重测量同样无效。<br>⚠️ 附带确认两条：① `nextOffsetTop` 恒为 `0`（两个槽都是 0）⇒ **`offsetTop` 对这项毫无判别力**，必须用 `getBoundingClientRect()`（早先那次重写是对的）；② `findScrollerVm()` **未找到**虚拟列表 Vue 实例（生产构建下实例不可达）⇒ **JS 路径（改 size 缓存）既不可评估、也不采用**（符合「不碰微博内部状态」的红线）。<br>⇒ **最终结论**：「删除式隐藏」全部作废（`display:none` / `1px` / 任何变体）；过滤命中卡只能走 **保高度 + 降显著度**（§7.5.0）—— 这条从「设计取向」正式升级为**技术唯一解**。<br>**早期离线定论（实测吻合）**：项容器是 `transform` 定位的虚拟列表 —— `div.vue-recycle-scroller__item-view` 带内联 `transform: translateY(0 / 443 / 900 / 1331 / 1666px)`，回收槽为 `translateY(-9999px); opacity: 0`；外层 `item-wrapper` 带内联 `min-height: 8562px` ⇒ **位置由微博 JS 预计算，隐藏一项不会让后续项上移**。<br>**⚠️ 首次真机实测（2026-10-13 16:13）作废 —— 测的对象不是信息流项**：`testHeight()` 打出 `delta: 0 / residual: 137`，看上去正好支持上面的结论，但目标是 `woo-box-item-inlineBlock _item_a3hty_47 __yawf_feed-picture_item`，即**卡片内九宫格的一张图片格**（高 137px，外层是 `_inlineNum3_*` 三列图网格）。隐藏一张图片格当然不会让后续信息流项上移 ⇒ 读数**无信息量**。**根因**：`findContainers()` 按「≥3 个同签名子节点」打分，一个 **9 宫格（9 个一模一样的图片格）得分高于信息流容器** ⇒ 抢走 `primary` ⇒ `_items` 变成图片格 ⇒ `testHeight()` 照单全收。<br>**已修（2026-10-13）**：① `feedItems()` 只认 `item-wrapper` 的**直接子槽位**；② `scoreContainer()` 给「子节点是虚拟槽位」的组 **+1000** 加权，嵌套网格再也抢不走；③ `testHeight()` 每次打印**目标身份**（tag / class / `data-index`）并校验 `sanity.targetIsScrollerSlot`，取错对象时 verdict 直接报警；④ 新增 2 条夹具回归测试把坑焊死（`_feedItems()` 只返回槽位 / 从图片格出发也必须纠正回槽位）。<br>**本轮同时加测**：新增「1px + **主动触发重测量**」（`handleResize` / `forceUpdate` / `window resize`）与「`visibility:hidden` 对照组」两组实验，并探测虚拟列表 **Vue 实例是否暴露 `sizes[]`** —— 若暴露，CSS 之外还有一条 JS 路径（改 size 缓存 + 触发重排）。<br>（历史：2026-10-13 16:13 首测因**探针取错对象**作废，见上方记录与 `docs/dev-guide.md §5` 的踩坑框；探针已修并加了 2 条回归测试） |
 | B3 | ✅ **已确认** | 容器 `div.vue-recycle-scroller__item-wrapper` → 项 `div.vue-recycle-scroller__item-view`（虚拟槽位，带 `data-index`）→ 卡 `div.wbpro-scroller-item` → `article`。<br>**帖子稳定 ID = 时间链接 `https://weibo.com/<uid>/<bid>` 里的 `bid`**（base62，如 `Rmb9sjU1W`） |
-| B4 | ✅ **已确认（含一处重要修正）** | **① 可靠锚点**（两份快照都在）：`wbpro-*` 语义类 —— `wbpro-scroller-item` / `wbpro-feed-content` / `wbpro-feed-ogText` / `wbpro-feed-reText` / `wbpro-textcut`；`woo-*` 设计系统类 —— `woo-avatar-img` / `woo-icon-vipimg` / `woo-picture-main` / `woo-panel-main` / `woo-box-flex` …；以及 `vue-*` / `vjs-*`。<br>**② 构建哈希**：`_name_hash_lineno`（`_num_198pe_46`、`_normal_ecgcn_34`）⇒ **禁止写进选择器**（构建一变即失效）。<br>**③ ⚠️ 修正：`__yawf_*` 不是微博的。** 同一次构建（哈希 `198pe` / `ecgcn` 完全一致）下，第一份快照有 1928 处、第二份 0 处 ⇒ 它是**运行时被外部脚本注入**的（`__yawf_component_*__` / `__yawf_key___` / `__yawf_event_*` 是典型的 Vue 组件与事件注解）⇒ **绝不能依赖**（首轮据此得出的 B4 结论已作废） |
+| B4 | ✅ **已确认（含一处重要修正）** | **① 可靠锚点**（两份快照都在）：`wbpro-*` 语义类 —— `wbpro-scroller-item` / `wbpro-feed-content` / `wbpro-feed-ogText` / `wbpro-feed-reText` / `wbpro-textcut`；`woo-*` 设计系统类 —— `woo-avatar-img` / `woo-icon-vipimg` / `woo-picture-main` / `woo-panel-main` / `woo-box-flex` …；以及 `vue-*` / `vjs-*`（**补注 2026-10-14**：`vjs-*` 是 **video.js 库**的类名 —— `.video-js` / `.vjs-poster` / `.video-js.vjs-paused` / `video.vjs-tech`，与 `woo-*` 同级稳定；但视频**外层包装** `_videoBox_12xiz_*` / `_feedVideo_989gf_*` 仍是构建哈希，不可锚）。<br>**② 构建哈希**：`_name_hash_lineno`（`_num_198pe_46`、`_normal_ecgcn_34`）⇒ **禁止写进选择器**（构建一变即失效）。<br>**③ ⚠️ 修正：`__yawf_*` 不是微博的。** 同一次构建（哈希 `198pe` / `ecgcn` 完全一致）下，第一份快照有 1928 处、第二份 0 处 ⇒ 它是**运行时被外部脚本注入**的（`__yawf_component_*__` / `__yawf_key___` / `__yawf_event_*` 是典型的 Vue 组件与事件注解）⇒ **绝不能依赖**（首轮据此得出的 B4 结论已作废） |
 | B5 | ✅ **已确认（单次采样）** | 右下角 24×24 无遮挡（`clean: true`，视口 1128×851）⇒ §8.2 隐藏热区可行 |
 | B6 | ✅ **已确认** | `.wbpro-scroller-item` 存在且每卡一个；上游情报成立 |
 | B7 | 🟡 **已实测一次（静置期不改写）；但因「title 随页面态变化」⇒ 持续校正仍是必需** | `watchTitle(20)`（2026-10-13 16:13 实测）：20 秒静置期内 `changeCount: 0` —— title 稳定为 `微博 – 随时随地发现新鲜事`、favicon 稳定为 `https://weibo.com/favicon.ico`（`rel=icon`）⇒ **静置期微博不会自己改写**。<br>⚠️ 但这**不足以**支持「L0 只写一次」：跨快照实测到两种 title —— `微博 – 随时随地发现新鲜事`（首页）与 `最新微博 - 首页 - 微博`（另一页面态）⇒ **微博是 SPA，切页会改 title**（与「新消息计数 `(1) 我的首页 微博`」「favicon 红角标」是两条独立时机）。<br>⇒ **L0 结论：`MutationObserver` 持续校正是必需的**，监听时机要覆盖 **① SPA 换页 ② 新消息计数（若发生）**；不能只在启动时写一次。<br>本次实测的价值：排除了「静置几秒就与微博互改打架」的风险，为 §11 的 L0 验收补上依据 |
@@ -808,7 +808,7 @@ L2 的"工单式"重排**只允许用 CSS 改变已有节点的摆位**（`displ
 - **M1 管线**：调度层 / 判定核心 / 应用层骨架 + 广告识别 + 关键词过滤走通，可在真机稳定过滤且不留空白、不跳变。
   - 进度：**广告识别（判定核心）✅ 已落地** —— `src/core/ad-detect.js` + `tests/ad-detect.test.mjs`（全部基于实测字符串）。
   - 进度：**关键词过滤（判定核心）✅ 已落地** —— `src/core/keyword.js`：字段白名单严格按 §12-A3（正文 / 转发原文 / 话题 / 昵称），并有**反向断言**守着「整卡文本不许进来」。
-  - 进度：**适配层 ✅ 已落地** —— `src/adapters/weibo-home.js`：卡片信号抽取 + 页面广告位发现 + **10 条探针**（`PROBES` / `runProbes()`）。
+  - 进度：**适配层 ✅ 已落地** —— `src/adapters/weibo-home.js`：卡片信号抽取 + 页面广告位发现 + **14 条探针**（`PROBES` / `runProbes()`）。
   - 进度：**夹具回放 + 探针自检测试 ✅ 已就绪** —— `tests/fixture-ad.test.mjs` / `tests/probes.test.mjs`（linkedom 真 DOM，夹具缺失时自动跳过）。
   - 进度：**调度层 + 应用层 ✅ 已接线（2026-10-13）** ——
     `src/scheduler.js`（唯一接触 `MutationObserver` 的地方）+ `src/apply/style.js`（首帧 CSS）+ `src/apply/mark.js`（幂等打标记）。
@@ -873,11 +873,29 @@ L2 的"工单式"重排**只允许用 CSS 改变已有节点的摆位**（`displ
     - **幂等**：已是目标文本则不写；属性只在首次改写时写入（否则会把改写结果当原文，导致还原出假原文）。
     - 测试 `tests/time-text.test.mjs`（纯规则 5 条）+ `tests/time-apply.test.mjs`（端到端 10 条：
       改写 / L2 蕴含 / 跨年 / 昵称误伤 / 幂等 / 还原 / stop 可逆 / 槽位复用 / 真夹具改写率）。
+  - ✅ **视频封面 / 暂停帧降饱和「已落地」（2026-10-14）** —— 与图片同一套手法，仍属**零高度影响**项（用户反馈"视频没淡化"）：
+    - **根因**：L1 的媒体规则只锚 `[class*="woo-picture"]`，而**视频卡走 video.js** ——
+      真实结构 `div._videoBox_12xiz_*`（构建哈希）→ `div._feedVideo_989gf_*`（构建哈希）→
+      `div#vjs_video_*`**.video-js**.vjs-paused → `video.vjs-tech` + `div.vjs-poster > picture.vjs-poster > img`（封面）。
+      ⇒ 图片掉了色、视频封面一直全彩（整页最扎眼的一块）。
+    - **锚点**：`.video-js` / `.vjs-poster` / `video.vjs-tech` —— **`vjs-*` 来自 video.js 库**，
+      与 `woo-*` / `wbpro-*` 同级的抗改版锚点；外层那两个 `_*_hash_lineno` 才是构建哈希（不可锚）。
+    - **「未播放」不靠状态判断**：封面层 `vjs-poster` 起播后被 video.js 自己 `display:none`；
+      暂停帧用 `.vjs-paused` 限定（播放时根节点换成 `vjs-playing`，规则自然失效、颜色自动回来）
+      ⇒ **不需要** `filter:none` 反向覆盖 —— 少一条规则就少一个漂移点。
+    - ⛔ **两条刻意的不作为**：① filter 打在播放器根 `.video-js` 上会**新建层叠上下文**，
+      把播放按钮 / 控制条一起卷进滤镜（整块播放器还会被提成合成层）；
+      ② 规则**限定在 `.wbpro-scroller-item` 卡内** —— 卡外还挂着微博自己的**小窗播放器**
+      （`div.mini-player` → `div#vjs_video_3`，实测每页恒定 1 个、静态 `display:none`、无封面），
+      那是用户主动弹出的，不该被"时间线降显著度"顺手按掉。另：全屏（`.vjs-fullscreen`）豁免。
+    - 测试：`tests/l1.test.mjs` 三条（关键规则名 / filter 落点 + 卡内作用域 + 全屏豁免 / 真夹具不空转）；
+      新增探针 `video`。真夹具实测不变量：**卡内 `.video-js` == 卡内 `.vjs-poster img` == 卡内 `video.vjs-tech`**
+      （四份夹具全部成立，已写成断言）。
   - **第二批其余待做**：
     - **隐藏右栏**：实测窄窗口下**微博自己就收起了**（内容宽 < `--main-width` 1122px ⇒ simple 布局，§12-B9 ⑥）
       ⇒ 本机当前窗口（1128px）无需处理；窗口拉宽后要复采一次（`probeTheme()` 已加 `layout.mode` + `shell.rightAny`）。
     - **底部推荐栏**：实测首页不存在（0 候选）⇒ 暂不做。
-    - **媒体缩略化 / 隐藏统计行 / 隐藏互动按钮行**：**改高度** ⇒ 前提（L1 第一批「改样式不留洞」）
+    - **媒体缩略化（含视频封面）/ 隐藏统计行 / 隐藏互动按钮行**：**改高度** ⇒ 前提（L1 第一批「改样式不留洞」）
       已真机验收通过，但每条落地后仍需真机复验「不留洞」。
   - 进度：**L2 重排**（时间独立成列 + 分割线工单风）待做 —— §7.5.4 红线：只许 CSS 改摆位，禁止移动 / 克隆 / 删除节点。
 - **M3 入口与面板**：隐藏热区 + TM 菜单 + 首次提示 + 配置持久化 + 导出导入 + 可解释性 + **探针注册表与诊断页「适配自检」**（§6.1 / §8.3）。

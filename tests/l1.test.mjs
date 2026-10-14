@@ -16,10 +16,13 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { l1Css, L1_RULE_COUNT } from '../src/features/l1.js';
 import { appearanceCss } from '../src/features/appearance.js';
 import { composeCss, ensureStyle, FILTER_CSS, STYLE_ID } from '../src/apply/style.js';
+import { FIXTURE_DIR, fixtures } from './_fixture-expect.mjs';
 
 let parseHTML = null;
 try {
@@ -27,6 +30,10 @@ try {
 } catch (_e) {
   parseHTML = null;
 }
+
+const skipVideo = !fixtures.length
+  ? 'fixtures/ 为空（私有不入库）—— 跳过视频规则的真 DOM 校验'
+  : (!parseHTML ? 'linkedom 未安装 —— 运行 npm install 后重试' : false);
 
 /** 逐行拆成 {selector, decls:[{prop,value}]}（`l1Css()` 保证一条规则一行） */
 function parseRules(css) {
@@ -107,11 +114,42 @@ test('L1：关键规则确实覆盖了预期目标（防止"规则还在但选�
   assert.match(css, /woo-avatar-img/, '头像降饱和规则丢了');
   assert.match(css, /woo-icon-vipimg/, '认证角标规则丢了');
   assert.match(css, /woo-picture/, '媒体降饱和规则丢了');
+  assert.match(css, /\.vjs-poster img/, '视频封面降饱和规则丢了（视频卡不是 woo-picture，必须单独一条）');
+  assert.match(css, /\.video-js\.vjs-paused[^{]*video\.vjs-tech/, '视频暂停帧降饱和规则丢了');
   assert.match(css, /\.wbpro-feed-ogText/, '正文规则丢了');
   assert.match(css, /\.wbpro-scroller-item/, '卡片规则丢了');
   assert.match(css, /a\[href="\/"\]\[aria-label\]/, 'logo 规则丢了');
   // 分割线必须用 box-shadow 的写法（border-bottom 会占 1px 布局 ⇒ 改高度）
   assert.match(css, /box-shadow:0 1px 0/, '卡片分割线没有用 box-shadow');
+});
+
+test('L1：视频降饱和只许打在封面 img / video 本体上，且必须限定在卡内（不许碰播放器根 / 卡外播放器）', () => {
+  // 两条来历：
+  //   ① 给 `.video-js`（播放器根）加 filter 会**新建层叠上下文**，把播放按钮 / 控制条一起卷进滤镜，
+  //      还会把整块播放器提成一个合成层 ⇒ 只允许落在 `.vjs-poster img` 与 `video.vjs-tech` 上。
+  //   ② 卡片外挂着微博自己的**小窗播放器**（`div.mini-player` → `div#vjs_video_3`，每页恒定 1 个）
+  //      —— 那是用户主动弹出来的，不该被我们的"时间线降显著度"顺手按掉 ⇒ 必须带 `SEL_CARD` 前缀。
+  const videoRules = parseRules(l1Css())
+    .filter((r) => r.decls.some((d) => d.prop === 'filter'))
+    .filter((r) => /video-js|vjs-/.test(r.selector));
+
+  assert.ok(videoRules.length >= 2, '视频降饱和规则不见了');
+  for (const r of videoRules) {
+    assert.match(r.selector, /vjs-poster img|video\.vjs-tech/,
+      `${r.selector}：filter 落在播放器根 / 控制条上会新建层叠上下文 —— 请挪到封面 img 或 video 本体`);
+    assert.match(r.selector, /^\.wbpro-scroller-item\b/,
+      `${r.selector}：视频规则必须限定在信息流卡内 —— 否则会连卡外的小窗播放器一起淡化`);
+  }
+});
+
+test('L1：播放中的视频必须恢复原色（靠 `.vjs-paused` 限定，而不是靠 filter:none 反向覆盖）', () => {
+  const paused = parseRules(l1Css()).filter((r) => /vjs-paused/.test(r.selector));
+  assert.ok(paused.length > 0, '暂停帧规则缺少 .vjs-paused 限定 —— 播放中也会被降饱和');
+  for (const r of paused) {
+    assert.ok(!/vjs-playing/.test(r.selector), `${r.selector}：不该出现 vjs-playing 的反向覆盖`);
+  }
+  // 全屏时用户是主动在看，不该淡化
+  assert.match(paused[0].selector, /:not\(\.vjs-fullscreen\)/, '全屏播放时不该被淡化');
 });
 
 test('L1：降饱和纪律 —— grayscale(1) 只许出现在 logo（伪装层）；头像 / 媒体必须保色相', () => {
@@ -132,7 +170,8 @@ test('L1：降饱和纪律 —— grayscale(1) 只许出现在 logo（伪装层�
     }
     assert.ok(!/grayscale\((?:0?\.[1-9]|1)\)/.test(body),
       `${r.selector} 用了灰度滤镜 —— 内容配色请用 saturate(α) 降彩度、保色相（2026-10-14 用户定调）`);
-    if (r.selector.includes('woo-avatar-img') || r.selector.includes('woo-picture')) {
+    if (r.selector.includes('woo-avatar-img') || r.selector.includes('woo-picture')
+      || r.selector.includes('vjs-poster') || r.selector.includes('vjs-tech')) {
       assert.match(body, /saturate\((?:0?\.[1-9])\)/, `${r.selector} 缺 saturate(α) 降饱和`);
     }
   }
@@ -168,4 +207,51 @@ test('ensureStyle：注入 / 幂等 / 内容变化时更新（切档位用得上
   ensureStyle(d2);
   assert.ok(d2.getElementById(STYLE_ID).textContent.includes('[data-spb='));
   assert.equal(FILTER_CSS.includes('[data-spb="hidden"]'), true);
+});
+
+test('L1：视频降饱和的选择器在真实快照上确实命中（不是空转规则）', { skip: skipVideo }, () => {
+  // 起因（2026-10-14 用户反馈）：视频封面一直全彩 —— 根因是媒体规则只锚 `woo-picture`，
+  // 而视频卡走 video.js。这条测试把「选择器真的指到了东西」焊死，并顺手锁住一条**实测不变量**：
+  //   卡内播放器数 == 卡内封面数 == 卡内 video 本体数（四份夹具全部成立）
+  // ⇒ 只要卡片里有视频，它的封面就一定被降饱和，不会漏掉一部分；改版把 poster 挪走时立刻变红。
+  let sawFeedVideo = 0;
+
+  for (const file of fixtures) {
+    const { document } = parseHTML(readFileSync(join(FIXTURE_DIR, file), 'utf8'));
+    const n = (s) => document.querySelectorAll(s).length;
+
+    const players = n('.wbpro-scroller-item .video-js');
+    sawFeedVideo += players;
+
+    assert.equal(n('.wbpro-scroller-item .vjs-poster img'), players,
+      `${file}: 卡内播放器 ${players} 个，但封面命中数不等 —— 有视频封面漏了降饱和`);
+    assert.equal(n('.wbpro-scroller-item video.vjs-tech'), players,
+      `${file}: 卡内播放器 ${players} 个，但 video 本体命中数不等 —— 有暂停帧漏了降饱和`);
+
+    // 封面必须是 `<picture><img>` 写法（我们的规则锚的是 `img`）。若微博哪天改成
+    // video.js 的经典写法（`div.vjs-poster` 内联 `background-image`），规则会静默漏掉 ⇒ 这里先红。
+    for (const poster of document.querySelectorAll('.wbpro-scroller-item .vjs-poster')) {
+      assert.equal(poster.querySelectorAll('img').length, 1,
+        `${file}: 封面层不是 <picture><img> 写法（可能是 background-image）—— 降饱和规则会漏掉它`);
+    }
+
+    // video.js 的不变量：播放器根上 `vjs-paused` / `vjs-playing` 必居其一
+    // ⇒ 我们的 `.vjs-paused` 限定在播放时**一定**会失效（颜色自动回来），不靠巧合
+    assert.equal(
+      n('.wbpro-scroller-item .video-js.vjs-paused, .wbpro-scroller-item .video-js.vjs-playing'),
+      players,
+      `${file}: 有播放器既没有 vjs-paused 也没有 vjs-playing —— 「播放中恢复原色」的前提被打破了`);
+
+    // 卡外那个**小窗播放器**（每页恒定 1 个，静态 `display:none`）必须落在我们的规则之外 ——
+    // 它是用户主动弹出的，不该被"时间线降显著度"按掉
+    if (n('.video-js')) {
+      assert.ok(n('.mini-player') >= 1,
+        `${file}: 小窗播放器容器不在了 —— 「卡内 / 卡外」的作用域假设需要重新核对`);
+      assert.equal(players + n('.mini-player .video-js'), n('.video-js'),
+        `${file}: 出现了既不在卡内、也不在小窗里的播放器 —— 作用域假设需要重新核对`);
+    }
+  }
+
+  assert.ok(sawFeedVideo > 0,
+    '所有夹具里都没有卡内视频 ⇒ 这条守卫空转（视频锚点可能已失效，或夹具换了一批）');
 });

@@ -92,7 +92,7 @@ test('探针自检：空页面上「应当存在」的选择器必须报 fail（
     assert.equal(r.status, 'fail', `${id} 在空页面上应报 fail，实际 ${r.status}`);
   }
   // optional 的只降级为 warn
-  for (const id of ['re-text', 'tag-slot', 'follow-btn', 'home-wrap', 'media', 'text-link', 'icon-badge']) {
+  for (const id of ['re-text', 'tag-slot', 'follow-btn', 'home-wrap', 'media', 'video', 'text-link', 'icon-badge']) {
     const r = results.find((x) => x.id === id);
     assert.equal(r.status, 'warn', `${id} 是 optional，空页面上应为 warn，实际 ${r.status}`);
   }
