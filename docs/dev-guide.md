@@ -46,7 +46,7 @@ WeiboFilter/
 │   ├── build.ps1           PowerShell 包装（首次自动 npm install）
 │   └── recon/
 │       ├── recon.js                 M0 结构侦察脚本（DevTools Console 粘贴即用）
-│       ├── firstframe-probe.user.js 一次性油猴脚本：**首帧**注入「卡片变矮 60px」验洞（@run-at document-start）
+│       ├── firstframe-probe.user.js 一次性油猴脚本：**首帧**注入「真实缩短卡片内容」验「改高度行不行」（v3，@run-at document-start）
 │       ├── analyze-snapshot.mjs     离线「体检」：class 词汇表 + 逐卡对照表（纯正则）
 │       └── find-ad-slots.mjs        离线「广告位定位」：真 DOM + 祖先链 + 稳定签名（parse5）
 └── tests/
@@ -65,7 +65,9 @@ WeiboFilter/
     ├── l1.test.mjs             L1 四条守卫（尺寸黑名单 / 锚点 / 禁写死色 / grayscale 白名单）
     ├── theme.test.mjs          「去橙红」取值纪律（哑色色相与饱和度）
     ├── userscript-expose.test.mjs  把手必须挂在**页面 window**（TM 沙箱坑）
-    └── recon-smoke.test.mjs    recon.js 无浏览器冒烟（vm 沙箱 + 真快照 + 合成页）
+    ├── recon-smoke.test.mjs    recon.js 无浏览器冒烟（vm 沙箱 + 真快照 + 合成页）
+    ├── ffprobe-rule.test.mjs   首帧探针注入的规则守卫（禁「不动边框盒」的手法 + 每卡恰好命中 1 个）
+    └── ffprobe-verdict.test.mjs 首帧探针 v3 判词（四个世界：跟着走 / 停在原处 / 改槽不改卡 / 没生效）
 ```
 
 ## 3. 构建
@@ -136,6 +138,11 @@ npm test          # 等价于 node --test（无参数会自动发现测试文件
    - `SpecBaseRecon.probeHeightCache()` —— **改高度可不可行**（2026-10-14 新增）。
      ⚠️ **它只回答一半**：答「列表**重建**时会不会重测」，**答不了「首帧注入行不行」**
      （Console 注入天然晚于微博那次写入 ⇒ 物理上问不到）。
+     🔴 **更要紧的一条**：它注入的是 `margin-bottom` —— **只压矮槽位、不动卡片的边框盒**
+     （margin 不进 `getBoundingClientRect()`），而微博的尺寸缓存跟的是**卡片高**（§12-B11）
+     ⇒ **它连「改高度可不可行」也答不了**。它的判词里现在挂着这句提醒；
+     但它的**副产品**很有价值：注入后打印的 `matchRateCard` / `cardGapMedian` 会**直接显示**
+     「d 跟的是卡片高」这件事。
      判据两条：① 相邻槽的内联 `translateY` 差值 d(i) 是否等于上一槽的实际高度 h(i)（顺带记**小数位**
      ——`287.9px` 这种值只可能来自实测）；② 注入 `-60px` 后 d 是否仍等于 h、卡片之间**有没有洞**。
      **第一段**还带一条**结构自证**：`卡片高 − 槽高` 应 ≈ 60px —— 用来把「CSS 生效了」与
@@ -148,11 +155,18 @@ npm test          # 等价于 node --test（无参数会自动发现测试文件
      这才是决定性的一问：「微博**在什么时刻**写槽位尺寸缓存」——
      在**首次渲染时**写 ⇒ `document-start` 注入的 CSS 会被一起量进去 ⇒ 改高度不留洞。
      Console 探针做不到这件事（它只能渲染后注入，那正是 B2 已证无效的情形）。
+     🆕 **v3.0.0（2026-10-14 改）**：v2 用 `margin-bottom` 测，**测错了对象**（只动槽位、不动卡片，
+     §12-B11）⇒ 判词改成**两态对撞**：A 态（注入态）量 d 与**卡片高**，撤掉样式后 B 态量同一批条目的
+     **自然卡片高**，看 d 贴近哪一个 —— 两候选相差几百 px，**不靠阈值猜**。
+     注入的规则也换成**真实缩短卡片内容**（隐藏内容主体 + 统计行）。自证改为
+     「B 态卡片高 − A 态卡片高」的中位数必须 > 0（否则说明规则没命中 ⇒ 整组读数作废）。
+     另有一道闸 `cardGapOk`：要求**卡片高 ≈ 槽高**，一旦又变成「改槽不改卡」就判读数无效。
      **怎么用**：装脚本 → 打开 `https://weibo.com/home` → **刷新一次** → **不要滚动**，
-     等 Console 自动打出结论（并自动下载 `ffprobe-firstframe-*.json`）；脚本会自己下滚 4 屏做交叉验证。
-     **自证方式**：`selfProof`（`卡片高 − 槽高` ≈ 60px）代替了旧版的 on/off 双跑 ——
-     否则「规则没命中 ⇒ 自然没洞」会让假阳性被当成好消息。测完请**卸载**（它会把卡片压矮 60px）。
-     🆕 **v2.1.0 新增一道「读数无效」自检**：若所有槽位的盒子都量不到（`h/top/bottom` 全 0，
+     等 Console 自动打出结论（并自动下载 `ffprobe-firstframe-*.json`）。
+     另记一条**时间线旁证**：`timeline.msStyleBeforeFirstSlot`（CSS 比第一个槽位元素早出现多少 ms）
+     —— 元素被测量不可能早于它被创建，这个值为正就排除了「微博在我们注入之前就量完了」。
+     测完请**卸载**并刷新（它会把卡片内容一直藏着）。
+     🆕 **v2.1.0 起还有一道「读数无效」自检**：若所有槽位的盒子都量不到（`h/top/bottom` 全 0，
      而内联 `translateY` 仍有值）⇒ 说明页面处于异常态（某个祖先被 `display:none`），
      脚本会**直接告诉你读数作废并让你去查 A 类收口**，不再打出一堆看着像数据的数。
      （`probeHeightCache()` 同样有这道闸：`boxesMissing`。）
@@ -223,6 +237,7 @@ node tools\recon\find-ad-slots.mjs tests\fixtures\snapshot-YYYYMMDD-HHMM.html --
 | 容器 | `div#scroller.vue-recycle-scroller` → `div.vue-recycle-scroller__item-wrapper` |
 | 项（虚拟槽位） | `div.vue-recycle-scroller__item-view`（`transform: translateY(...)` **绝对定位**，回收位为 `translateY(-9999px); opacity:0`）；⚠️ **`data-index` 不在槽位上**，在它里面的 `div.wbpro-scroller-item` 上（2026-10-14 实测纠正） |
 | 卡 | `div.wbpro-scroller-item` → `article` |
+| ⭐ **尺寸缓存对照的是「卡」，不是「槽」**（2026-10-14） | 槽位的内联 `translateY` 步长 `d` 逐对等于**卡片（`.wbpro-scroller-item`）的边框盒高**，与槽位高不一定相等（实测 `d=837` vs 槽高 `777.9` vs 卡片高 `837.9`，误差 ≤1px）。正常页面里**槽高 == 卡片高**所以看不出来；一旦用 `margin` 这类「只动槽位、不动卡片边框盒」的手法，就会自造出与 `d` 等宽的洞。⇒ **要改高度就改卡片自己的内容**（`display:none` 掉真实内容块）；⛔ `margin` / `transform` / `clip` / `opacity` / `filter` 全都测不出东西（§12-B11） |
 | **帖子 ID** | 时间链接 `https://weibo.com/<uid>/<bid>` 里的 `bid`（base62） |
 | **可靠 `id` 锚点** | `#scroller`（虚拟列表容器）/ `#homeWrap`（首页整个主栏）/ `#app` |
 | **首页主栏的真实结构**（2026-10-14 事故后更正） | `#homeWrap` 只有 2 个直接子节点：`div.woo-panel-main…`（发布器）+ 一个**匿名 div**；而那个匿名 div 里依次是 **A 类广告 banner（`div.woo-box-flex…`，85px）→ `div._visable_*`（另一块，含 `wbpro-tab2`，**不是广告**）→ 时间线（`div > #scroller`）**。⚠️ **广告与时间线是兄弟**；把它俩当成上下级会让 A 类收口连时间线一起收掉（§12-B10） |
@@ -287,7 +302,7 @@ node tools\recon\find-ad-slots.mjs tests\fixtures\snapshot-YYYYMMDD-HHMM.html --
 | --- | --- | --- |
 | **M0 侦察** | 侦察采集 + DOM 快照夹具 + 结构报告 | 🟢 **全部闭环**：B1 ✅（广告判据）· B2 ✅（2026-10-13 16:21 实测 ⇒ **隐藏不可行**）· B3~B7 ✅（含 B7 ⇒ L0 走持续校正） |
 | **M1 管线** | 调度层 / 判定核心 / 应用层 + 广告识别 + 关键词过滤 | 🟢 **已接线 + 真机验收通过**（2026-10-13）：判定核心（`ad-detect` + `keyword` + `decision`）+ 调度层（`scheduler.js`）+ 应用层（`apply/`）；单测 **139/139 全绿**（含 4 份真快照上的端到端管线）。<br>真机：过滤生效、滚动无异常、可逆。<br>🔴 **2026-10-14 修正**：其中「A 类收掉无跳变」**不成立为验收证据** —— A 类 banner 间歇投放，那次很可能没遇到广告；遇到时会把**整条时间线**一起 `display:none`（信息流整页空白），见 PROJECT.md §12-B10。<br>遗留：关键词 `highlight` 只留接口未落样式；关键词规则暂无配置 UI（M3） |
-| **M2 低调模式** | L1 + L2 落地、首帧注入、可逆 | 🟡 **L0 已落地**；**L1 第一批（零高度影响子集）已落地且真机验收通过**（`src/features/l1.js` + `features/appearance.js`，**10 条规则**，`l1.test.mjs` 用「会改尺寸的属性」黑名单 + 锚点纪律 + **禁写死颜色** + **grayscale 白名单**四条守卫）；**「全局去橙红」已落地并验收**（`src/features/theme.js`：**零选择器**，只覆盖 26 个 CSS 变量；2026-10-14 用户定调「降彩度、不灭色相」⇒ 取值为同色相哑色 hsl，`theme.test.mjs` 守着色相/饱和度纪律；产物已改 `minify:true` 剥注释）；**L1 第二批开工：① 时间相对 → 绝对短格式已落地 + 真机验收通过**（`core/time-text.js` + `apply/time.js`，JS 改写 + `data-spb-t` 存原文可逆，`time-apply.test.mjs` 10 条守着）**② 视频封面 / 暂停帧降饱和已落地 + 真机验收通过**（视频走 **video.js** 而不是 `woo-picture` ⇒ 单加 `.vjs-poster img` + `.video-js.vjs-paused video.vjs-tech` 两条规则，**限定在卡内**；`l1.test.mjs` 三条守卫 + 探针 `video`。真机确认：封面变淡 / 播放恢复全彩 / 暂停又淡 / 小窗播放器不受影响）；L2 重排与其余改高度项待做 |
+| **M2 低调模式** | L1 + L2 落地、首帧注入、可逆 | 🟡 **L0 已落地**；**L1 第一批（零高度影响子集）已落地且真机验收通过**（`src/features/l1.js` + `features/appearance.js`，**10 条规则**，`l1.test.mjs` 用「会改尺寸的属性」黑名单 + 锚点纪律 + **禁写死颜色** + **grayscale 白名单**四条守卫）；**「全局去橙红」已落地并验收**（`src/features/theme.js`：**零选择器**，只覆盖 26 个 CSS 变量；2026-10-14 用户定调「降彩度、不灭色相」⇒ 取值为同色相哑色 hsl，`theme.test.mjs` 守着色相/饱和度纪律；产物已改 `minify:true` 剥注释）；**L1 第二批开工：① 时间相对 → 绝对短格式已落地 + 真机验收通过**（`core/time-text.js` + `apply/time.js`，JS 改写 + `data-spb-t` 存原文可逆，`time-apply.test.mjs` 10 条守着）**② 视频封面 / 暂停帧降饱和已落地 + 真机验收通过**（视频走 **video.js** 而不是 `woo-picture` ⇒ 单加 `.vjs-poster img` + `.video-js.vjs-paused video.vjs-tech` 两条规则，**限定在卡内**；`l1.test.mjs` 三条守卫 + 探针 `video`。真机确认：封面变淡 / 播放恢复全彩 / 暂停又淡 / 小窗播放器不受影响）；L2 重排与其余改高度项待做。⚠️ **改高度项的前置假设仍在验**（§12-B11：缓存对照的是**卡片边框盒**而非槽位 ⇒ 2026-10-14 15:01 那次首帧读数判的「❌」是**注入手法**的否证、不是结论；`firstframe-probe.user.js` 已升 **v3** 重测） |
 | **M3 入口与面板** | 隐藏热区 + TM 菜单 + 配置导入导出 + 可解释性 + 探针注册表 + 诊断页 | ⛔ （探针**注册表**已在 `src/adapters/weibo-home.js#PROBES` 落好并有测试守着，M3 只差 UI；`scheduler.recent()` / `stats()` 已备好数据源） |
 
 ## 6.5 M1 管线怎么跑（接线后的数据流）
@@ -359,11 +374,15 @@ __spb.css()                       // 看当前实际注入了哪些 CSS（排查
 但当前页面里微博已按旧样式测量过虚拟列表高度。
 
 ⚠️ **L1 目前只含「零高度影响」的规则**（去色 / 灰度 / 滤镜 / 装饰替换）。凡是**改卡片高度**的项
-（媒体缩略化到 60px、隐藏统计行 / 互动按钮行、字号行距）都在**第二批** —— B2 证明虚拟列表位置来自
-预计算的 `translateY` 缓存，改高度可能留洞或漂移。
-**前提的第一轮实测（2026-10-14）已答掉一半**：缓存**确实等于实测高度**（d==h 9/9、带小数）、
-且**渲染后改高度绝不回写**（洞 59.6px 一直留着）；**剩最后一问**——微博是在**首次渲染时**写下这条缓存，
-还是更早？只有前者能让 `document-start` 注入生效 ⇒ 跑 `tools/recon/firstframe-probe.user.js` 定案。
+（媒体缩略化到 60px、隐藏统计行 / 互动按钮行、字号行距）都在**第二批** —— 虚拟列表的槽位位置来自
+一份预计算的 `translateY`，改高度可能留洞或漂移。
+**前提的实测（2026-10-14）**：① 缓存**等于实测高度**（d==h 9/9、带小数）✅；
+② **渲染后改高度绝不回写**（洞 59.6px 一直留着）✅；③ 切「推荐 / 关注」tab **不重建**列表 ❌；
+④ ⭐ **缓存对照的是「卡片边框盒高」而不是「槽位高」**（§12-B11）—— 所以判「改高度行不行」
+必须用**真实缩短卡片内容**的规则去测，用 `margin` 那种手法测出来的只有自己的影子。
+⇒ **最后一问（微博是在首次渲染时写这条缓存，还是更早？）仍未回答**，
+用 `tools/recon/firstframe-probe.user.js`（**v3**）定案：
+`first`-段判 ✅ ⇒ L1 剩余 4 项 + L2 重排都能做；判 ❌ ⇒ 一起砍。
 新增规则时 `tests/l1.test.mjs` 会用一张「会改尺寸的属性」黑名单 + 锚点纪律（禁构建哈希 / `__yawf_*`）把它拦下来。
 
 ## 7. 三条不可违背的工程纪律（摘自 PROJECT.md）

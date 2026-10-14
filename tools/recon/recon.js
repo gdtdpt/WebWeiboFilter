@@ -32,9 +32,13 @@
  *     → 再跑一次 → 给结论并自动撤掉注入。中途不想继续：`probeHeightCache({clear:true})`。
  *     ⚠️ **别指望它回答「首帧注入行不行」** —— 注入天然晚于微博的首次测量，这条路走不到首帧。
  *     它只能答「列表被**重建**时会不会重测」。
+ *     🔴 **2026-10-14 第一次真机读数后的更正**：它注入的 `margin-bottom` 只压矮**槽位**、
+ *     不动**卡片边框盒**，而微博的尺寸缓存跟的是**卡片高**（实测 d 与卡片高逐对吻合、与槽位高差 60px）
+ *     ⇒ 它**测不出「改高度可不可行」**。别拿它的「❌」当改高度的死刑判决。
  * 6c. **决定性问题（首帧是否早于微博那次唯一的高度写入）只有一个走法**：
  *     `tools/recon/firstframe-probe.user.js`（一次性油猴脚本，`@run-at document-start`，
- *     装上 → 刷新一次 → 自动出结论并下载 JSON）。Console 探针做不到这件事。
+ *     v3 起改为**注入真实缩短卡片内容的规则 + A/B 两态对撞**；装上 → 刷新一次 → 自动出结论并下载 JSON）。
+ *     Console 探针做不到这件事。
  *
  * 结果怎么拿走（不用从 Console 复制对象）
  * ------------------------------------
@@ -693,10 +697,35 @@
   //
   // ⚠️ 为什么强调「切页而不是刷新」：刷新会**同时丢掉**我们注入的 CSS 与基线状态；
   //    而重新粘贴脚本注入 CSS 时页面早就渲染完了 ⇒ 又退回 B2 的情形，读数无意义。
+  //
+  // 🔴 2026-10-14 第一次真机读数之后的更正（**读这一节前务必看**）：
+  //    上面的「注入卡片变矮 60px」实际注入的是 `margin-bottom:-60px` —— 它只压矮**槽位**，
+  //    **不动卡片的边框盒**（margin 不进 `getBoundingClientRect()`）。而微博的尺寸缓存跟的是
+  //    **卡片高**：实测 first 四对 d = 281/837/407/421、槽高 = 221/777.9/347.6/361.5，
+  //    卡片高 = 槽高 + 60 ⇒ **d 与卡片高逐对吻合（误差 ≤1px）**。
+  //    ⇒ 那个 60px 的洞是**注入手法自己造的**，与「微博支不支持改高度」无关。
+  //    ⇒ 本探针**答不了「改高度可不可行」**；它只能回答「槽位级变化会不会被跟踪 / 重建时会不会重测」。
+  //      判改高度必须用 `tools/recon/firstframe-probe.user.js`（v3：注入真实缩短卡片内容的规则
+  //      + A/B 两态对撞，见该文件头部）。
 
   var HPROBE_STYLE_ID = 'spb-recon-hprobe';
   var HPROBE_DELTA = 60;
   var HPROBE_CSS = '.wbpro-scroller-item{margin-bottom:-' + HPROBE_DELTA + 'px !important}';
+
+  /**
+   * ⚠️ 2026-10-14 更正（第一次真机读数之后才发现的）：
+   * 上面这条 CSS 注入的是 `margin-bottom` —— 它只压矮**槽位**，**不动卡片的边框盒**
+   * （margin 不进 `getBoundingClientRect()`）。而微博的尺寸缓存跟的是**卡片高**：
+   * 实测 first 四对 `d = 281/837/407/421`，槽高 `221/777.9/347.6/361.5`，卡片高 = 槽高 + 60
+   * —— **d 与卡片高逐对吻合（误差 ≤1px）**。
+   * ⇒ 本探针能回答的只有「**槽位级**变化会不会被跟踪」「列表重建时会不会重测」；
+   *   **它答不了「改高度可不可行」**（那需要改卡片自己的边框盒）。
+   *   判改高度必须用 `tools/recon/firstframe-probe.user.js`（v3：注入真实缩短卡片内容的规则
+   *   + A/B 两态对撞）。下面每条判词都会带上这句提醒。
+   */
+  var HPROBE_SCOPE = ' ℹ️ 注意：本探针注入的是 `margin-bottom`，只压矮**槽位**、不动**卡片边框盒**，'
+    + '而微博记的是卡片高 ⇒ 这组读数只说「改槽位不被跟踪」，**推不出「改高度不可行」**。'
+    + '判改高度请用 tools/recon/firstframe-probe.user.js（v3）。';
   var hprobeBaseline = null;
 
   function round1(n) { return Math.round(n * 10) / 10; }
@@ -723,17 +752,26 @@
     return !!op && parseFloat(op) === 0;
   }
 
-  /** 逐槽采样：内联 translateY / 实际高度（**保留一位小数**，小数位本身就是证据）/ 视觉位置 */
+  /**
+   * 逐槽采样：内联 translateY / 实际高度（**保留一位小数**，小数位本身就是证据）/ 视觉位置。
+   *
+   * ⚠️ `h` 是**槽位**（`.vue-recycle-scroller__item-view`）的高度，`cardH` 是**卡片**
+   * （`.wbpro-scroller-item`，槽位的直接子元素）的**边框盒**高度。这两个数在 2026-10-14
+   * 被证明是**两个不同的量**，而微博的尺寸缓存跟的是**后者**（见下面 `analysis.cardGap*`）。
+   */
   function sampleSlots() {
     var list = feedItems();
     var out = [];
     for (var i = 0; i < list.length; i++) {
       var el = list[i], r = el.getBoundingClientRect();
+      var card = el.firstElementChild;
+      var cr = (card && card.getBoundingClientRect) ? card.getBoundingClientRect() : null;
       var row = {
         order: i,
         dataIndex: slotIndexOf(el),
         ty: parseTranslateY(el),
         h: round1(r.height),
+        cardH: cr ? round1(cr.height) : null,
         top: round1(r.top),
         bottom: round1(r.bottom),
         recycled: isRecycledSlot(el)
@@ -752,7 +790,10 @@
     return {
       from: a.dataIndex, to: b.dataIndex,
       d: d, h: a.h,
+      cardH: a.cardH,
       err: round1(Math.abs(d - a.h)),
+      // d 与**卡片**边框盒高的差 —— 2026-10-14 证明这才是微博尺寸缓存的对照物
+      errCard: a.cardH === null ? null : round1(Math.abs(d - a.cardH)),
       gap: round1(b.top - a.bottom)
     };
   }
@@ -789,9 +830,21 @@
     }
 
     var errs = pairs.map(function (p) { return p.err; });
+    var errCards = pairs.map(function (p) { return p.errCard; })
+      .filter(function (v) { return v !== null; });
     var gaps = pairs.map(function (p) { return p.gap; });
     var hs = live.map(function (r) { return r.h; });
     var exact = pairs.filter(function (p) { return p.err <= 2; }).length;
+    var exactCard = pairs.filter(function (p) { return p.errCard !== null && p.errCard <= 2; }).length;
+    // 「卡片边框盒高 − 槽位高」：**2026-10-14 新发现的判别量**。
+    //   正常情况下两者相等（槽位里只装着一张卡）；一旦不相等，说明我们改的是**槽位**而卡片没动
+    //   （典型手法：给卡片加 `margin-bottom` —— margin 进不了 `getBoundingClientRect()`）。
+    //   而微博的尺寸缓存跟的是**卡片**，所以那种改法只会自造洞、测不出「改高度可不可行」。
+    var cardGaps = [];
+    for (var ci = 0; ci < live.length; ci++) {
+      if (live[ci].cardH !== null) cardGaps.push(round1(live[ci].cardH - live[ci].h));
+    }
+    var cardGapMedian = medianOf(cardGaps);
     // ⚠️ 全体槽位「量不到盒子」⇒ 页面处于异常态（整块被 display:none），读数无意义。
     //    2026-10-14 真机事故就是这种读数：h=0 而内联 translateY 步长 300 ⇒ gap=0 与 d=300 自相矛盾。
     //    有盒子才会出现的量（height / top / bottom）全为 0 ⇒ 唯一解释是「整块被 display:none」。
@@ -803,8 +856,13 @@
       boxesMissing: boxesMissing,
       pairs: pairs.length,
       exact: exact,
+      exactCard: exactCard,
       matchRate: pairs.length ? Math.round(exact / pairs.length * 100) / 100 : null,
+      matchRateCard: errCards.length ? Math.round(exactCard / errCards.length * 100) / 100 : null,
       medianAbsErr: medianOf(errs),
+      medianAbsErrCard: medianOf(errCards),
+      cardGapMedian: cardGapMedian,
+      cardGapOk: cardGaps.length > 0 && Math.abs(cardGapMedian) <= 2,
       maxAbsErr: errs.length ? Math.max.apply(null, errs) : null,
       hAvg: hs.length ? round1(hs.reduce(function (a, b) { return a + b; }, 0) / hs.length) : null,
       hMin: hs.length ? Math.min.apply(null, hs) : null,
@@ -962,8 +1020,8 @@
       var res2 = {
         question: '列表被**重建**（换路由）之后会不会重测槽位高度？（第二段：注入 -60px + 重建后复量）',
         stage: 'after-remount',
-        method: '注入 `.wbpro-scroller-item{margin-bottom:-60px}`（卡片实际变矮 ' + HPROBE_DELTA
-          + 'px）→ 换路由让列表重建 → 复量 d(i) vs h(i) 与视觉空隙',
+        method: '注入 `.wbpro-scroller-item{margin-bottom:-60px}`（⚠️ 只压矮槽位、不动卡片边框盒）'
+          + '→ 换路由让列表重建 → 复量 d(i) vs h(i)、d(i) vs 卡片高 与视觉空隙',
         injectedCss: HPROBE_CSS,
         remountDetected: remountDetected,
         remountKeptSlots: kept + '/' + cur.length,
@@ -971,7 +1029,7 @@
         selfProof: proof2,
         baseline: b,
         remount: now,
-        verdict: v,
+        verdict: v + HPROBE_SCOPE,
         note: '⚠️ 本段**不回答首帧问题**（注入天然晚于微博的首次测量）。首帧那条路只有 '
           + 'tools/recon/firstframe-probe.user.js 能走。'
       };
@@ -995,7 +1053,7 @@
     var proof = injectSelfProof(rows2);
     var cssApplied = shrinkMedian !== null && Math.abs(shrinkMedian + HPROBE_DELTA) <= 6;
 
-    var v1;
+    var v1, scopeAlreadySaid = false;
     if (now.boxesMissing) {
       v1 = '⛔ **读数无效**：' + now.liveSlots + ' 个活槽位的**盒子全都量不到**'
         + '（height / top / bottom 全为 0，而内联 translateY 仍有值）⇒ 页面处于异常态：'
@@ -1017,6 +1075,17 @@
     }
     if (now.matchRate === null) {
       v1 = '未能取到可比的相邻槽 —— 先把信息流滚出内容再跑。';
+    } else if (now.matchRateCard !== null && now.matchRateCard >= 0.8 && Math.abs(now.cardGapMedian || 0) > 2) {
+      // ⭐ 这是本次注入**唯一**真正的收获（2026-10-14 第一次真机读数就是这样）：
+      //    注入把 d 与 h 拉开之后，d 跟着**卡片高**走、不跟槽位高走。
+      v1 = '✅ **真正的收获**：注入 -60px 后，d 与**卡片高**吻合 '
+        + now.exactCard + '/' + now.pairs + ' 对（中位误差 ' + now.medianAbsErrCard + 'px），'
+        + '而与**槽位高**差 ' + Math.abs(now.cardGapMedian) + 'px（= 卡片高 − 槽高的中位差）'
+        + '⇒ 微博的尺寸缓存对照的是**卡片（`.wbpro-scroller-item`）的边框盒**，不是槽位；'
+        + '`margin-bottom` 这类「只动槽位、不动卡片」的手法天生影响不到它。'
+        + '⇒ **本探针测不出「改高度可不可行」**，判改高度请用 '
+        + 'tools/recon/firstframe-probe.user.js（v3：注入真实缩短卡片内容的规则 + A/B 两态对撞）。';
+      scopeAlreadySaid = true;
     } else if (now.matchRate >= 0.8) {
       v1 = '倾向「量 DOM」：d 与 h 吻合 ' + now.exact + '/' + now.pairs + ' 对（中位误差 '
         + now.medianAbsErr + 'px）⇒ 槽位位置与**实际渲染高度**一致'
@@ -1036,6 +1105,7 @@
       v1 += ' ℹ️ 结构自证却是通过的（卡片高 − 槽高 ≈ ' + proof.median
         + 'px）⇒ 大概率只是**两次采样之间槽位被换了**，重跑一次即可。';
     }
+    if (!scopeAlreadySaid) v1 += HPROBE_SCOPE;
 
     var next = 'CSS 已注入且**先不撤**。请**换一次路由**让信息流**重建**'
       + '（例：首页 → 点进自己的主页 → 再点回首页；**切「推荐 / 关注」tab 不算**——'

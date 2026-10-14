@@ -354,7 +354,7 @@ function plain(v) {
  */
 function syntheticVirtualList(slots) {
   const inner = slots.map((s) => `<div class="vue-recycle-scroller__item-view" ` +
-    `data-h="${s.h}" data-top="${s.rectTop !== undefined ? s.rectTop : s.ty}" ` +
+    `data-h="${s.slotH !== undefined ? s.slotH : s.h}" data-top="${s.rectTop !== undefined ? s.rectTop : s.ty}" ` +
     `style="transform: translateY(${s.ty}px) translateX(0px); opacity: 1;">` +
     `<div class="wbpro-scroller-item" data-index="${s.index}" data-h="${s.h}">` +
     '<article><div class="wbpro-feed-ogText">卡</div></article></div></div>').join('');
@@ -404,6 +404,37 @@ test('recon 冒烟：尺寸缓存「预先定好」时 —— d 是固定步长�
   assert.equal(a.matchRate, 0, `d 与 h 应完全脱节，实际 ${a.exact}/${a.pairs}`);
   assert.ok(a.medianAbsErr > 50, '中位误差应很大');
   assert.equal(a.gapHasHole, true, '固定步长下必然出现洞 —— 这是「不可行」的可视证据');
+});
+
+test('recon 冒烟：v2 那个坑 —— 「只压矮槽位、不动卡片」会自己造洞，必须被判为「测不出改高度」', { skip }, () => {
+  // 2026-10-14 第一次真机读数就是这个形态：注入 `margin-bottom:-60px` 只让**槽位**矮了 60px，
+  // 卡片的边框盒一点没动（margin 不进 getBoundingClientRect），而微博的尺寸缓存跟的是**卡片**。
+  // 于是 d 与槽位高差 60px（看着像「有洞 ⇒ 改高度不可行」），实际上 d 与**卡片高**逐对吻合。
+  const cardHeights = [287.6, 588.2, 300.4, 412.3];
+  let acc = 0;
+  const slots = cardHeights.map((cardH, i) => {
+    const s = { index: i, ty: Math.round(acc), h: cardH, slotH: cardH - 60 };
+    acc += cardH;                       // 缓存跟着**卡片高**走，而不是槽位高
+    return s;
+  });
+
+  const a = analyzeFixture(syntheticVirtualList(slots));
+
+  assert.equal(a.pairs, 3);
+  assert.equal(a.matchRate, 0, 'd 与**槽位高**应当脱节（这正是那个「洞」）');
+  assert.equal(a.matchRateCard, 1, 'd 与**卡片高**应当逐对吻合 —— 这才是微博真正对照的量');
+  assert.equal(a.cardGapMedian, 60, '卡片高 − 槽高 应为 +60（我们改了槽、没改卡）');
+  assert.equal(a.cardGapOk, false, '这种形态必须被标记出来，防止把「手法的问题」当成「结论」');
+  assert.equal(a.gapHasHole, true, '槽位比卡片矮 ⇒ 视觉上确实有洞');
+});
+
+test('recon 冒烟：正常页面（槽高 == 卡片高）不得被误判成「改槽不改卡」', { skip }, () => {
+  const a = analyzeFixture(syntheticVirtualList([
+    { index: 0, ty: 0, h: 300 },
+    { index: 1, ty: 300, h: 300 },
+  ]));
+  assert.equal(a.cardGapMedian, 0);
+  assert.equal(a.cardGapOk, true, '卡片高 == 槽高 是常态，不许报警');
 });
 
 test('recon 冒烟：回收位（translateY(-9999px) / opacity:0）必须被排除在比对之外', { skip }, () => {
