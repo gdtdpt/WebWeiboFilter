@@ -2052,27 +2052,47 @@
       rows.push({ id: itemId(card), cardH: rect(card).h, articleChildren: art.children.length, blocks: blocks, footer: foot, likeRow: likeRow });
     }
 
-    var withFooter = 0, withPb = 0, withLikeRow = 0, boxesMissing = rows.length > 0;
+    var withFooter = 0, footersZeroH = 0, withPb = 0, withLikeRow = 0, boxesMissing = rows.length > 0;
     for (var r = 0; r < rows.length; r++) {
-      if (rows[r].footer) withFooter++;
+      if (rows[r].footer) {
+        withFooter++;
+        if (rows[r].footer.h === 0) footersZeroH++;
+      }
       if (rows[r].likeRow.placebox) withPb++;
       if (rows[r].likeRow.found) withLikeRow++;
       if (rows[r].cardH !== 0) boxesMissing = false;
     }
 
+    // ⚠️ 第二道闸（2026-10-14 补）——`boxesMissing` 只看**卡片**高度，拦不住「只有 footer 被藏」。
+    // 典型来源 = 首帧探针 `firstframe-probe.user.js`：它注入
+    // `.wbpro-scroller-item article > footer{display:none !important}`，而卡片因 header 仍在、
+    // 高度非零 ⇒ 旧闸不报警，还会打出「footer 命中 N/N ✅」的**假好消息**，
+    // 但每个 footer 的 rect 已归零、子树也量不全。§12-B10「读数看着干净、其实无效」的翻版。
+    var footersHidden = withFooter > 0 && footersZeroH === withFooter;
+
     var out = {
       sampledCards: rows.length,
       boxesMissing: boxesMissing,
+      footersZeroH: footersZeroH,
+      footersHidden: footersHidden,
       footerOnEveryCard: rows.length > 0 && withFooter === rows.length,
       cardsWithPlacebox: withPb,
       cardsWithLikeRowText: withLikeRow,
       rows: rows
     };
 
-    out.verdict = (boxesMissing
-      ? '⛔ 所有卡片高度都是 0 ⇒ 页面处于异常态（某祖先被 display:none，§12-B10），'
-        + '先 `__spb.off()` 或刷新；'
-      : '')
+    var warn = '';
+    if (boxesMissing) {
+      warn = '⛔ 所有卡片高度都是 0 ⇒ 页面处于异常态（某祖先被 display:none，§12-B10），'
+        + '先 `__spb.off()` 或刷新；';
+    } else if (footersHidden) {
+      warn = '⛔ ' + withFooter + ' 个 `article > footer` **高度全是 0** ⇒ 它们被 `display:none` 了，'
+        + '最常见是**还挂着首帧探针**（`firstframe-probe.user.js` 注入 '
+        + '`.wbpro-scroller-item article > footer{display:none !important}`）—— 它藏掉的正是本次要采的目标。'
+        + '⇒ footer 结构读数无效。卸掉该探针并刷新，或就地跑 '
+        + '`document.getElementById("spb-ffprobe-style")?.remove()` 后重跑；';
+    }
+    out.verdict = warn
       + '采样 ' + rows.length + ' 张卡：`article > footer` 命中 ' + withFooter + '/' + rows.length
       + '；`[class*=placebox]` 容器 ' + withPb + ' 张；**带「N 人赞过」文本的卡 ' + withLikeRow + ' 张**'
       + (withLikeRow === 0

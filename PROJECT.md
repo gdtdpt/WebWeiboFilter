@@ -911,6 +911,20 @@ div.wbpro-scroller-item
 **④ 工具的形态分工**：离线结构用 `inspect-card.mjs`（可复现、入库）；
 真机补数据用 `SpecBaseRecon.probeCardRows()`（Console；**跑之前先往下滚几屏**找一条有人赞过的微博）。
 
+**⑤ 🔴 采集前置：先卸掉首帧探针 `firstframe-probe.user.js`**（2026-10-14 补）
+- 它注入的 `.wbpro-scroller-item article > footer{display:none !important}` **藏掉的正是本次要采的目标**。
+- 卸法：TM 里禁用 / 删除该脚本 → **刷新**（TM 卸载**不会**移除它已注入的 `<style id="spb-ffprobe-style">`，
+  不刷新那条 CSS 还在）；或就地在 Console 跑 `document.getElementById("spb-ffprobe-style")?.remove()`
+  （**不用刷新、不丢滚动位置**，已滚到「有人赞过」那条时用这个）。
+- **主脚本 SpecBase Helper 不用停**：`src/` **完全不碰** `footer` / `placebox` / `like`（只在 `theme.js`
+  的注释里提过「点赞色」变量）；全 `src/` 唯一的 `display:none` 是 `SEL_BADGE`（徽章角标，与目标无关）；
+  L1 又全是**零高度影响**项 ⇒ 对本次要采的 **class 锚点**与**高度读数**都无干扰。
+- 探针已加**第二道闸**（此前是个真缺口）：`boxesMissing` 只看**卡片**高度，而探针挂着时卡片因
+  `header` 仍在、高度非零 ⇒ 旧闸**不报警**，还会打出「footer 命中 N/N ✅」的**假好消息**
+  （每个 footer 的 rect 其实全归零、子树也量不全）—— §12-B10「读数看着干净、其实无效」的翻版。
+  现新增 `footersZeroH` / `footersHidden`（footer 数 > 0 且**全为 0 高** ⇒ 判定被藏），verdict 直接
+  指名 `firstframe-probe` 并给卸载办法。`tests/recon-smoke.test.mjs` 用两个世界焊死（footer 高 48 vs 0）。
+
 #### B1 专节 · 广告判据（✅ 已定稿 · 2026-10-13 第二轮；`natural` 降级见 2026-10-13 追加）
 
 样本：**两张真广告卡** —— 1449「OiiOii_AI / R7RCuh927」（原创推广，含「关注」按钮）、

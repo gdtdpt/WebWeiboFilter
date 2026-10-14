@@ -181,6 +181,13 @@ npm test          # 等价于 node --test（无参数会自动发现测试文件
      ⚠️ 跑之前**先往下滚几屏**，找到一条**有人赞过**的微博；`verdict` 会直说抓没抓到。
      · 离线那半（结构树，不开浏览器）：`node tools/recon/inspect-card.mjs [-d 6] [--find 文本] [--only 1449]`
      · 已确认的结论：`article > footer` = **互动按钮行**（39/39 张卡恰好 1 个），可直接作 `display:none` 的落点。
+     · 🔴 **采集前先卸掉首帧探针** `firstframe-probe.user.js` —— 它注入的
+       `.wbpro-scroller-item article > footer{display:none}` 藏的正是本次目标。TM 里禁用后**要刷新**
+       （它注入的 `<style id="spb-ffprobe-style">` 不会被卸载带走），或就地跑
+       `document.getElementById("spb-ffprobe-style")?.remove()`（不丢滚动位置）。
+       **主脚本 SpecBase Helper 不用停**（理由见 PROJECT.md §12-B13 ⑤）。
+       探针已有 **`footersHidden` 第二道闸**把「footer 全高 0」直接判成**无效读数**（`boxesMissing`
+       只看卡片高，拦不住这种「卡片有高、只有 footer 被藏」的情况 —— 会打出假好消息）。
      用途：外壳类名**全是构建哈希**，只能靠取样拿锚点 —— 不猜（§6.1）。
 
 > ⚠️ **颜色规则一律走主题令牌，禁止写死明暗色**（2026-10-13 真机取样后的硬纪律，PROJECT.md §12-B9）。

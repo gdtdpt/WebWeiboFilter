@@ -601,3 +601,64 @@ test('recon 冒烟：`probeHeightCache()` 两段式跑得通并各自下载 JSON
   assert.equal(cleared.stage, 'cleared');
   assert.equal(recon.probeHeightCache().stage, 'baseline', 'clear 之后应能重新开始');
 });
+
+// ── 回归：`probeCardRows` 的「footer 被藏」第二道闸（2026-10-14 补）──────────────────────────
+//
+// 为什么要有它：`boxesMissing` 只看**卡片**高度。而首帧探针 `firstframe-probe.user.js` 藏的是
+// `.wbpro-scroller-item article > footer` —— 卡片因 header 仍在而高度非零 ⇒ 旧闸不报警，
+// 还会打出「footer 命中 N/N ✅」的**假好消息**（§12-B10「读数看着干净、其实无效」的翻版）。
+// 两个世界：footer 高 48（正常）vs 高 0（被 display:none）。
+
+/** 造 N 张**带 `article > footer`** 的卡；`footerH` = footer 实测高度（0 模拟被 display:none） */
+function syntheticCardsWithFooter(n, footerH) {
+  const inner = [];
+  for (let i = 0; i < n; i++) {
+    inner.push(
+      `<div class="vue-recycle-scroller__item-view" data-h="300" data-top="${i * 300}" ` +
+      `style="transform: translateY(${i * 300}px) translateX(0px); opacity: 1;">` +
+      `<div class="wbpro-scroller-item" data-index="${i}" data-h="300">` +
+      '<article data-h="300">' +
+      '<header class="woo-box-flex" data-h="60">昵称</header>' +
+      '<div class="wbpro-feed-content" data-h="200">正文</div>' +
+      `<footer data-h="${footerH}">` +
+      `<div class="woo-box-flex woo-box-alignCenter" data-h="${footerH}">` +
+      '<i class="woo-font woo-font--retweet" data-h="20"></i>' +
+      '<i class="woo-font woo-font--comment" data-h="20"></i>' +
+      '<button class="woo-like-main" data-h="20"><span class="woo-like-count">3</span></button>' +
+      '</div></footer>' +
+      '</article></div></div>'
+    );
+  }
+  return '<!DOCTYPE html><html><head><title>t</title></head><body>' +
+    '<div class="vue-recycle-scroller"><div class="vue-recycle-scroller__item-wrapper" ' +
+    `style="min-height: 4000px;">${inner.join('')}</div></div></body></html>`;
+}
+
+/** 跑真探针（桩掉矩形以喂高度） */
+function runCardRows(html) {
+  const { window } = parseHTML(html);
+  stubRects(window);
+  const { recon } = bootRecon(html, window);
+  return plain(recon.probeCardRows({ max: 5 }));
+}
+
+const skipLinkedom = parseHTML ? false : 'linkedom 未安装 —— 运行 npm install 后重试';
+
+test('recon 冒烟：probeCardRows —— footer 正常时给锚点，不误报「被藏」', { skip: skipLinkedom }, () => {
+  const out = runCardRows(syntheticCardsWithFooter(3, 48));
+  assert.equal(out.sampledCards, 3);
+  assert.equal(out.footerOnEveryCard, true, '每张卡都应有 article > footer');
+  assert.equal(out.footersZeroH, 0, 'footer 正常 ⇒ 零高计数应为 0');
+  assert.equal(out.footersHidden, false);
+  assert.ok(!/高度全是 0/.test(out.verdict), 'footer 正常时不该报「被藏」：' + out.verdict);
+});
+
+test('recon 冒烟：probeCardRows —— footer 被 display:none（卡片仍有高）⇒ 第二道闸报警', { skip: skipLinkedom }, () => {
+  const out = runCardRows(syntheticCardsWithFooter(3, 0));
+  assert.equal(out.boxesMissing, false,
+    '卡片因 header 仍在而高度非零 ⇒ 旧闸本该不报警（这正是要被堵住的缺口）');
+  assert.equal(out.footersZeroH, 3);
+  assert.equal(out.footersHidden, true);
+  assert.ok(/高度全是 0/.test(out.verdict), '应报「footer 被藏」：' + out.verdict);
+  assert.ok(/firstframe-probe/.test(out.verdict), '要指名最可能的原因：' + out.verdict);
+});
