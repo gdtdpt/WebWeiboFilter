@@ -304,19 +304,54 @@ function _countIconFamily(family) {
 //    当作微博预计算的槽位位置。三组数据分别对应三种世界：
 //    ① 缓存 = 实测高度（d ≈ h）· ② 缓存 = 固定步长（d ≠ h）· ③ 夹一个回收位（必须被排除）。
 
-function stubRects(window) {
+/**
+ * 桩掉布局：用元素上的 `data-h` / `data-top` 喂进「高度」与「视觉位置」。
+ *
+ * `opts.shrinkAfterPass` / `opts.slotCount`：模拟「**第一次采样之后**注入的 CSS 才生效」——
+ * 计数**只在 `window.__spbArm = true` 之后开始**（recon.js 载入时会自动跑一次 `report()`，
+ * 那也会查矩形，不设这个闸门就会把计数吃掉）。
+ * 第 `slotCount` 次之后的 `item-view` 矩形查询一律矮 `shrinkAfterPass`。
+ * `item-view` 里的卡片（内层 `data-h`）**不变**，所以「卡片高 − 槽高」正好等于注入量 ——
+ * 这正是 `injectSelfProof()` 的判据。
+ */
+function stubRects(window, opts) {
+  opts = opts || {};
+  window.__spbShrink = 0;
+  window.__spbSeen = 0;
+  window.__spbArm = false;
   window.Element.prototype.getBoundingClientRect = function () {
-    const h = Number(this.getAttribute('data-h') || 0);
+    const cls = this.getAttribute('class') || '';
+    const isSlot = cls.includes('vue-recycle-scroller__item-view');
+    if (isSlot && window.__spbArm && opts.shrinkAfterPass && !window.__spbShrink) {
+      window.__spbSeen += 1;
+      if (window.__spbSeen >= (opts.slotCount || 0)) window.__spbShrink = opts.shrinkAfterPass;
+    }
     const top = Number(this.getAttribute('data-top') || 0);
+    const base = Number(this.getAttribute('data-h') || 0);
+    const h = isSlot ? base - window.__spbShrink : base;
     return { x: 0, y: top, top, left: 0, right: 0, bottom: top + h, width: 0, height: h };
   };
 }
 
-/** 造一个虚拟信息流：`slots` = [{ index, ty, h }]（`ty` 是内联 translateY，`h` 是实测高度） */
+/** 把 vm 里造的数组搬回测试作用域（跨 realm 的数组 deepEqual 会因原型不同而失败） */
+function plain(v) {
+  return JSON.parse(JSON.stringify(v));
+}
+
+/**
+ * 造一个虚拟信息流：`slots` = [{ index, ty, h }]（`ty` 是内联 translateY，`h` 是实测高度）。
+ *
+ * ⚠️ `data-index` 刻意放在**内层的 `.wbpro-scroller-item`** 上 —— 这是 2026-10-14 真机核实过的
+ * 真实结构（`item-view > .wbpro-scroller-item[data-index] > article`）。
+ * 之前这个合成列表把 `data-index` 放在 `item-view` 上，于是**掩盖**了 recon.js 里
+ * 「在错的那一层读下标 ⇒ 恒为 null ⇒ 注入自检算出空数组 ⇒ 报假警」这个 bug。
+ * 结构必须与真实一致，否则测试只是在替错误背书。
+ */
 function syntheticVirtualList(slots) {
-  const inner = slots.map((s) => `<div class="vue-recycle-scroller__item-view" data-index="${s.index}" ` +
+  const inner = slots.map((s) => `<div class="vue-recycle-scroller__item-view" ` +
     `data-h="${s.h}" data-top="${s.ty}" style="transform: translateY(${s.ty}px) translateX(0px); opacity: 1;">` +
-    '<div class="wbpro-scroller-item"><article><div class="wbpro-feed-ogText">卡</div></article></div></div>').join('');
+    `<div class="wbpro-scroller-item" data-index="${s.index}" data-h="${s.h}">` +
+    '<article><div class="wbpro-feed-ogText">卡</div></article></div></div>').join('');
   return '<!DOCTYPE html><html><head><title>t</title></head><body>' +
     '<div class="vue-recycle-scroller"><div class="vue-recycle-scroller__item-wrapper" ' +
     `style="min-height: 4000px;">${inner}</div></div></body></html>`;
@@ -389,6 +424,81 @@ test('recon 冒烟：回收位（translateY(-9999px) / opacity:0）必须被排�
   assert.equal(a.liveSlots, 2, '分析时只能剩 2 个活槽');
   assert.equal(a.pairs, 1, '活槽 0/1 构成 1 对');
   assert.equal(a.matchRate, 1, '排除回收位后应完全吻合（否则位置被挪走的槽会污染判据）');
+});
+
+// ── 回归：槽位下标 `data-index` 在**内层**，必须从那一层读 ────────────────────────────────
+//
+// 2026-10-14 真机打脸：真实结构是 `item-view > .wbpro-scroller-item[data-index] > article`，
+// 而上一版在 `item-view` 上读 ⇒ 恒为 null ⇒ ① 相邻配对静默退回 DOM 顺序（碰巧结论一样，
+// 所以一直没暴露）② `probeHeightCache()` 的注入自检算出**空数组** ⇒ 报出
+// 「⚠️ CSS 没按预期生效 —— 后面读数不可信」的**假警**
+// （就是 `probe-height-cache-baseline-20261014-1157.json` 里那句）。
+// 下面两条把「在正确的那一层读」焊死，并让合成列表的结构与真机一致。
+
+test('recon 冒烟：槽位下标从内层 `.wbpro-scroller-item` 读出（真机结构回归）', { skip }, () => {
+  const html = syntheticVirtualList([
+    { index: 7, ty: 0, h: 300 }, { index: 8, ty: 300, h: 320 },
+  ]);
+  const { window } = parseHTML(html);
+  stubRects(window);
+  const { recon } = bootRecon(html, window);
+
+  const slots = recon._feedItems();
+  assert.equal(slots[0].getAttribute('data-index'), null, '合成列表的槽位本身不该带 data-index（与真机一致）');
+  assert.equal(recon._slotIndexOf(slots[0]), '7', '下标没从内层读出来 —— 注入自检会退化成假警');
+  assert.deepEqual(plain(recon._sampleSlots().map((r) => r.dataIndex)), ['7', '8']);
+  assert.equal(recon._analyzeSlots(recon._sampleSlots()).pairs, 1);
+});
+
+test('recon 冒烟：注入自检 —— 配上槽 + 高度真变了，才算 `cssApplied`', { skip }, () => {
+  const html = syntheticVirtualList([
+    { index: 0, ty: 0, h: 300 }, { index: 1, ty: 300, h: 320 }, { index: 2, ty: 620, h: 280 },
+  ]);
+  const { window } = parseHTML(html);
+  // 模拟「第一次采样之后注入的 CSS 才生效」：第二遍起槽高 −60，卡片本身不变
+  stubRects(window, { shrinkAfterPass: 60, slotCount: 3 });
+  const { recon } = bootRecon(html, window);
+  window.__spbArm = true;                   // 从这里开始计数（载入期的 report() 不算）
+
+  const first = recon.probeHeightCache();
+  assert.equal(first.consistency.matchRate, 1, '注入前 d 与 h 应完全吻合');
+  assert.equal(first.consistency.gapHasHole, false, '注入前不该有洞');
+  assert.equal(first.injectDelta.pairedSlots, 3, '三个槽都应配上（下标配对路径）');
+  assert.equal(first.injectDelta.medianHeightShrink, -60, '注入后每个槽矮 60px');
+  assert.equal(first.injectDelta.cssApplied, true,
+    '这次必须判「CSS 生效」—— 上一版在这里报假警（下标读错层 ⇒ 配对表为空）');
+  assert.equal(first.injectDelta.selfProof.median, 60, '结构自证：卡片高 − 槽高 = 60');
+  assert.equal(first.injectDelta.selfProof.ok, true);
+  assert.equal(first.afterInject.gapHasHole, true, '渲染后改高度 ⇒ 必然出现 ~60px 的洞（B2 已证）');
+  recon.probeHeightCache({ clear: true });
+});
+
+test('recon 冒烟：注入自检 —— 高度没变时只能说「没按预期生效」，不能含糊成「没配上」', { skip }, () => {
+  const html = syntheticVirtualList([
+    { index: 0, ty: 0, h: 300 }, { index: 1, ty: 300, h: 320 }, { index: 2, ty: 620, h: 280 },
+  ]);
+  const { window } = parseHTML(html);
+  stubRects(window);                        // 不模拟注入 ⇒ 高度不变
+  const { recon } = bootRecon(html, window);
+
+  const first = recon.probeHeightCache();
+  assert.equal(first.injectDelta.cssApplied, false);
+  assert.equal(first.injectDelta.pairedSlots, 3, '配上 3 个槽、只是高度没变 —— 两者不可混淆');
+  assert.match(first.injectDelta.note, /没按预期生效/);
+  assert.doesNotMatch(first.injectDelta.note, /一个槽都没配上/);
+  recon.probeHeightCache({ clear: true });
+});
+
+test('recon 冒烟：`_heightShrink()` 配不上槽时返回空数组（调用方靠 length 区分两者）', { skip }, () => {
+  const html = syntheticVirtualList([{ index: 0, ty: 0, h: 300 }]);
+  const { window } = parseHTML(html);
+  stubRects(window);
+  const { recon } = bootRecon(html, window);
+  const rows = recon._sampleSlots();
+
+  assert.deepEqual(plain(recon._heightShrink([], rows)), [], '没有可比的前一组 ⇒ 空数组');
+  const changed = rows.map((r) => Object.assign({}, r, { h: r.h - 60 }));
+  assert.deepEqual(plain(recon._heightShrink(rows, changed)), [-60], '下标配对路径应算出 −60');
 });
 
 test('recon 冒烟：`probeHeightCache()` 两段式跑得通并各自下载 JSON（状态机 + 导出通道）', { skip }, () => {

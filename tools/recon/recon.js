@@ -27,10 +27,14 @@
  * 6b. **改高度可不可行（2026-10-14 新增）**：`SpecBaseRecon.probeHeightCache()` —— 回答
  *     「槽位尺寸缓存是**量 DOM 得来的**还是**预先定好的**」。这条决定 L1 剩余 4 项（媒体缩略化 /
  *     隐藏统计行 / 互动按钮行 / 字号行距）与**整个 L2 重排**能不能做（§7.5.4 押在「首帧注入」上）。
- *     **两段式**：跑一次 → 注入 -60px 并给基线读数 → **切一次信息流 tab / 路由**（⚠️ 不要刷新）
- *     → 再跑一次 → 给确定结论并自动撤掉注入。中途不想继续：`probeHeightCache({clear:true})`。
- * 6c. 若上面两段式仍不够确定，用 `tools/recon/firstframe-probe.user.js`（一次性油猴脚本，
- *     `@run-at document-start`）走**真实首帧路径**直接看有没有洞。
+ *     **两段式**：跑一次 → 注入 -60px 并给基线读数（含「CSS 真的生效了」的自证）
+ *     → **换一次路由**让列表**重新挂载**（⚠️ 不是切信息流 tab、更不是刷新）
+ *     → 再跑一次 → 给结论并自动撤掉注入。中途不想继续：`probeHeightCache({clear:true})`。
+ *     ⚠️ **别指望它回答「首帧注入行不行」** —— 注入天然晚于微博的首次测量，这条路走不到首帧。
+ *     它只能答「列表被**重建**时会不会重测」。
+ * 6c. **决定性问题（首帧是否早于微博那次唯一的高度写入）只有一个走法**：
+ *     `tools/recon/firstframe-probe.user.js`（一次性油猴脚本，`@run-at document-start`，
+ *     装上 → 刷新一次 → 自动出结论并下载 JSON）。Console 探针做不到这件事。
  *
  * 结果怎么拿走（不用从 Console 复制对象）
  * ------------------------------------
@@ -346,6 +350,31 @@
   }
 
   /**
+   * 槽位的**内容下标** `data-index`。
+   *
+   * ⚠️ 2026-10-14 实测纠正（被真机 JSON 打脸）：真实结构链是
+   *    `item-view > .wbpro-scroller-item[data-index] > article` —— `data-index`
+   *    **不在** `item-view` 上，在它**里面**的 `.wbpro-scroller-item` 上。
+   *    上一版直接在 `item-view` 上读 ⇒ 恒为 null ⇒ 两个后果：
+   *      ① 相邻配对静默退回 DOM 顺序（这次运气好，结论碰巧一样；运气不好就会配出假数据）；
+   *      ② `probeHeightCache()` 的「注入是否生效」自检算出**空数组** ⇒ 打成 `cssApplied: false`
+   *         + 「后面读数不可信」的**假警**（`probe-height-cache-baseline-20261014-1157.json` 就是这么错的）。
+   *    ⇒ 这里先认自己、再认**直接子元素**（槽位里只有一层包装，不是深挖 `querySelector`，
+   *      免得捞到卡片内部同名属性）。
+   */
+  function slotIndexOf(el) {
+    if (!el || !el.getAttribute) return null;
+    var own = el.getAttribute('data-index');
+    if (own !== null && own !== '') return own;
+    var inner = el.firstElementChild;
+    if (inner && inner.getAttribute) {
+      var v = inner.getAttribute('data-index');
+      if (v !== null && v !== '') return v;
+    }
+    return null;
+  }
+
+  /**
    * 只取**信息流槽位**：`item-wrapper` 的**直接子节点**里带 `vue-recycle-scroller__item-view` 的那些。
    * ⚠️ 为什么必须这么严格 —— 2026-10-13 真实踩坑：
    *   上一版 `testHeight()` 直接用 `report()` 选出的「最高分容器」取项，结果钻进了
@@ -369,7 +398,7 @@
     return {
       tag: tag(el),
       className: classOf(el),
-      dataIndex: el.getAttribute ? el.getAttribute('data-index') : null,
+      dataIndex: slotIndexOf(el),
       isScrollerSlot: isScrollerSlot(el),
       parentClass: el.parentElement ? classOf(el.parentElement) : null,
       inlineStyle: String((el.getAttribute && el.getAttribute('style')) || '').slice(0, 240)
@@ -700,15 +729,20 @@
     var out = [];
     for (var i = 0; i < list.length; i++) {
       var el = list[i], r = el.getBoundingClientRect();
-      out.push({
+      var row = {
         order: i,
-        dataIndex: (el.getAttribute && el.getAttribute('data-index')) || null,
+        dataIndex: slotIndexOf(el),
         ty: parseTranslateY(el),
         h: round1(r.height),
         top: round1(r.top),
         bottom: round1(r.bottom),
         recycled: isRecycledSlot(el)
-      });
+      };
+      // 元素引用挂在**不可枚举**的属性上：两次采样之间按「元素身份」配对要用它，
+      // 但它绝不能进 JSON（DOM 节点会序列化成 `{}`，还可能带出循环引用）。
+      try { Object.defineProperty(row, '_node', { value: el, enumerable: false }); }
+      catch (e) { /* 个别环境不支持就放弃这条回退路径，下标配对仍然可用 */ }
+      out.push(row);
     }
     return out;
   }
@@ -793,12 +827,63 @@
     if (s && s.parentNode) s.parentNode.removeChild(s);
   }
 
-  function heightIndexOf(rows) {
-    var map = {};
-    for (var i = 0; i < rows.length; i++) {
-      if (!rows[i].recycled && rows[i].dataIndex !== null) map[rows[i].dataIndex] = rows[i];
+  /**
+   * 「注入的 CSS 真的把卡片改矮了」的**结构自证** —— 完全不依赖任何下标。
+   *
+   * `.wbpro-scroller-item` 自己挂 `margin-bottom:-60px` ⇒ 它**父槽**（`item-view`）的高度
+   * 自动变成「卡片高 − 60」。于是 `卡片高 − 槽高` 直接读出注入量：**只要这个差 ≈ 60，
+   * 就是 CSS 确实生效的铁证**，哪怕下标解析整个坏掉。
+   *
+   * 为什么需要它：规则没命中时也会「没有洞」—— 那是假阳性。必须把「CSS 生效了」
+   * 和「没有洞」分成两件事分别证明。
+   */
+  function injectSelfProof(rows) {
+    var deltas = [], i;
+    for (i = 0; i < rows.length; i++) {
+      var el = rows[i]._node, inner = el && el.firstElementChild;
+      if (!el || rows[i].recycled || !inner || !inner.getBoundingClientRect) continue;
+      deltas.push(round1(inner.getBoundingClientRect().height - rows[i].h));
     }
-    return map;
+    var med = medianOf(deltas);
+    return {
+      expectation: '卡片高 − 槽高 应 ≈ ' + HPROBE_DELTA + 'px（`margin-bottom:-' + HPROBE_DELTA + 'px` 的作用）',
+      n: deltas.length,
+      median: med,
+      samples: deltas.slice(0, 8),
+      ok: deltas.length > 0 && med !== null && Math.abs(med - HPROBE_DELTA) <= 6
+    };
+  }
+
+  /**
+   * 两次采样之间**同一个槽**的高度变化（`rowsB.h - rowsA.h`）。
+   * 优先按 `data-index` 配对；下标取不到时退回**元素身份**。
+   *
+   * ⚠️ 2026-10-14：上一版在 `item-view` 上读 `data-index`（那儿根本没有）⇒ 配对表恒为空
+   * ⇒ 自检算出**空数组** ⇒ 报「CSS 没生效」的假警。**空数组 ≠ 高度没变化**，
+   * 所以调用方要用 `length` 把「没配上」与「配上了但没变」分开说。
+   */
+  function heightShrink(rowsA, rowsB) {
+    var out = [], i, j, byIdx = {}, idxN = 0, key;
+    for (i = 0; i < rowsA.length; i++) {
+      key = rowsA[i].dataIndex;
+      if (key !== null && !Object.prototype.hasOwnProperty.call(byIdx, key)) { byIdx[key] = rowsA[i]; idxN++; }
+    }
+    if (idxN) {
+      for (j = 0; j < rowsB.length; j++) {
+        var a = byIdx[rowsB[j].dataIndex];
+        if (a) out.push(round1(rowsB[j].h - a.h));
+      }
+      return out;
+    }
+    for (j = 0; j < rowsB.length; j++) {
+      for (i = 0; i < rowsA.length; i++) {
+        if (rowsA[i]._node && rowsA[i]._node === rowsB[j]._node) {
+          out.push(round1(rowsB[j].h - rowsA[i].h));
+          break;
+        }
+      }
+    }
+    return out;
   }
 
   /**
@@ -827,47 +912,55 @@
     var rows = sampleSlots();
     var now = analyzeSlots(rows);
 
-    // ---------- 第二段：重挂载之后再量，与基线对比 ----------
+    // ---------- 第二段：列表**重建**之后再量，与基线对比 ----------
     if (hprobeBaseline) {
       var cur = feedItems(), kept = 0, i;
       for (i = 0; i < cur.length; i++) if (hprobeBaseline.els.indexOf(cur[i]) !== -1) kept++;
       var remountDetected = kept < Math.min(cur.length, hprobeBaseline.els.length);
       var b = hprobeBaseline.analysis;
+      var shrink2 = heightShrink(hprobeBaseline.rows, rows);
+      var proof2 = injectSelfProof(rows);
 
       var v;
-      if (now.matchRate === null) {
+      if (!remountDetected) {
+        // 没重建 ⇒ 这段读数等价于 B2（渲染后改高度），一个字都不能当结论
+        v = '⛔ **读数作废**：槽位元素 ' + kept + '/' + cur.length + ' 个原样保留 ⇒ 列表**没有重建**。'
+          + '这段只是把「渲染后改高度」又量了一遍（= B2 的已知情形：洞里还是 ' + now.gapAvg
+          + 'px），**不构成任何新证据**。';
+      } else if (now.matchRate === null) {
         v = '未能取到可比的相邻槽（活槽 ' + now.liveSlots + ' 个）—— 先把信息流滚出内容再跑一次。';
       } else if (now.matchRate >= 0.8) {
-        v = '✅ **命中「量 DOM」**：重挂载后 d 仍等于 h（' + now.exact + '/' + now.pairs
+        v = '✅ 列表**重建后** d 仍等于 h（' + now.exact + '/' + now.pairs
           + ' 对在 ±2px 内，中位误差 ' + now.medianAbsErr + 'px，平均视觉空隙 ' + now.gapAvg + 'px）'
-          + ' ⇒ 微博**按当前实际高度重新测量了槽位**（卡片已比注入前矮 ' + HPROBE_DELTA + 'px）'
-          + ' ⇒ **首帧注入改高度有效**：L1 剩余 4 项与 L2 重排都可以做。';
+          + ' ⇒ 重建时会按**当前实际高度**重新测量（卡片已比注入前矮 ' + HPROBE_DELTA + 'px，'
+          + '结构自证 ' + proof2.median + 'px）。⚠️ 但它仍**答不了首帧问题** —— 这条路要重建一次才成立。';
       } else if (now.matchRate <= 0.4) {
-        v = '❌ **命中「预先定好」**：重挂载后 d 与 h 脱节（仅 ' + now.exact + '/' + now.pairs
+        v = '❌ 列表重建后 d 与 h **仍然**脱节（仅 ' + now.exact + '/' + now.pairs
           + ' 对吻合，中位误差 ' + now.medianAbsErr + 'px，平均视觉空隙 ' + now.gapAvg + 'px'
-          + (now.gapHasHole ? '，已经看得到洞' : '') + '）⇒ 微博不按实际高度重测。'
-          + '⚠️ 这条只否定「重建会重测」；「首帧是否早于那次唯一的测量」仍须用 '
-          + 'tools/recon/firstframe-probe.user.js 直接验。';
+          + (now.gapHasHole ? '，洞里还在' : '') + '）⇒ **尺寸缓存与「重建」无关**：它只被写过一次，'
+          + '写完之后怎么重建都不重测。'
+          + '⇒ 这正是「首帧注入必须成立」的理由 —— 请用 '
+          + 'tools/recon/firstframe-probe.user.js 把首帧那条路验掉，别据此判死刑。';
       } else {
         v = '⚠️ 证据不足（' + now.exact + '/' + now.pairs + ' 对吻合，中位误差 ' + now.medianAbsErr
           + 'px）—— 建议清掉后重跑，或用 firstframe-probe.user.js 直接验。';
       }
-      if (!remountDetected) {
-        v += ' ⚠️ 本次**未检测到列表重挂载**（槽位元素没被替换）—— 请确认真的切了信息流 tab 或路由，'
-          + '否则这段读数只是「渲染后改高度」= 等价于 B2，**不构成新证据**。';
-      }
 
       var res2 = {
-        question: '槽位尺寸缓存是「量 DOM 得来的」还是「预先定好的」？（第二段：注入 -60px 且重挂载之后）',
+        question: '列表被**重建**（换路由）之后会不会重测槽位高度？（第二段：注入 -60px + 重建后复量）',
         stage: 'after-remount',
         method: '注入 `.wbpro-scroller-item{margin-bottom:-60px}`（卡片实际变矮 ' + HPROBE_DELTA
-          + 'px）后让列表重挂载，再复量 d(i) vs h(i) 与视觉空隙',
+          + 'px）→ 换路由让列表重建 → 复量 d(i) vs h(i) 与视觉空隙',
         injectedCss: HPROBE_CSS,
         remountDetected: remountDetected,
         remountKeptSlots: kept + '/' + cur.length,
+        injectMedianShrink: medianOf(shrink2),
+        selfProof: proof2,
         baseline: b,
         remount: now,
-        verdict: v
+        verdict: v,
+        note: '⚠️ 本段**不回答首帧问题**（注入天然晚于微博的首次测量）。首帧那条路只有 '
+          + 'tools/recon/firstframe-probe.user.js 能走。'
       };
 
       hprobeRemove();
@@ -884,13 +977,9 @@
     var rows2 = sampleSlots();
     var afterInject = analyzeSlots(rows2);
 
-    var h0 = heightIndexOf(rows), h1 = heightIndexOf(rows2), shrink = [], key;
-    for (key in h0) {
-      if (Object.prototype.hasOwnProperty.call(h0, key) && h1[key]) {
-        shrink.push(round1(h1[key].h - h0[key].h));
-      }
-    }
+    var shrink = heightShrink(rows, rows2);
     var shrinkMedian = medianOf(shrink);
+    var proof = injectSelfProof(rows2);
     var cssApplied = shrinkMedian !== null && Math.abs(shrinkMedian + HPROBE_DELTA) <= 6;
 
     var v1;
@@ -900,9 +989,10 @@
       v1 = '倾向「量 DOM」：d 与 h 吻合 ' + now.exact + '/' + now.pairs + ' 对（中位误差 '
         + now.medianAbsErr + 'px）⇒ 槽位位置与**实际渲染高度**一致'
         + (now.hHasDecimal ? '，且高度带小数（' + now.hAvg + 'px 这种值只可能来自实测）' : '')
-        + ' ⇒ 首帧注入改高度**有机会成立**。'
-        + (cssApplied ? '注入 -60px 后卡片确实矮了 ~' + HPROBE_DELTA + 'px。'
-          : '⚠️ 但注入的 CSS 没按预期生效，读数存疑。');
+        + ' ⇒ 缓存**不是**固定步长 / 预算表。'
+        + (cssApplied ? ' 注入 -60px 后卡片确实矮了 ~' + HPROBE_DELTA + 'px（自证通过）。'
+          : ' ⚠️ 但注入自检**没通过**（配对上 ' + shrink.length + ' 个槽，中位变化 '
+            + shrinkMedian + 'px，结构自证 ' + proof.median + 'px）—— 读数存疑。');
     } else if (now.matchRate <= 0.4) {
       v1 = '倾向「预先定好」：d 与 h 只吻合 ' + now.exact + '/' + now.pairs + ' 对（中位误差 '
         + now.medianAbsErr + 'px）⇒ 缓存不是当前渲染高度。';
@@ -910,10 +1000,18 @@
       v1 = '证据混杂（' + now.exact + '/' + now.pairs + ' 对吻合，中位误差 ' + now.medianAbsErr
         + 'px）—— 需人工判读。';
     }
+    if (!cssApplied && proof.ok) {
+      v1 += ' ℹ️ 结构自证却是通过的（卡片高 − 槽高 ≈ ' + proof.median
+        + 'px）⇒ 大概率只是**两次采样之间槽位被换了**，重跑一次即可。';
+    }
 
-    var next = 'CSS 已注入且**先不撤**。请**手动切换一次信息流 tab（推荐 / 关注）或来回切一次路由**'
-      + '让列表重挂载，然后**再跑一次** SpecBaseRecon.probeHeightCache() —— 那一次给确定结论并自动下载 JSON。'
+    var next = 'CSS 已注入且**先不撤**。请**换一次路由**让信息流**重建**'
+      + '（例：首页 → 点进自己的主页 → 再点回首页；**切「推荐 / 关注」tab 不算**——'
+      + '2026-10-14 实测那样做槽位元素一个都没换，列表压根没重建），然后**再跑一次** '
+      + 'SpecBaseRecon.probeHeightCache() —— 那一次给结论并自动下载 JSON。'
       + '⚠️ **不要刷新页面**（刷新会同时丢掉注入的 CSS 与基线，读数作废）。'
+      + '⚠️ 这一段只回答「列表**重建**时会不会重测」；**「首帧注入行不行」它答不了** —— '
+      + '那必须走 tools/recon/firstframe-probe.user.js。'
       + '不想继续就跑 SpecBaseRecon.probeHeightCache({clear:true}) 撤掉注入。';
 
     var res1 = {
@@ -925,11 +1023,17 @@
       injectDelta: {
         cssApplied: cssApplied,
         medianHeightShrink: shrinkMedian,
+        pairedSlots: shrink.length,
         expected: -HPROBE_DELTA,
         samples: shrink.slice(0, 12),
+        selfProof: proof,
         note: cssApplied
           ? 'CSS 确认生效（卡片实际矮了 ~' + HPROBE_DELTA + 'px）'
-          : '⚠️ CSS 没按预期生效 —— 后面读数不可信，先检查 .wbpro-scroller-item 这个锚点'
+          : (shrink.length === 0
+            ? '⚠️ 两次采样之间**一个槽都没配上**（下标与元素身份都取不到）—— 重跑一次；'
+              + '若仍为 0，看 selfProof（结构与下标无关，它才是兜底判据）'
+            : '⚠️ CSS 没按预期生效（配上 ' + shrink.length + ' 个槽，中位变化 ' + shrinkMedian
+              + 'px）—— 先检查 .wbpro-scroller-item 这个锚点还在不在')
       },
       afterInject: afterInject,
       next: next,
@@ -1729,6 +1833,9 @@
     _isScrollerSlot: isScrollerSlot,
     _sampleSlots: sampleSlots,
     _analyzeSlots: analyzeSlots,
+    _slotIndexOf: slotIndexOf,
+    _heightShrink: heightShrink,
+    _injectSelfProof: injectSelfProof,
     _parseTranslateY: parseTranslateY,
     _container: null,
     _items: [],

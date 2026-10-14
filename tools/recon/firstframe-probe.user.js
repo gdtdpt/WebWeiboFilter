@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SpecBase · M2 首帧改高度验证（一次性，用完即卸）
 // @namespace    specbase-recon
-// @version      1.0.0
-// @description  回答一个决定 L1 剩余 4 项与整个 L2 能否落地的问题：在 document-start（= 微博渲染之前）注入「卡片变矮 60px」的 CSS，卡片之间会不会留洞。跑两次（on / off）自动对比。
+// @version      2.0.0
+// @description  回答一个决定 L1 剩余 4 项与整个 L2 能否落地的问题：在 document-start（= 微博渲染之前）注入「卡片变矮 60px」的 CSS，卡片之间会不会留洞。装上 → 刷新一次 → 自动出结论并下载 JSON。
 // @match        https://weibo.com/*
 // @match        https://*.weibo.com/*
 // @run-at       document-start
@@ -10,87 +10,109 @@
 // ==/UserScript==
 
 /*
- * 为什么需要「独立的油猴脚本」而不是 Console 探针
- * ------------------------------------------------
- * Console 探针只能在页面**已经渲染完之后**注入 CSS —— 那正是 B2 四组实验的情形，
- * 结论已知（留洞、后续项不上移）。而我们要问的是「**渲染之前**注入是否有效」
- * （PROJECT.md §7.5.4 押在这上面）。要做到「早于微博的首次测量」，只有 `@run-at document-start`
- * 的油猴脚本这条路 —— 也正因为如此，这个脚本**故意不并进 recon.js**（recon 是粘贴式的 Console 脚本）。
+ * 为什么必须是「独立的油猴脚本」而不是 Console 探针
+ * ----------------------------------------------
+ * 问题不是「改高度会不会留洞」（这个 B2 已经答了：渲染后改 ⇒ 必留洞），
+ * 而是「**渲染之前**注入的 CSS，会不会被微博一起量进槽位尺寸缓存」——
+ * PROJECT.md §7.5.4 押在「首帧注入则无害」上，而这条从来没被实测过。
  *
- * 怎么用（3 步，约 2 分钟）
+ * Console 探针**物理上做不到**这件事：它只能在页面已渲染完之后注入 CSS，
+ * 那一刻微博早就把高度写进缓存了 ⇒ 无论怎么测都只会看到洞（= 退回 B2 的情形）。
+ * 要早于微博的第一次测量，只有 `@run-at document-start` 这一条路。
+ * 也正因为如此，这个脚本**故意不并进 recon.js**（recon 是粘贴式 Console 脚本）。
+ *
+ * 怎么用（2 步，约 1 分钟）
  * ------------------------
  *   1. 装本脚本 → 打开 https://weibo.com/home → **刷新一次**（首帧注入生效）
- *   2. 等信息流出来、滚两屏，看 Console：脚本会自动量并下载 `ffprobe-on-*.json`
- *   3. 把下面的 MODE 改成 'off'（对照组：不注入任何 CSS）→ 保存 → **再刷新一次**
- *      → 脚本会自动把两次结果**对比**并下载 `ffprobe-compare-*.json`
+ *   2. 等信息流出来（**不要滚动**），Console 自动打出结论并下载
+ *      `ffprobe-firstframe-*.json`（看完把 JSON 发给开发者）
+ *   3. ⚠️ **测完请卸载本脚本** —— 它会把卡片高度一直压矮 60px
  *
- * 怎么看结论
- * ----------
- *   · **on 组卡片之间没有洞（gapAvg ≈ 0）** ⇒ 微博把「缩小后的高度」一起量进去了
- *     ⇒ **首帧注入改高度有效** ⇒ L1 剩余 4 项与 L2 重排都能做。
- *   · **on 组卡片之间看得到 ~60px 的洞** ⇒ 尺寸缓存与我们的 CSS 无关 ⇒ 改高度会留洞。
- *   · 对照组（off）的卡片高度应比 on 组高约 60px —— 这是「CSS 真的生效了」的证明
- *     （否则整组读数都是假的：规则没命中，自然也就没有洞）。
+ * 怎么看结论（脚本自己会判，这里说清依据）
+ * ----------------------------------------
+ *   · `selfProof.ok` ⇒ **CSS 真的生效了**（卡片高 − 槽高 ≈ 60px）。
+ *     没有这一步，「没有洞」可能只是「规则没命中」的假阳性 —— 两件事必须分开证明。
+ *   · `first.gapHasHole === false` ⇒ **首帧注入有效** ⇒ L1 剩余 4 项与 L2 重排都能做。
+ *   · `first.gapHasHole === true`（洞 ≈ 60px）⇒ 尺寸缓存与我们的 CSS 无关 ⇒ 只能砍掉。
+ *   · `deep` 是「往下滚 4 屏之后」的第二次读数，用来交叉验证（它应当与 first 同结论）。
  *
- * ⚠️ 与本项目正式脚本（specbase-helper）可以共存：它只加一条 style，不碰别的东西。
- * ⚠️ 测完请**卸载本脚本**（它会在每一帧都改卡片高度）。
+ * ⚠️ 与正式脚本（specbase-helper）可以共存：本脚本只加一条 style，不碰别的。
  */
 
 (function () {
   'use strict';
 
-  // ── 唯一需要改的地方 ─────────────────────────────────────────────────────────
-  // 'on'  = 实验组：document-start 注入「卡片变矮 60px」
-  // 'off' = 对照组：什么都不注入
-  var MODE = 'on';
-  // ────────────────────────────────────────────────────────────────────────────
-
-  var VERSION = '1.0.0';
+  var VERSION = '2.0.0';
   var DELTA = 60;
   var STYLE_ID = 'spb-ffprobe-style';
   var CSS = '.wbpro-scroller-item{margin-bottom:-' + DELTA + 'px !important}';
-  var STORE_KEY = 'spb-ffprobe-last';
   var LOG = '[首帧探针] ';
 
-  var RESULTS = {};
+  // ───────────────────────────────────────────────────────────────────────────
+  // ① 首帧注入 —— 必须在微博的任何一次渲染之前
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * 把实验样式挂到文档上。
+   * `document-start` 时 `<head>` 可能还不存在（甚至 `documentElement` 都还没有），
+   * 所以按 head → documentElement 逐级退让；挂上就生效，挂不上就等下一拍。
+   * ⚠️ 这里刻意与产品脚本 `src/apply/style.js#ensureStyle` 用同一套退让逻辑 ——
+   *   不然「探针能过、产品过不了」这种情况就白测了。
+   */
+  function attachStyle() {
+    var s = document.getElementById(STYLE_ID);
+    if (!s) {
+      s = document.createElement('style');
+      s.id = STYLE_ID;
+      s.textContent = CSS;
+    }
+    var root = (document.head && document.head.appendChild ? document.head : null) ||
+      (document.documentElement && document.documentElement.appendChild ? document.documentElement : null);
+    if (!root) return false;
+    if (s.parentNode !== root) root.appendChild(s);
+    return true;
+  }
+
+  function detachStyle() {
+    var s = document.getElementById(STYLE_ID);
+    if (s && s.parentNode) s.parentNode.removeChild(s);
+  }
+
+  var attachedAt = null;
+  if (attachStyle()) attachedAt = new Date().toISOString();
+  // 首帧可能连 <html> 都还没建出来 ⇒ 连补 20 秒（每 50ms 一次，成本可忽略）
+  var guard = setInterval(function () {
+    if (attachStyle() && !attachedAt) attachedAt = new Date().toISOString();
+  }, 50);
+  setTimeout(function () { clearInterval(guard); }, 20000);
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // ② 采样（判据与 recon.js 的 probeHeightCache 保持一致）
+  // ───────────────────────────────────────────────────────────────────────────
 
   function round1(n) { return Math.round(n * 10) / 10; }
+
   function medianOf(arr) {
     if (!arr || !arr.length) return null;
     var a = arr.slice().sort(function (x, y) { return x - y; });
     var mid = Math.floor(a.length / 2);
     return a.length % 2 ? a[mid] : round1((a[mid - 1] + a[mid]) / 2);
   }
+
   function uniq(arr) {
     var seen = {}, out = [];
     for (var i = 0; i < arr.length; i++) { if (!seen[arr[i]]) { seen[arr[i]] = 1; out.push(arr[i]); } }
     return out;
   }
 
-  // ---- ① 首帧注入（document-start，早于微博 Vue app 挂载）------------------------------------
-
-  if (MODE === 'on') {
-    var style = document.createElement('style');
-    style.id = STYLE_ID;
-    style.textContent = CSS;
-    (document.head || document.documentElement).appendChild(style);
-    // document-start 时 head 可能还不存在，插到 documentElement 上；若微博重建 head 会连带丢掉 ⇒ 保险起见盯着补
-    var guard = setInterval(function () {
-      if (!document.getElementById(STYLE_ID)) {
-        try { (document.head || document.documentElement).appendChild(style); } catch (e) { /* noop */ }
-      }
-    }, 500);
-    setTimeout(function () { clearInterval(guard); }, 15000);
-  }
-
-  // ---- ② 采样（与 recon.js 的 probeHeightCache 同一套判据）-----------------------------------
-
+  /** 读槽位内联 `transform: translateY(Npx)` 的 N —— 微博 JS 预计算的槽位位置 */
   function parseTranslateY(el) {
     var t = String((el && el.getAttribute && el.getAttribute('style')) || '');
     var m = /translateY\(\s*(-?[\d.]+)px\s*\)/.exec(t);
     return m ? parseFloat(m[1]) : null;
   }
 
+  /** 回收位（滚出视口后被挪走的槽）：`translateY(-9999px)` 或 `opacity:0` */
   function isRecycled(el) {
     var ty = parseTranslateY(el);
     if (ty !== null && ty <= -9990) return true;
@@ -104,21 +126,39 @@
     var out = [];
     for (var i = 0; i < w.children.length; i++) {
       var el = w.children[i];
-      var cls = String(el.getAttribute('class') || '');
-      if (cls.indexOf('vue-recycle-scroller__item-view') !== -1) out.push(el);
+      if (String(el.getAttribute('class') || '').indexOf('vue-recycle-scroller__item-view') !== -1) out.push(el);
     }
     return out;
   }
 
+  /**
+   * `data-index` 在 **`.wbpro-scroller-item`** 上（槽位的直接子元素），不在 `item-view` 上。
+   * 2026-10-14 在 Console 探针里就是踩了这个坑（读到 null ⇒ 自检算出空数组 ⇒ 假警）。
+   */
+  function slotIndex(el) {
+    if (!el || !el.getAttribute) return null;
+    var own = el.getAttribute('data-index');
+    if (own !== null && own !== '') return own;
+    var inner = el.firstElementChild;
+    if (inner && inner.getAttribute) {
+      var v = inner.getAttribute('data-index');
+      if (v !== null && v !== '') return v;
+    }
+    return null;
+  }
+
   function sample() {
-    var list = feedSlots();
-    var rows = [];
+    var list = feedSlots(), rows = [];
     for (var i = 0; i < list.length; i++) {
       var el = list[i], r = el.getBoundingClientRect();
+      var inner = el.firstElementChild;
+      var innerH = (inner && inner.getBoundingClientRect) ? round1(inner.getBoundingClientRect().height) : null;
       rows.push({
-        dataIndex: el.getAttribute('data-index') || null,
+        order: i,
+        dataIndex: slotIndex(el),
         ty: parseTranslateY(el),
         h: round1(r.height),
+        innerH: innerH,
         top: round1(r.top),
         bottom: round1(r.bottom),
         recycled: isRecycled(el)
@@ -159,32 +199,54 @@
     var gaps = pairs.map(function (p) { return p.gap; });
     var hs = live.map(function (r) { return r.h; });
     var exact = pairs.filter(function (p) { return p.err <= 2; }).length;
+    var matched = keys.length > 0;
     return {
-      mode: MODE,
-      injectedCss: MODE === 'on' ? CSS : null,
       liveSlots: live.length,
+      pairedBy: matched ? 'data-index' : 'DOM 顺序（下标取不到 —— 结论要打折扣）',
       pairs: pairs.length,
       exact: exact,
       matchRate: pairs.length ? Math.round(exact / pairs.length * 100) / 100 : null,
       medianAbsErr: medianOf(errs),
+      gapAvg: gaps.length ? round1(gaps.reduce(function (a, b) { return a + b; }, 0) / gaps.length) : null,
+      gapMax: gaps.length ? Math.max.apply(null, gaps) : null,
+      gapHasHole: gaps.some(function (g) { return g > 8; }),
       hAvg: hs.length ? round1(hs.reduce(function (a, b) { return a + b; }, 0) / hs.length) : null,
       hMin: hs.length ? Math.min.apply(null, hs) : null,
       hMax: hs.length ? Math.max.apply(null, hs) : null,
       hDistinct: uniq(hs).length,
       hHasDecimal: hs.some(function (v) { return Math.abs(v - Math.round(v)) > 0.05; }),
-      gapAvg: gaps.length ? round1(gaps.reduce(function (a, b) { return a + b; }, 0) / gaps.length) : null,
-      gapMax: gaps.length ? Math.max.apply(null, gaps) : null,
-      gapHasHole: gaps.some(function (g) { return g > 8; }),
-      gapHistogram: gaps.map(function (g) { return Math.round(g / 10) * 10; }),
       samples: pairs.slice(0, 12)
     };
   }
 
-  // ---- ③ 导出 ------------------------------------------------------------------------------
+  /**
+   * 「CSS 真的生效了」的**结构自证**，不依赖任何下标：
+   * `.wbpro-scroller-item` 自己挂 `margin-bottom:-60px` ⇒ 它父槽的高度 = 卡片高 − 60。
+   * 规则没命中时也会「没有洞」，所以这一步是防假阳性的必需品。
+   */
+  function selfProof(rows) {
+    var deltas = [];
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].recycled || rows[i].innerH === null) continue;
+      deltas.push(round1(rows[i].innerH - rows[i].h));
+    }
+    var med = medianOf(deltas);
+    return {
+      expectation: '卡片高 − 槽高 应 ≈ ' + DELTA + 'px',
+      n: deltas.length,
+      median: med,
+      samples: deltas.slice(0, 8),
+      ok: deltas.length > 0 && med !== null && Math.abs(med - DELTA) <= 6
+    };
+  }
 
-  function download(name, text, mime) {
+  // ───────────────────────────────────────────────────────────────────────────
+  // ③ 导出
+  // ───────────────────────────────────────────────────────────────────────────
+
+  function download(name, text) {
     try {
-      var url = URL.createObjectURL(new Blob([text], { type: mime || 'application/json' }));
+      var url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
       var a = document.createElement('a');
       a.href = url; a.download = name;
       document.body.appendChild(a); a.click(); a.remove();
@@ -199,105 +261,143 @@
     return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes());
   }
 
-  function payload(tag, result) {
-    return JSON.stringify({
-      script: 'specbase-firstframe-probe', version: VERSION,
-      generatedAt: new Date().toISOString(),
-      page: { url: location.href, title: document.title },
-      tag: tag, result: result
-    }, null, 2);
-  }
-
-  // ---- ④ 等信息流稳定 → 采样 → 判读 → 与上一次对比 --------------------------------------------
+  // ───────────────────────────────────────────────────────────────────────────
+  // ④ 主流程：等信息流 → 首帧读数 → 自动下滚 4 屏再读数 → 判读 → 下载
+  // ───────────────────────────────────────────────────────────────────────────
 
   function waitForSlots(timeoutMs) {
     return new Promise(function (resolve) {
       var t0 = Date.now();
       (function tick() {
-        var rows = sample().filter(function (r) { return !r.recycled; });
-        if (rows.length >= 2) return resolve(true);
+        var live = sample().filter(function (r) { return !r.recycled; });
+        if (live.length >= 3) return resolve(true);
         if (Date.now() - t0 > timeoutMs) return resolve(false);
         setTimeout(tick, 300);
       })();
     });
   }
 
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  var RESULTS = {};
+
   function run() {
-    console.log(LOG + 'MODE=' + MODE + ' —— 等微博信息流渲染…（请**不要滚动**，避免读数被半截卡污染）');
-    waitForSlots(25000).then(function (ok) {
+    console.log(LOG + 'MODE=on（首帧注入 -' + DELTA + 'px）—— 等微博信息流渲染…'
+      + '（请**不要滚动**，避免半截卡污染读数）');
+    waitForSlots(30000).then(function (ok) {
       if (!ok) {
-        console.warn(LOG + '25 秒内没等到信息流槽位 —— 确认页面是 https://weibo.com/home 且已登录。');
-        return;
+        console.warn(LOG + '30 秒内没等到 ≥3 个信息流槽位 —— 确认页面是 https://weibo.com/home 且已登录。'
+          + '取到之后再手动跑一次 window.__ffprobe.run()。');
+        return null;
       }
-      // 再等一拍，让首屏图片 / 字号稳定下来再量
-      return new Promise(function (r) { setTimeout(r, 2000); }).then(function () {
-        var res = analyze(sample());
-        RESULTS[MODE] = res;
+      return sleep(2500).then(function () {          // 让首屏图片 / 字号稳定下来
+        var rows = sample();
+        var first = analyze(rows), proof = selfProof(rows);
+        RESULTS.first = first;
+        RESULTS.selfProof = proof;
 
-        console.log('%c' + LOG + '结果（MODE=' + MODE + '）', 'background:#2f3e34;color:#fff;padding:1px 4px', res);
-        if (res.pairs === 0) {
-          console.warn(LOG + '没取到可比的相邻槽 —— 把信息流滚出内容再手动跑 window.__ffprobe.run()');
-        } else if (MODE === 'on') {
-          console.log(LOG + (res.gapHasHole
-            ? '❌ 卡片之间有洞（gapAvg=' + res.gapAvg + 'px / gapMax=' + res.gapMax + 'px）'
-              + ' ⇒ 首帧注入的「变矮」没被量进缓存 ⇒ 改高度会留洞。'
-            : '✅ 卡片之间**没有洞**（gapAvg=' + res.gapAvg + 'px）'
-              + ' ⇒ 微博按**实际渲染高度**建的缓存 ⇒ 首帧注入改高度**有效**。'));
-        }
+        console.log('%c' + LOG + '首帧读数', 'background:#2f3e34;color:#fff;padding:1px 4px', first);
+        console.log('%c' + LOG + '注入自证', 'background:#2f3e34;color:#fff;padding:1px 4px', proof);
 
-        // 与上一次（另一种 MODE）的对比 —— 这是「CSS 真的生效」的证明
-        var prev = null;
-        try { prev = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch (e) { prev = null; }
-        if (prev && prev.mode !== MODE) {
-          var on = MODE === 'on' ? res : prev;
-          var off = MODE === 'on' ? prev : res;
-          var cmp = {
-            control: '两次运行对比 —— 用于确认「注入的 CSS 真的改变了卡片高度」',
-            on: on, off: off,
-            heightDeltaAvg: (on.hAvg !== null && off.hAvg !== null) ? round1(on.hAvg - off.hAvg) : null,
-            expectedHeightDelta: -DELTA,
-            cssApplied: (on.hAvg !== null && off.hAvg !== null) && Math.abs((on.hAvg - off.hAvg) + DELTA) <= 8,
-            gapDeltaAvg: (on.gapAvg !== null && off.gapAvg !== null) ? round1(on.gapAvg - off.gapAvg) : null,
-            verdict: ''
-          };
-          if (!cmp.cssApplied) {
-            cmp.verdict = '⚠️ 两组卡片高度只差 ' + cmp.heightDeltaAvg + 'px（期望 -' + DELTA + 'px）'
-              + ' ⇒ **CSS 可能没生效**（.wbpro-scroller-item 这个锚点失效？）⇒ 整组读数作废，别据此下结论。';
-          } else if (on.gapHasHole) {
-            cmp.verdict = '❌ CSS 确认生效（卡片矮了 ' + Math.abs(cmp.heightDeltaAvg) + 'px），'
-              + '但卡片之间出现 ' + on.gapAvg + 'px 的洞 ⇒ 尺寸缓存**不含**我们的 CSS ⇒ 改高度会留洞。';
-          } else {
-            cmp.verdict = '✅ CSS 确认生效（卡片矮了 ' + Math.abs(cmp.heightDeltaAvg) + 'px）'
-              + '且**没有洞**（gapAvg=' + on.gapAvg + 'px）⇒ 首帧注入改高度有效。';
-          }
-          console.log('%c' + LOG + '对比结果', 'background:#2f3e34;color:#fff;padding:1px 4px', cmp);
-          console.log(LOG + cmp.verdict);
-          download('ffprobe-compare-' + stamp() + '.json', payload('compare', cmp));
-        } else {
-          download('ffprobe-' + MODE + '-' + stamp() + '.json', payload(MODE, res));
-          console.log(LOG + '把文件发给开发者后，请将 MODE 改成 ' + (MODE === 'on' ? "'off'" : "'on'")
-            + ' 并刷新一次，才能拿到「CSS 确实生效」的对照。');
-        }
-
-        try { localStorage.setItem(STORE_KEY, JSON.stringify(res)); } catch (e) { /* noop */ }
+        // 二级读数：再往下滚 4 屏（那里是本次注入之后才第一次渲染的内容）
+        return sleep(300).then(function () {
+          var before = window.scrollY;
+          window.scrollBy(0, Math.round(window.innerHeight * 4));
+          return sleep(1800).then(function () {
+            var deep = analyze(sample());
+            RESULTS.deep = deep;
+            RESULTS.deepScroll = {
+              scrolledBy: Math.round(window.innerHeight * 4),
+              scrollYBefore: Math.round(before), scrollYAfter: Math.round(window.scrollY)
+            };
+            console.log('%c' + LOG + '下滚 4 屏后的读数', 'background:#2f3e34;color:#fff;padding:1px 4px', deep);
+            return null;
+          });
+        });
       });
+    }).then(function () {
+      if (!RESULTS.first) return;
+
+      var first = RESULTS.first, proof = RESULTS.selfProof, deep = RESULTS.deep;
+      var verdict;
+      if (!proof.ok) {
+        verdict = '⚠️ **注入自证没通过**（卡片高 − 槽高 中位数 ' + proof.median + 'px，期望 ' + DELTA
+          + 'px，样本 ' + proof.n + ' 个）⇒ 无法确认 CSS 真的生效，**整组读数作废**。'
+          + '先检查 `.wbpro-scroller-item` 这个锚点还在不在（把 JSON 发给开发者）。';
+      } else if (first.pairs < 2) {
+        verdict = '⚠️ 取不到可比的相邻槽（' + first.pairs + ' 对，活槽 ' + first.liveSlots
+          + ' 个）—— 先把信息流滚出内容，然后手动跑 window.__ffprobe.run()。';
+      } else if (!first.gapHasHole) {
+        verdict = '✅ **首帧注入有效**：CSS 确认生效（卡片被压矮 ' + proof.median + 'px），'
+          + '而卡片之间**没有洞**（' + first.pairs + ' 对全部吻合，中位误差 ' + first.medianAbsErr
+          + 'px，平均空隙 ' + first.gapAvg + 'px）⇒ 微博把「缩小后的高度」一起量进了槽位缓存'
+          + ' ⇒ **L1 剩余 4 项（媒体缩略化 / 隐藏统计行 / 隐藏互动按钮行 / 字号行距）与 L2 重排都能做**。';
+      } else {
+        verdict = '❌ **首帧注入也救不了**：CSS 确认生效（卡片被压矮 ' + proof.median + 'px），'
+          + '但卡片之间出现了 ' + first.gapAvg + 'px 的洞（最大 ' + first.gapMax + 'px）'
+          + '⇒ 尺寸缓存与我们的 CSS 无关（不是按渲染高度量的）⇒ **改高度这一整批（L1 剩余 4 项 + L2 重排）只能砍掉**，'
+          + 'M2 以「L0 伪装 + L1 素净 + 去橙红」收官。';
+      }
+      if (deep && deep.pairs >= 2) {
+        verdict += ' ｜ 交叉验证（下滚 4 屏后）：' + (deep.gapHasHole
+          ? '那里出现了 ' + deep.gapAvg + 'px 的空隙 —— 但该区域可能混有「注入前就已缓存」的项，'
+            + '**只能当旁证**，以首帧读数（first）为准。'
+          : '那里同样没有洞（那一段是注入之后才第一次渲染的内容 ⇒ 与首帧结论一致）。');
+      }
+      RESULTS.verdict = verdict;
+
+      console.log('%c' + LOG + '结论', 'background:#2f3e34;color:#fff;padding:1px 4px', verdict);
+
+      download('ffprobe-firstframe-' + stamp() + '.json', JSON.stringify({
+        script: 'specbase-firstframe-probe',
+        version: VERSION,
+        generatedAt: new Date().toISOString(),
+        page: { url: location.href, title: document.title },
+        tag: 'firstframe',
+        result: {
+          question: '在 document-start（= 微博渲染之前）注入「卡片变矮 60px」的 CSS，'
+            + '卡片之间会不会留洞？（= 尺寸缓存是否按实际渲染高度建立）',
+          injectedCss: CSS,
+          styleAttached: {
+            present: !!document.getElementById(STYLE_ID),
+            parent: (function () {
+              var s = document.getElementById(STYLE_ID);
+              if (!s || !s.parentNode) return null;
+              var p = s.parentNode;
+              if (p === document.head) return 'head';
+              if (p === document.documentElement) return 'documentElement';
+              return String(p.nodeName || '').toLowerCase();
+            })(),
+            attachedAt: attachedAt
+          },
+          first: first,
+          selfProof: proof,
+          deepScroll: RESULTS.deepScroll || null,
+          deep: deep || null,
+          verdict: verdict,
+          cleanup: '测完请**卸载本脚本**（它会把卡片高度一直压矮 ' + DELTA + 'px）。'
+        }
+      }, null, 2));
+    }).catch(function (e) {
+      console.error(LOG + '跑挂了：', e);
     });
   }
 
-  // 手动重跑（滚出内容后再量一次）
   window.__ffprobe = {
     version: VERSION,
-    mode: MODE,
     run: run,
     sample: function () { return analyze(sample()); },
+    rows: sample,
     clear: function () {
-      var s = document.getElementById(STYLE_ID);
-      if (s && s.parentNode) s.parentNode.removeChild(s);
-      try { localStorage.removeItem(STORE_KEY); } catch (e) { /* noop */ }
-      console.log(LOG + '已撤掉注入的 CSS 并清掉本地记录。');
+      detachStyle();
+      clearInterval(guard);
+      console.log(LOG + '已撤掉注入的 CSS（页面恢复原状；刷新一下更干净）。');
     }
   };
 
-  if (document.readyState === 'complete' || document.readyState === 'interactive') run();
-  else window.addEventListener('DOMContentLoaded', function () { setTimeout(run, 500); });
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    setTimeout(run, 300);
+  } else {
+    window.addEventListener('DOMContentLoaded', function () { setTimeout(run, 300); });
+  }
 })();
