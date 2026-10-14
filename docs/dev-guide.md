@@ -48,6 +48,7 @@ WeiboFilter/
 │       ├── recon.js                 M0 结构侦察脚本（DevTools Console 粘贴即用）
 │       ├── firstframe-probe.user.js 一次性油猴脚本：**首帧**注入「真实缩短卡片内容」验「改高度行不行」（v3，@run-at document-start）
 │       ├── analyze-snapshot.mjs     离线「体检」：class 词汇表 + 逐卡对照表（纯正则）
+│       ├── inspect-card.mjs         离线「卡片结构取样」：article 子树 + 每层 class 可锚性（linkedom；A0/§12-B13）
 │       └── find-ad-slots.mjs        离线「广告位定位」：真 DOM + 祖先链 + 稳定签名（parse5）
 └── tests/
     ├── fixtures/           DOM 快照夹具（⚠️ 含真实内容，已 gitignore）
@@ -173,6 +174,13 @@ npm test          # 等价于 node --test（无参数会自动发现测试文件
      ✅ **已验证（2026-10-14 15:18）：判「✅ 改高度可行」** —— 5/5 对 `d` 贴近**注入态**卡高（误差 ≤ 0.9px）、
      贴近自然态 0/5，两候选相差中位 257.6px；四道自证闸（`boxesMissing` / `cardGapOk` / `selfProofOk` /
      时间线 1693ms）全过 ⇒ 首帧注入的 CSS 被算进尺寸，**§12-B12 定案**。该工具使命已完成，**可从 TM 卸掉**。
+   - `SpecBaseRecon.probeCardRows()` —— **卡片内部结构（A0 取样，2026-10-14 新增，§12-B13）**。
+     列出每张卡的「`article` 直接子块 + 各自高度 + 可锚性分类（库类 / 语义类 / 构建哈希 / ⛔外部注入）」，
+     并专门去抓 **「xx 等 N 人赞过」头像行**（§7.5-E 的「统计行」）—— 它是**条件渲染**，
+     4 份快照里搜「赞过」**0 命中**，只有空占位 `_placebox_<hash>`。
+     ⚠️ 跑之前**先往下滚几屏**，找到一条**有人赞过**的微博；`verdict` 会直说抓没抓到。
+     · 离线那半（结构树，不开浏览器）：`node tools/recon/inspect-card.mjs [-d 6] [--find 文本] [--only 1449]`
+     · 已确认的结论：`article > footer` = **互动按钮行**（39/39 张卡恰好 1 个），可直接作 `display:none` 的落点。
      用途：外壳类名**全是构建哈希**，只能靠取样拿锚点 —— 不猜（§6.1）。
 
 > ⚠️ **颜色规则一律走主题令牌，禁止写死明暗色**（2026-10-13 真机取样后的硬纪律，PROJECT.md §12-B9）。

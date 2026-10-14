@@ -39,6 +39,12 @@
  *     `tools/recon/firstframe-probe.user.js`（一次性油猴脚本，`@run-at document-start`，
  *     v3 起改为**注入真实缩短卡片内容的规则 + A/B 两态对撞**；装上 → 刷新一次 → 自动出结论并下载 JSON）。
  *     Console 探针做不到这件事。
+ * 6d. **卡片内部结构（A0 取样，2026-10-14 新增）**：`SpecBaseRecon.probeCardRows()` ——
+ *     列出每张卡的「article 直接子块 + 各自高度 + 可锚性分类（库类 / 语义类 / 构建哈希 / ⛔外部注入）」，
+ *     并专门去抓 **「xx 等 N 人赞过」头像行**（§7.5-E 的「统计行」）。
+ *     ⚠️ 那一行是**条件渲染** —— 4 份真机快照里搜「赞过」= 0 命中，只有它的空占位容器
+ *     `_placebox_<hash>_<行号>`。**跑之前先往下滚几屏**找到一条有人赞过的微博，否则抓不到。
+ *     同时确认 `article > footer`（互动按钮行）是否每卡恒有 —— 它是 `display:none` 的候选落点。
  *
  * 结果怎么拿走（不用从 Console 复制对象）
  * ------------------------------------
@@ -109,11 +115,12 @@
   //
   //   容器: div.vue-recycle-scroller__item-wrapper
   //   项  : div.vue-recycle-scroller__item-view        ← 虚拟列表槽位
-  //   卡  : div.wbpro-scroller-item > article.__yawf_feed_wrap.__yawf_feed_normal
+  //   卡  : div.wbpro-scroller-item > article.woo-panel-main…（article 的类全是不带哈希的 woo-* 面板类）
   //
-  // class 命名有两套 —— 这是最关键的结论：
-  //   稳定（可作选择器）: __yawf_*（语义别名）、wbpro-*、woo-*、vue-*、vjs-*
-  //   构建哈希（禁止写进选择器）: _name_hash_lineno 形如 _num_198pe_46
+  // class 命名有三套 —— 这是最关键的结论：
+  //   可锚（能写进选择器）: wbpro-*、woo-*、vue-*、vjs_*，以及少量微博语义类（如 div.retweet）
+  //   构建哈希（禁止写进选择器）: _name_hash_lineno，形如 _num_198pe_46 / _content_wrap_ygi5b_114
+  //   ⛔ 外部脚本注入（禁止依赖）: __yawf_* —— 见下方 isHashedClass 附近的说明
   var HASHED_CLASS = /^_[A-Za-z0-9-]+_[a-z0-9]{4,}_\d+$/;
 
   function isHashedClass(t) { return HASHED_CLASS.test(t); }
@@ -281,10 +288,12 @@
       textLength: t.length,
       media: { img: card.querySelectorAll('img').length, video: card.querySelectorAll('video').length },
       // 正文分块 —— §12-A3 关键词字段（正文 / 转发原文）挂载点的前提
+      // ⚠️ 用 `div.retweet`（微博语义类）而不是曾经的 `.__yawf_feed_retweet`：
+      //    后者是外部脚本运行时注入的，干净页面里根本不存在 ⇒ 恒为 false（§12-B13）
       textBlocks: {
         og: !!card.querySelector('.wbpro-feed-ogText'),
         re: !!card.querySelector('.wbpro-feed-reText'),
-        retweet: !!card.querySelector('.__yawf_feed_retweet')
+        retweet: !!card.querySelector('div.retweet')
       },
       avatarCandidates: [],
       childCount: card.children.length
@@ -382,7 +391,7 @@
    * 只取**信息流槽位**：`item-wrapper` 的**直接子节点**里带 `vue-recycle-scroller__item-view` 的那些。
    * ⚠️ 为什么必须这么严格 —— 2026-10-13 真实踩坑：
    *   上一版 `testHeight()` 直接用 `report()` 选出的「最高分容器」取项，结果钻进了
-   *   **卡片内的九宫格图片格**（`woo-box-item-inlineBlock _item_a3hty_47 __yawf_feed-picture_item`，
+   *   **卡片内的九宫格图片格**（`woo-box-item-inlineBlock _item_a3hty_47` + 一个 `__yawf_*` 注入名，
    *   高 137px）。隐藏它当然不会让后续信息流项上移，于是打出了 `delta: 0 / residual: 137`
    *   —— 读数看着像结论，其实**完全无意义**。原因：`scoreContainer()` 按「≥3 个同签名子节点」
    *   打分，一个 9 宫格（9 个一模一样的图片格）比信息流容器得分还高 ⇒ 抢到了 primary。
@@ -1919,6 +1928,162 @@
     return exportResult('theme', out);
   }
 
+  /**
+   * A0 取样：**卡片内部结构**（2026-10-14 新增，PROJECT.md §12-B13）
+   * ---------------------------------------------------------------------------
+   * 回答：卡片里到底有哪几块、各多高、能用什么锚 —— 为第二批「隐藏统计行 / 隐藏互动按钮行」
+   * （§7.5-E）定选择器。
+   *
+   * 离线版（`tools/recon/inspect-card.mjs` + 4 份真机快照）已经确认：
+   *   · `article > footer` = **互动按钮行**（转发 / 评论 / 赞，每卡恰好 1 个，39/39 张卡一致）；
+   *     三条按钮的可锚特征：`.woo-font--retweet` / `.woo-font--comment` / `.woo-like-main`（+ `.woo-like-count`）；
+   *   · ⚠️ **「xx 等 N 人赞过」头像行在 4 份快照里根本不存在**（全文搜「赞过」= 0 命中）——
+   *     它是**条件渲染**，容器疑似 `_placebox_<hash>_<行号>`（构建哈希整串不可锚）。
+   *
+   * ⇒ 本探针专门去真机把那一行**抓出来**（连同 class、高度、内部结构、祖先链）。
+   *
+   * 用法：打开 https://weibo.com/home → **滚几屏** → Console 粘贴本文件 →
+   *   `SpecBaseRecon.probeCardRows()` → 自动下载 `probe-card-rows-*.json`
+   *   ⚠️ 若 verdict 说「没抓到统计行」⇒ 当前页那几张卡都没人赞过，**继续往下滚**再跑一次。
+   */
+  function probeCardRows(opts) {
+    var o = opts || {};
+
+    /** class 可锚性分类 —— 这是本项目选选择器的第一原则 */
+    function anchorOf(el) {
+      var out = { lib: [], semantic: [], hashed: [], injected: [] };
+      var list = classes(el);
+      for (var i = 0; i < list.length; i++) {
+        var t = list[i];
+        if (/^__/.test(t)) out.injected.push(t);            // ⛔ 外部脚本注入，禁止依赖
+        else if (isHashedClass(t)) out.hashed.push(t);      // ⛔ 构建哈希，禁止整串锚
+        else if (/^(woo|wbpro|vue|vjs)/.test(t)) out.lib.push(t); // ✅ 库类名
+        else out.semantic.push(t);                          // ⚠️ 微博语义类（如 retweet），可用但需留意
+      }
+      return out;
+    }
+
+    function brief(el) {
+      return { tag: tag(el), anchor: anchorOf(el), h: rect(el).h, kids: el.children.length, text: txt(el).slice(0, 50) };
+    }
+
+    /** 卡内祖先链（从 article 往下到 el，含两端）—— 「N 人赞过」行靠它定位置 */
+    function chainOf(el, root) {
+      var out = [], p = el;
+      while (p && p !== root.parentElement) { out.unshift(brief(p)); p = p.parentElement; }
+      return out;
+    }
+
+    /** 紧凑子树（标签 + 可锚类 + 高度） */
+    function treeOf(el, depth) {
+      var out = [];
+      (function walk(e, d, prefix) {
+        var a = anchorOf(e);
+        var s = prefix + tag(e);
+        if (a.lib.length) s += '.' + a.lib.join('.');
+        if (a.semantic.length) s += '.' + a.semantic.join('.');
+        if (a.hashed.length) s += '.«hash»';
+        if (a.injected.length) s += '.⛔注入';
+        if (e.children.length) s += ' [' + e.children.length + ']';
+        s += ' h=' + rect(e).h;
+        var t = txt(e).slice(0, 24);
+        if (t && !e.children.length) s += ' «' + t + '»';
+        out.push(s);
+        if (d >= depth) return;
+        for (var i = 0; i < e.children.length; i++) walk(e.children[i], d + 1, prefix + '  ');
+      })(el, 0, '');
+      return out;
+    }
+
+    var items = feedItems();
+    var cards = [];
+    for (var i = 0; i < items.length; i++) cards.push(cardOf(items[i]));
+
+    var rows = [];
+    var n = Math.min(cards.length, o.max || 20);
+    for (var c = 0; c < n; c++) {
+      var card = cards[c];
+      var art = card.querySelector('article') || card;
+
+      var blocks = [];
+      for (var b = 0; b < art.children.length; b++) blocks.push(brief(art.children[b]));
+
+      // ① 互动按钮行 = `article` 的**直接子** footer
+      //    （转发卡内部也有 footer —— 直接子选择器天然避开它，这正是要确认的事）
+      var footer = null;
+      for (var f = 0; f < art.children.length; f++) {
+        if (tag(art.children[f]) === 'footer') { footer = art.children[f]; break; }
+      }
+      var foot = footer ? {
+        h: rect(footer).h,
+        children: footer.children.length,
+        probe: {
+          retweetIcon: !!footer.querySelector('.woo-font--retweet'),
+          commentIcon: !!footer.querySelector('.woo-font--comment'),
+          likeBtn: !!footer.querySelector('.woo-like-main'),
+          likeCount: !!footer.querySelector('.woo-like-count')
+        },
+        text: txt(footer).slice(0, 40),
+        tree: treeOf(footer, 2)
+      } : null;
+
+      // ② 统计行（「xx 等 N 人赞过」）—— 条件渲染，快照里从来没出现过
+      var likeRow = { found: false, byText: null, placebox: null };
+      var scan = card.querySelectorAll('*');
+      for (var s = 0; s < scan.length; s++) {
+        var t = txt(scan[s]);
+        if (t && t.length < 90 && /赞过|人赞|觉得很赞/.test(t)) {
+          likeRow.found = true;
+          likeRow.byText = { text: t.slice(0, 60), chain: chainOf(scan[s], art) };
+          break;
+        }
+      }
+      // placebox：用属性**子串**匹配能绕过那个短 hash（`[class*="placebox"]` 不依赖 `ecgcn`）
+      var pb = null;
+      try { pb = card.querySelector('[class*="placebox"]'); } catch (e) { pb = null; }
+      if (pb) {
+        likeRow.placebox = {
+          rawClass: classOf(pb), h: rect(pb).h, text: txt(pb).slice(0, 60),
+          children: pb.children.length, tree: treeOf(pb, 3)
+        };
+        if (!likeRow.found && txt(pb).trim()) likeRow.found = true;
+      }
+
+      rows.push({ id: itemId(card), cardH: rect(card).h, articleChildren: art.children.length, blocks: blocks, footer: foot, likeRow: likeRow });
+    }
+
+    var withFooter = 0, withPb = 0, withLikeRow = 0, boxesMissing = rows.length > 0;
+    for (var r = 0; r < rows.length; r++) {
+      if (rows[r].footer) withFooter++;
+      if (rows[r].likeRow.placebox) withPb++;
+      if (rows[r].likeRow.found) withLikeRow++;
+      if (rows[r].cardH !== 0) boxesMissing = false;
+    }
+
+    var out = {
+      sampledCards: rows.length,
+      boxesMissing: boxesMissing,
+      footerOnEveryCard: rows.length > 0 && withFooter === rows.length,
+      cardsWithPlacebox: withPb,
+      cardsWithLikeRowText: withLikeRow,
+      rows: rows
+    };
+
+    out.verdict = (boxesMissing
+      ? '⛔ 所有卡片高度都是 0 ⇒ 页面处于异常态（某祖先被 display:none，§12-B10），'
+        + '先 `__spb.off()` 或刷新；'
+      : '')
+      + '采样 ' + rows.length + ' 张卡：`article > footer` 命中 ' + withFooter + '/' + rows.length
+      + '；`[class*=placebox]` 容器 ' + withPb + ' 张；**带「N 人赞过」文本的卡 ' + withLikeRow + ' 张**'
+      + (withLikeRow === 0
+        ? ' ⇒ ⚠️ 本页没抓到统计行（它是条件渲染）—— 继续往下滚，找到一条**有人赞过**的微博再跑一次'
+        : ' ⇒ ✅ 抓到统计行：看 rows[].likeRow.byText.chain 的**祖先链**定锚点');
+
+    console.log('%c[SpecBase Recon] probeCardRows 结果', 'background:#2f3e34;color:#fff;padding:1px 4px', out);
+    console.log('[SpecBase Recon] ' + out.verdict);
+    return exportResult('card-rows', out);
+  }
+
   window.SpecBaseRecon = {
     version: VERSION,
     report: report,
@@ -1928,6 +2093,7 @@
     probeAds: probeAds,
     probeTheme: probeTheme,
     probeHeightCache: probeHeightCache,
+    probeCardRows: probeCardRows,
     findContainers: findContainers,
     // 内部钩子（供测试 / 排查用，不是面向用户的 API）—— 守「项集合必须是信息流槽位」这条线
     _feedItems: feedItems,
