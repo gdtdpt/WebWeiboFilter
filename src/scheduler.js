@@ -23,7 +23,7 @@
  */
 
 import {
-  readCardSignals, findPageAdSlots, SEL_HOME_WRAP,
+  readCardSignals, findPageAdSlots, resolvePageAdContainer,
 } from './adapters/weibo-home.js';
 import { decide, ACTION } from './core/decision.js';
 import { markSlot, markPageAd, clearAll, countMarks } from './apply/mark.js';
@@ -49,25 +49,6 @@ function cardOf(slot) {
   return slot.querySelector('.wbpro-scroller-item') || slot;
 }
 
-/**
- * A 类广告位要收掉的**容器** = 向上走到 `#homeWrap` 的直接子节点。
- * 只收图片那一层会留下外层 padding 造成的空白，收整块才干净。
- *
- * ⚠️ 安全网：若往上走会走到**发布器**（含 textarea / contenteditable），立刻退回，
- *    绝不为了收广告把发布器干掉。
- */
-function pageAdContainer(doc, el) {
-  const wrap = doc.querySelector(SEL_HOME_WRAP[0]);
-  if (!wrap || !el || !el.parentElement) return el;
-
-  let cur = el;
-  while (cur && cur.parentElement && cur.parentElement !== wrap) cur = cur.parentElement;
-  if (!cur || cur.parentElement !== wrap) return el;
-
-  if (cur.querySelector && cur.querySelector('textarea, [contenteditable="true"]')) return el;
-  return cur;
-}
-
 function preview(text) {
   const t = typeof text === 'string' ? text.replace(/\s+/g, ' ').trim() : '';
   return t.length > PREVIEW_LEN ? t.slice(0, PREVIEW_LEN) + '…' : t;
@@ -89,13 +70,15 @@ export function createScheduler(doc, config, options) {
 
   const recent = [];
   const stats = {
-    scans: 0, slots: 0, hidden: 0, pageAds: 0, records: 0, times: 0, lastScanAt: 0,
+    scans: 0, slots: 0, hidden: 0, pageAds: 0, pageAdsRefused: 0, records: 0, times: 0, lastScanAt: 0,
   };
 
   let observer = null;
   let timer = null;
   let running = false;
   let markedPageAds = [];
+  /** 上一轮的「放弃收掉」计数 —— 只用于日志去重（不是判定状态） */
+  let prevRefused = 0;
 
   function record(sig, decision) {
     stats.records++;
@@ -121,18 +104,33 @@ export function createScheduler(doc, config, options) {
     }
 
     const next = [];
+    let refused = 0;
     for (const item of found) {
-      const el = pageAdContainer(doc, item.el);
-      if (!el || next.indexOf(el) !== -1) continue;
+      // ⚠️ 落点由适配层算，红线是**绝不含信息流 / 发布器**（见 resolvePageAdContainer）。
+      //    返回 null = 找不到安全落点 ⇒ **放弃收掉**（宁可露出广告，也不许吞掉时间线）。
+      //    2026-10-14 真机事故：旧实现把落点取成"#homeWrap 的直接子块"，
+      //    而真机里广告与时间线同住一个匿名 div ⇒ 整条信息流被 display:none（整页空白）。
+      const el = resolvePageAdContainer(doc, item.el);
+      if (!el) { refused++; continue; }
+      if (next.indexOf(el) !== -1) continue;
       next.push(el);
       markPageAd(el, true);
     }
-    // 已经不存在的（如广告轮播换位 / 关闭按钮被点）→ 撤回标记
+    // 已经被收掉、但这一轮不再命中的 → 撤回标记
     for (const el of markedPageAds) {
       if (next.indexOf(el) === -1) markPageAd(el, false);
     }
     markedPageAds = next;
     stats.pageAds = next.length;
+    stats.pageAdsRefused = refused;
+    // 只在数量变化时吭声（每轮 8 次日志会把控制台刷爆）
+    if (refused !== prevRefused) {
+      prevRefused = refused;
+      if (refused) {
+        log('⚠️ A 类广告位有 ' + refused + ' 处找不到安全落点（收下去会连带吞掉信息流）'
+          + '—— 已放弃收掉，广告保持可见。请把这条记下来反馈。');
+      }
+    }
   }
 
   /**

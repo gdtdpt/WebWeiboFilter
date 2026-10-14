@@ -32,8 +32,22 @@ export const SEL_CARD = ['.wbpro-scroller-item'];
 
 /**
  * 首页主栏 —— **A 类广告位的收口锚点**。
- * 实测结构：`#homeWrap` 依次是「发布器卡 → A 类广告位（匿名 div）→ 时间线容器」，
- * 所以「收掉整块 banner」= 把标记打在**它的直接子节点**上（见 scheduler 的 pageAdContainer）。
+ *
+ * ⚠️ **2026-10-14 真机事故后修正的错误认知**（原文写的是「`#homeWrap` 依次是
+ * 「发布器卡 → A 类广告位（匿名 div）→ 时间线容器」」）：
+ * 真实结构是**广告与时间线住在同一个匿名 div 里**，它们是兄弟，不是上下级：
+ *
+ *   `#homeWrap`
+ *     ├ `div.woo-panel-main…`（发布器卡，含 textarea）
+ *     └ `div`（匿名）                          ← 旧实现把它当成"A 类广告位"，大错
+ *         ├ `div.woo-box-flex…`（**A 类广告 banner 本体**，实测高 85px）  ← 该收的是它
+ *         ├ `div._visable_*`（另一块，含 `wbpro-tab2` 卡片 —— **不是广告**）
+ *         └ `div` → `#scroller.vue-recycle-scroller`（**整条时间线**）
+ *
+ * ⇒ 旧实现「从广告图往上走到 `#homeWrap` 的直接子块」取到的落点**含着整条时间线**，
+ *   打上 `display:none` 后信息流整页空白（用户真机现象；ffprobe 读数表现为所有槽位
+ *   的 `getBoundingClientRect()` 全为 0 ⇒ `h=0/top=0/gap=0`）。
+ *   ⇒ 现在改为 `resolvePageAdContainer()`：**往上走到「再上一层就开始装信息流」为止**。
  */
 export const SEL_HOME_WRAP = ['#homeWrap'];
 
@@ -272,6 +286,57 @@ export function hasCloseIconNear(el) {
     if (s.indexOf('948/2022/09/21/close.png') !== -1) return true;
   }
   return false;
+}
+
+// ============================================================ A 类收口落点
+
+/**
+ * 「一旦被收进 A 类落点就出事」的东西 —— **A 类收口的唯一红线**。
+ *
+ *   · `.vue-recycle-scroller` / `.wbpro-scroller-item` → 信息流（收掉 = 整页空白）
+ *   · `textarea` / `[contenteditable]`                → 发布器（收掉 = 用户写不了微博）
+ *
+ * ⚠️ 为什么必须是**包含性**判据而不是"往上走几层"：微博的结构随时会变
+ *   （2026-10-14 就是"广告与时间线同住一个匿名 div"这种反直觉的排布），
+ *   而"A 类落点里不许有信息流"这条**不依赖任何层级假设**。
+ */
+export const AD_SWALLOW_GUARD = [
+  '.vue-recycle-scroller',
+  '.wbpro-scroller-item',
+  'textarea',
+  '[contenteditable="true"]',
+].join(',');
+
+/** 这个元素一旦被 `display:none`，会不会连带收掉信息流 / 发布器 */
+export function swallowsFeed(el) {
+  return !!(el && el.querySelector && el.querySelector(AD_SWALLOW_GUARD));
+}
+
+/**
+ * A 类 banner 该收到哪一块上：**从广告图所在的那层往上走，走到「再上一层就开始装信息流」为止**。
+ *
+ * 好处是同时满足两个互相拉扯的目标：
+ *   · 收得干净 —— 能一路收到 banner 自己的根（真机 = `div.woo-box-flex…`），不残留外层间距；
+ *   · 收得安全 —— 绝不越过"含信息流／发布器"的那条线（`swallowsFeed`）。
+ *
+ * @param {Document} doc
+ * @param {Element} holder 广告图所在的最小容器（`findPageAdSlots` 给的 `el`）
+ * @returns {Element|null} 落点；**返回 `null` = 找不到安全落点，调用方必须放弃收掉**
+ *   （宁可露出广告，也绝不许吞掉时间线 —— 这是刻意选的失败方向）
+ */
+export function resolvePageAdContainer(doc, holder) {
+  if (!holder || !holder.parentElement) return null;
+
+  const wrap = doc && doc.querySelector ? doc.querySelector(SEL_HOME_WRAP[0]) : null;
+  let cur = holder;
+  while (cur.parentElement && cur.parentElement !== wrap) {
+    if (swallowsFeed(cur.parentElement)) break;
+    cur = cur.parentElement;
+  }
+
+  // 兜底自检：走到哪都不能出红线（含 holder 本来就病态的情形）
+  if (swallowsFeed(cur)) return null;
+  return cur;
 }
 
 // ============================================================ 探针注册表（§6.1）

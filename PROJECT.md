@@ -252,6 +252,9 @@ B2 已实测定论：虚拟列表的槽位位置来自**预计算的 `translateY
 ⛔ **已否决**：任何在页面上写提示文字的做法（如"已隐藏 1 条推广"）—— 直接暴露脚本存在，违背低调目标。
 可解释性（§9）走**诊断面板**，不进页面。
 ⇒ **实现**：B 类卡整槽 `data-spb="hidden"`（`visibility:hidden`）；A 类流外 banner 走 `data-spb="ad"`（`display:none`，流式布局可安全收干净）。
+⚠️ **A 类的红线（2026-10-14 事故后立的，§12-B10）**：落点**绝不允许包含信息流 / 发布器** ——
+广告 banner 与时间线在真机里是**同一个匿名 div 的兄弟**，「往上收到 `#homeWrap` 的直接子块」会连时间线一起
+`display:none`（信息流整页空白）。落点由适配层 `resolvePageAdContainer()` 算，算出不安全就**放弃收掉**（宁可露出广告）。
 若真机看着空白太扎眼，退到 B 只改 `apply/style.js` 里的一行 CSS。
 
 #### 7.5.1 按「观看距离」排优先级（决定力气花在哪）
@@ -714,6 +717,56 @@ L2 的"工单式"重排**只允许用 CSS 改变已有节点的摆位**（`displ
 | B8 | ✅ **初稿已出** | 探针清单已落在 `src/adapters/weibo-home.js` 的 `PROBES`（9 条：容器 / 虚拟槽位 / 卡片 / 原创正文 / 转发原文 / 头像 / 标签槽 / 关注按钮 / 广告 CDN 图），每条含 `selector + expect + failMeans`；`runProbes()` 可只读执行。<br>⚠️ 「广告 CDN 图」一条的 `expect` 是 `variable` —— **命中 0 属正常**（实测间歇投放），只有当肉眼可见广告而命中 0 时才算失效 |
 | B9 | ✅ **已实测（2026-10-13 17:35，`probe-theme-20261013-1735.json`）：微博跑在深色主题；配色走 CSS 变量；**外观规则必须跟随主题** | **① 主题是稳定锚点**：`<html lang="zh-cn" data-dpr="@2" data-layout="index" data-theme="dark">`（四份夹具全部一致）⇒ 用户当前是**深色模式**（`--w-card-background: #191919`、`--frame-background: #111`、`--w-main: #bfbfbf`）。<br>**② 配色系统是自定义属性**：`:root` 上生效 **485** 个变量，由 **110** 组规则定义，全部来自 `h5.sinaimg.cn/m/weibo-pro-next/assets/index-*.css`（**变量名是设计系统契约，不是构建哈希**）。暖色共 **60** 个。<br>**③ 橙色是级联出来的，5 个根变量就够**：`--w-color-orange-1`→`--w-brand`（主按钮底 / 顶栏那条 `--weibo-top-nav-borderTop: 2px solid var(--w-brand)` / 登录按钮 / 单选 / 复选 / 开关 / 投票选中 / `--weibo-top-nav-icon-active-color`）、`--w-color-orange-2`→`--w-brand-hover`、`--w-color-orange-3`→`--w-alink`（热搜条目色）、`--w-color-red`→`--w-special`→`--w-liked-color`（点赞色）、`--w-color-red-2`→`--w-error`。<br>**④ ⚠️ 深色主题会打断这条链**：它在 **`[data-theme="dark"]:root`** 里用**字面量**重定义中继层（`--w-brand: #ea8011`、`--w-brand-hover: #e54f00`、`--w-alink: #d36747`）⇒ 覆盖根变量无效 ⇒ 必须**同时**覆盖中继层，且一律 `!important`（否则优先级 0,1,1 压过我们的 0,1,0）。<br>**⑤ ⛔ 教训（本项目唯一一次"写死颜色"翻车）**：L1 第一批原写的 `color:#333` 与 `box-shadow:…#e6e6e6` 是**按浅色主题写的**，在深色下分别是"正文消失"与"一条白线"。⇒ **颜色一律取微博自己的中性令牌**（`var(--w-main)` / `var(--w-sub)` / `var(--w-dividing-line)`），同一份 CSS 两套主题都成立；`tests/{l1,theme}.test.mjs` 各有一条守卫扫十六进制色。<br>**⑥ 右栏不存在的原因找到了（算术，不靠猜）**：`--main-width: 1122px`（左 182 + 间隙 8 + 内容 642 + 间隙 8 + 右 282）、`--simple-width: 832px`（去掉右栏）。本机内容宽 **1113px < 1122px** ⇒ 微博**自己收起了右栏**，走 simple 布局（左栏落在 `x=141`，正好等于 `(1113-832)/2`）⇒ 探针的「右栏 0 候选」是**正确结果**，不是探针漏采。⇒ §7.5 F 组的「隐藏右栏」只在**更宽的窗口**下才需要落地；`probeTheme()` 已新增 `layout.mode` 与 `shell.rightAny` 以便宽窗口复采。<br>**⑦ 身份徽标结构**（B4 补全）：`span.woo-icon-wrap.woo-avatar-icon` → `span.woo-icon-main[style="width:16px;height:16px"]` → `svg.woo-icon-in.woo-icon-skinSpe`（金 V，内嵌 `circle fill="#F33705"`）/ `svg.woo-icon-in.woo-icon--vblue`（蓝 V）；旁边另有空元素 `span.woo-icon-frames[16×16]`。**只隐藏叶子 svg** ⇒ 行高与行内宽度都不变。<br>**⑧ `woo-panel-*` 不是布局方位**：左栏那个元素同时带 `woo-panel-main woo-panel-left woo-panel-top woo-panel-right woo-panel-bottom` ⇒ 它是**圆角修饰符**。可用外壳锚点只有：顶栏 = `position:fixed; z-index:9999` 外层内的 `div.woo-panel-main.woo-panel-bottom`（高 58）；左栏 = `div.grayTheme` → `…wbpro-scrollbar`（sticky，高 795）。**底部推荐栏实测不存在**（0 候选）。<br>**⑨ 时间锚点**：9/9 都带绝对时间 —— `<a title="2026-10-13 09:37" href="https://weibo.com/<uid>/<bid>">8小时前</a>`；且旧帖的可见文本本身就是绝对短格式（`10-10   18:17`）⇒ 「改绝对格式」在宽度上不会比微博自己的渲染更宽。<br>**⑩ 我方规则命中**（选择器没空转）：头像 8 / 徽标 6 / 媒体 24 / 正文容器 15 / 正文链接 13 / 卡片 8 / logo 1。 |
 
+| B10 | ✅ **已定位并修复（2026-10-14，真机事故）** | **A 类收口落点算错 ⇒ 把整条时间线一起 `display:none`**（用户现象：刷新后信息流空白）。真机里广告 banner 与时间线是**同一个匿名 div 的兄弟**，旧实现「往上走到 `#homeWrap` 的直接子块」取到的落点含 12 个槽位。修法 = 适配层 `resolvePageAdContainer()`（往上走到「再上一层就开始装信息流」为止 + 包含性红线 + 算不出安全落点就**放弃收掉**）。详见下方「B10 专节」 |
+
+#### B10 专节 · ⛔ A 类收口吞掉整条时间线（2026-10-14 真机事故，已修）
+
+**现象**：用户真机报「刚安装 / 刚更新油猴脚本后，**第一次刷新微博首页信息流空白**」（页面外壳还在，中间那栏空的）。
+
+**证据链**（`tests/fixtures/ffprobe-firstframe-20261014-1436.json`）：
+- 槽位**在**（5 个，`data-index` 0~4，内联 `translateY` 步长恒 `300px` = 还没测量时的估计值）；
+- 但每个槽位的 `getBoundingClientRect()` **全为 0** ⇒ `h=0 / top=0 / bottom=0`；
+- 于是出现一组**自相矛盾**的读数：`d = 300`（来自内联 style）却 `gap = 0`（来自矩形）——
+  `gap = next.top - cur.bottom`，只有**所有矩形归零**时才可能 = 0。
+  ⇒ **有盒子才会出现的量全为零 ⇒ 唯一的解释是「整块被 `display:none`」**（`visibility:hidden` 仍占位，量得到盒子）。
+
+**根因**：A 类收口落点算错。真机结构（四份快照一致）是**广告与时间线同住一个匿名 div**：
+
+```
+#homeWrap
+  ├ div.woo-panel-main…          （发布器，含 textarea）
+  └ div（匿名）
+      ├ div.woo-box-flex…        ← A 类广告 banner 本体（实测 85px）
+      ├ div._visable_*           ← 另一块（含 wbpro-tab2），**不是广告**
+      └ div > #scroller…         ← **整条时间线**
+```
+
+旧实现 `pageAdContainer()` = 「从广告图往上走到 `#homeWrap` 的直接子块」⇒ 落点 = 那个共享 div
+（`querySelectorAll('*')` 2264 个节点、含 **12 个槽位**）⇒ `display:none` 把**整条时间线一起收掉**。
+
+**为什么一直没被发现（两条都要记住）**：
+1. A 类 banner 是**间歇投放**（1440 无 / 1449、1505、1505(1) 有）⇒ 2026-10-13 那次「A 类收掉无跳变」的真机验收
+   **很可能压根没遇到广告**，这条代码路径等于**没被真机跑过**；
+2. **测试在替错误假设背书** —— `pipeline.test.mjs` 的合成 DOM 把广告**单独放在一个直接子块**里
+   （真机不是这样），而夹具回放只数**标记个数**、从不检查「被收掉的子树里有没有信息流」⇒ 5 条测试全绿而 bug 活着。
+
+**已修（2026-10-14）**：
+- 适配层新增 `resolvePageAdContainer()`：从广告图往上走，**走到「再上一层就开始装信息流」为止**
+  （真机落点 = `div.woo-box-flex…`，子树 9 个节点）；
+- 新增包含性红线 `AD_SWALLOW_GUARD = .vue-recycle-scroller, .wbpro-scroller-item, textarea, [contenteditable="true"]`
+  + `swallowsFeed()` —— **不依赖任何层级假设**，往后微博怎么挪结构都不会再踩；
+- **找不到安全落点 ⇒ 放弃收掉**（`resolvePageAdContainer` 返回 `null`，调度层计入 `stats().pageAdsRefused`
+  并在数量变化时打一条日志）—— 刻意选的失败方向：**宁可露出广告，也绝不吞掉时间线**；
+- 回归测试 **6 条**：3 份真实夹具（含「一个槽位都不许落在被收掉的子树里」）+ 合成同构页 + 旧形状保留 + 病态落点放弃收掉；
+  另加 1 条适配层断言（落点必须仍包着广告图、子树不得过大）。
+
+**⚠️ 连带后果**：**2026-10-14 14:36 那次 `firstframe-probe` 读数作废** —— 它测到的是「时间线已被收掉」之后的世界
+（槽位无盒子），与「首帧注入 vs 渲染后注入」那个问题**毫无关系**。该问题**仍未回答**，须在修好后**重跑**。
+
+**⚠️ 待真机确认（未量化，不猜）**：banner 被收掉后时间线整体上移 ~85px，而虚拟列表是 **`page-mode`**
+（可见范围按窗口滚动 + 元素 `offsetTop` 算）⇒ 若在**已下滚**的状态下命中，可能出现 ~85px 的空白条
+直到下一次滚动（在 `scrollY=0` 时不会）。真机验证时留意；若确实出现，再加一行「标记变化后轻推一次 scroll 事件」。
+
 #### B1 专节 · 广告判据（✅ 已定稿 · 2026-10-13 第二轮；`natural` 降级见 2026-10-13 追加）
 
 样本：**两张真广告卡** —— 1449「OiiOii_AI / R7RCuh927」（原创推广，含「关注」按钮）、
@@ -730,7 +783,7 @@ L2 的"工单式"重排**只允许用 CSS 改变已有节点的摆位**（`displ
 
 | 项 | 实测值 |
 | --- | --- |
-| 位置 | `#homeWrap` 内、发布器卡片之后的**匿名 `<div>`**（无 class）里 |
+| 位置 | `#homeWrap > div(匿名) > div.woo-box-flex…`（**banner 本体**，实测高 85px）⚠️ **2026-10-14 修正**：原文写「发布器之后的匿名 div 里」，据此推出的「往上走到 `#homeWrap` 的直接子块」是**错的** —— 那个共享 div 里同时装着**整条时间线**（见 §12-B10 事故） |
 | 形态 | **纯图片**，`img.woo-picture-img` |
 | 唯一可靠判据 | `img[src*="kadmimage.biz.weibo.com"]` —— 微博广告投放 CDN |
 | 佐证 | 自带关闭按钮 `img[src*="948/2022/09/21/close.png"]`（微博给的「可关广告位」） |
@@ -788,7 +841,11 @@ L2 的"工单式"重排**只允许用 CSS 改变已有节点的摆位**（`displ
 - 头像：`img.woo-avatar-img`（52 px）—— 稳定，可直接支撑 §7.5.5 三个变体。
 - ⚠️ **头区的「作者 / 时间 / 来源」在真实 DOM 里没有语义类名**（只有构建哈希 `_nick_ygi5b_25` / `_name_ygi5b_120` / `_info_1tpft_10`）。可用稳定钩子只有：`woo-avatar-img`、`woo-icon-vipimg`（VIP 角标）、以及 **`usercard="<uid>"` 属性**（头像与昵称链接都带）⇒ M1 适配层必须为此设计「多级回退选择器 + 探针」，不能指望单一类名。
 - 昵称文本在 `a[usercard] > span[title]`；VIP 角标 `span[title="微博社交会员"] / img.woo-icon-vipimg`。
-- **稳定 `id` 锚点**（比类名更可靠）：`#scroller`（虚拟列表容器）、`#homeWrap`（首页整个主栏 —— 依次是 发布器卡 → A 类广告位 → 时间线容器）、`#app`（应用根）。
+- **稳定 `id` 锚点**（比类名更可靠）：`#scroller`（虚拟列表容器）、`#homeWrap`（首页整个主栏）、`#app`（应用根）。
+  ⚠️ **2026-10-14 更正**：原文写「`#homeWrap` 依次是 发布器卡 → A 类广告位 → 时间线容器」是**错的**。
+  实测（四份快照一致）是 `#homeWrap` 只有 2 个直接子节点：`div.woo-panel-main…`（发布器）与一个**匿名 div**，
+  而**那个匿名 div 里**依次是：A 类广告 banner（`div.woo-box-flex…`）→ 另一块（`div._visable_*`，含 `wbpro-tab2`，**不是广告**）
+  → 时间线（`div > #scroller`）⇒ **广告与时间线是兄弟**，不是上下级。§12-B10 的事故就是踩在这个误读上。
 - **页面外壳结构**：`#app > div.woo-box-flex.woo-box-column > div.woo-box-flex > div > main.woo-box-flex > div > div > div#homeWrap`；其中 `_noside1_*` 表示**单栏布局**（无右侧栏）。
 - ⚠️ 夹具里还有 `data-shipian-state` / `data-shipian-btn` —— 用户自装**拾片扩展**注入的节点，分析时应排除（1505 快照有 8 处、1505(1) 为 0 ⇒ 时有时无）。
 - ✅ **`__yawf_*` 的来源已查明并消除**：是上游油猴脚本（`tiansh/yawf` 系）运行时注入的 Vue 注解。用户已在第二轮采集前**卸载该脚本**，之后三份快照 `__yawf_*` 计数均为 0 ⇒ 后续夹具是干净基线。**但这条教训要记住：侦察前必须确认浏览器里没有别的微博脚本在改 DOM**，否则夹具不可比。
@@ -822,6 +879,9 @@ L2 的"工单式"重排**只允许用 CSS 改变已有节点的摆位**（`displ
     这个错只在「想用把手调试」时暴露）。已修：`main.js` 经 `unsafeWindow` 挂到**页面 window**（`build.mjs` 元数据补 `@grant unsafeWindow`，
     **不可删**），非 TM 环境退回 `window`；`tests/userscript-expose.test.mjs` 用 `node:vm` 造出两个不同的 window 把这条焊死。
   - 进度：**真机验收通过（2026-10-13 17:00）** —— 用户目视确认：广告被过滤、反复滚动无异常、A 类收掉无跳变、`__spb` 在控制台可用。
+    ⚠️ **2026-10-14 追注**：其中「A 类收掉无跳变」这一条**不成立为验收证据** —— A 类 banner 是间歇投放，
+    那次很可能**没遇到广告**（遇到时有极大概率整栏空白）；该代码路径当时等于未被真机跑过。
+    正确性现在由 §12-B10 的 6 条回归测试守着，**真机待验**：页面上出现广告时，收掉后信息流必须完好。
     ⇒ **M1 收尾**。
   - **遗留（不阻塞收尾，已登记）**：① 关键词的 `highlight` 动作**只留接口、未落样式**（§9 面板未定前「高亮长什么样」无从谈起）；
     ② 关键词规则目前只能改代码写入（`filter.keywords` 默认空）—— 配置 UI 属 M3。
@@ -862,6 +922,10 @@ L2 的"工单式"重排**只允许用 CSS 改变已有节点的摆位**（`displ
       ② **早于渲染 / 与 DOM 无关** ⇒ 怎么注入都留洞。
       Console 探针**物理上问不到这一问**（它注入时微博早已写完了） ⇒ 必须走
       `tools/recon/firstframe-probe.user.js`（`@run-at document-start`：**装上 → 刷新一次 → 自动出结论**）。
+      ⛔ **2026-10-14 14:36 的第一次尝试作废**（探针自证不通过的真正原因是 §12-B10 的 A 类事故
+      —— 时间线被 `display:none`、所有槽位量不到盒子）⇒ **修好后必须重跑**，这一问仍未有答案。
+      ℹ️ 重跑前先确认：页面上**没有** `[data-spb="ad"]` 的标记（`__spb.stats().pageAds` 应为 0 或落点是 banner 本身），
+      否则又是同一个坑。
     - 🧭 **两条工具的分工（别再混用）**：
       · `probeHeightCache()` = 答「**重建**时会不会重测」（Console 可做）；
       · `firstframe-probe.user.js` = 答「**首帧注入**行不行」（**只有油猴脚本可做**）。

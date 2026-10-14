@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SpecBase · M2 首帧改高度验证（一次性，用完即卸）
 // @namespace    specbase-recon
-// @version      2.0.0
+// @version      2.1.0
 // @description  回答一个决定 L1 剩余 4 项与整个 L2 能否落地的问题：在 document-start（= 微博渲染之前）注入「卡片变矮 60px」的 CSS，卡片之间会不会留洞。装上 → 刷新一次 → 自动出结论并下载 JSON。
 // @match        https://weibo.com/*
 // @match        https://*.weibo.com/*
@@ -30,6 +30,8 @@
  *
  * 怎么看结论（脚本自己会判，这里说清依据）
  * ----------------------------------------
+ *   · `first.boxesMissing === true` ⇒ **页面处于异常态**（整块被 `display:none`，槽位量不到盒子）
+ *     ⇒ **整组读数作废**，脚本会直接告诉你。2026-10-14 第一次跑就是撞上这个（A 类收口吞了时间线）。
  *   · `selfProof.ok` ⇒ **CSS 真的生效了**（卡片高 − 槽高 ≈ 60px）。
  *     没有这一步，「没有洞」可能只是「规则没命中」的假阳性 —— 两件事必须分开证明。
  *   · `first.gapHasHole === false` ⇒ **首帧注入有效** ⇒ L1 剩余 4 项与 L2 重排都能做。
@@ -42,7 +44,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '2.0.0';
+  var VERSION = '2.1.0';
   var DELTA = 60;
   var STYLE_ID = 'spb-ffprobe-style';
   var CSS = '.wbpro-scroller-item{margin-bottom:-' + DELTA + 'px !important}';
@@ -200,8 +202,16 @@
     var hs = live.map(function (r) { return r.h; });
     var exact = pairs.filter(function (p) { return p.err <= 2; }).length;
     var matched = keys.length > 0;
+    // ⚠️ 全体槽位「量不到盒子」⇒ 页面处于异常态（某个祖先被 display:none），读数无意义。
+    //    2026-10-14 第一次跑本脚本就是这种读数：h=0 而内联 translateY 步长 300
+    //    ⇒ `gap=0` 与 `d=300` 自相矛盾（gap = next.top − cur.bottom，只有矩形全归零才会是 0）。
+    //    真因是 A 类收口把整条时间线 display:none 了（产品脚本 bug，见 PROJECT.md §12-B10）。
+    var boxesMissing = live.length > 0 && live.every(function (r) {
+      return r.h === 0 && r.top === 0 && r.bottom === 0;
+    });
     return {
       liveSlots: live.length,
+      boxesMissing: boxesMissing,
       pairedBy: matched ? 'data-index' : 'DOM 顺序（下标取不到 —— 结论要打折扣）',
       pairs: pairs.length,
       exact: exact,
@@ -320,7 +330,14 @@
 
       var first = RESULTS.first, proof = RESULTS.selfProof, deep = RESULTS.deep;
       var verdict;
-      if (!proof.ok) {
+      if (first.boxesMissing) {
+        verdict = '⛔ **读数无效**：' + first.liveSlots + ' 个活槽位的**盒子全都量不到**'
+          + '（height / top / bottom 全为 0，而内联 `translateY` 仍有值）'
+          + '⇒ 页面处于异常态：某个祖先被 `display:none` 了。'
+          + '最常见的原因是**产品脚本的 A 类收口吞掉了整条时间线**（PROJECT.md §12-B10）——'
+          + '控制台跑 `__spb.stats()` 看 `pageAds` / `pageAdsRefused`；'
+          + '确认是它就先 `__spb.off()` 再刷新重跑，本脚本本身没问题。';
+      } else if (!proof.ok) {
         verdict = '⚠️ **注入自证没通过**（卡片高 − 槽高 中位数 ' + proof.median + 'px，期望 ' + DELTA
           + 'px，样本 ' + proof.n + ' 个）⇒ 无法确认 CSS 真的生效，**整组读数作废**。'
           + '先检查 `.wbpro-scroller-item` 这个锚点还在不在（把 JSON 发给开发者）。';

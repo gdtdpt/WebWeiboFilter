@@ -792,8 +792,15 @@
     var gaps = pairs.map(function (p) { return p.gap; });
     var hs = live.map(function (r) { return r.h; });
     var exact = pairs.filter(function (p) { return p.err <= 2; }).length;
+    // ⚠️ 全体槽位「量不到盒子」⇒ 页面处于异常态（整块被 display:none），读数无意义。
+    //    2026-10-14 真机事故就是这种读数：h=0 而内联 translateY 步长 300 ⇒ gap=0 与 d=300 自相矛盾。
+    //    有盒子才会出现的量（height / top / bottom）全为 0 ⇒ 唯一解释是「整块被 display:none」。
+    var boxesMissing = live.length > 0 && live.every(function (r) {
+      return r.h === 0 && r.top === 0 && r.bottom === 0;
+    });
     return {
       liveSlots: live.length,
+      boxesMissing: boxesMissing,
       pairs: pairs.length,
       exact: exact,
       matchRate: pairs.length ? Math.round(exact / pairs.length * 100) / 100 : null,
@@ -922,7 +929,13 @@
       var proof2 = injectSelfProof(rows);
 
       var v;
-      if (!remountDetected) {
+      if (now.boxesMissing) {
+        v = '⛔ **读数无效**：' + now.liveSlots + ' 个活槽位的**盒子全都量不到**'
+          + '（height / top / bottom 全为 0，而内联 translateY 仍有值）⇒ 页面处于异常态：'
+          + '某个祖先被 `display:none` 了（很可能是 A 类收口吞掉了整条时间线，见 PROJECT.md §12-B10）。'
+          + '先处理这个状态再重跑：查 `__spb.stats()` 的 `pageAds` / `pageAdsRefused`，'
+          + '或临时 `__spb.off()` 后刷新。';
+      } else if (!remountDetected) {
         // 没重建 ⇒ 这段读数等价于 B2（渲染后改高度），一个字都不能当结论
         v = '⛔ **读数作废**：槽位元素 ' + kept + '/' + cur.length + ' 个原样保留 ⇒ 列表**没有重建**。'
           + '这段只是把「渲染后改高度」又量了一遍（= B2 的已知情形：洞里还是 ' + now.gapAvg
@@ -983,6 +996,25 @@
     var cssApplied = shrinkMedian !== null && Math.abs(shrinkMedian + HPROBE_DELTA) <= 6;
 
     var v1;
+    if (now.boxesMissing) {
+      v1 = '⛔ **读数无效**：' + now.liveSlots + ' 个活槽位的**盒子全都量不到**'
+        + '（height / top / bottom 全为 0，而内联 translateY 仍有值）⇒ 页面处于异常态：'
+        + '某个祖先被 `display:none` 了（很可能是 A 类收口吞掉了整条时间线，见 PROJECT.md §12-B10）。'
+        + '先处理这个状态再重跑：查 `__spb.stats()` 的 `pageAds` / `pageAdsRefused`，或临时 `__spb.off()` 后刷新。';
+      hprobeRemove();
+      hprobeBaseline = null;
+      var resBad = {
+        question: '槽位尺寸缓存是「量 DOM 得来的」还是「预先定好的」？（⛔ 未取到有效读数）',
+        stage: 'baseline',
+        invalid: true,
+        reason: '所有活槽位的盒子都量不到（h/top/bottom = 0）⇒ 页面异常（祖先 display:none）',
+        consistency: now,
+        selfProof: proof,
+        verdict: v1
+      };
+      console.log('[SpecBase Recon] ' + v1);
+      return exportResult('height-cache-invalid', resBad);
+    }
     if (now.matchRate === null) {
       v1 = '未能取到可比的相邻槽 —— 先把信息流滚出内容再跑。';
     } else if (now.matchRate >= 0.8) {

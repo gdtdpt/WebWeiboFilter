@@ -152,6 +152,10 @@ npm test          # 等价于 node --test（无参数会自动发现测试文件
      等 Console 自动打出结论（并自动下载 `ffprobe-firstframe-*.json`）；脚本会自己下滚 4 屏做交叉验证。
      **自证方式**：`selfProof`（`卡片高 − 槽高` ≈ 60px）代替了旧版的 on/off 双跑 ——
      否则「规则没命中 ⇒ 自然没洞」会让假阳性被当成好消息。测完请**卸载**（它会把卡片压矮 60px）。
+     🆕 **v2.1.0 新增一道「读数无效」自检**：若所有槽位的盒子都量不到（`h/top/bottom` 全 0，
+     而内联 `translateY` 仍有值）⇒ 说明页面处于异常态（某个祖先被 `display:none`），
+     脚本会**直接告诉你读数作废并让你去查 A 类收口**，不再打出一堆看着像数据的数。
+     （`probeHeightCache()` 同样有这道闸：`boxesMissing`。）
      用途：外壳类名**全是构建哈希**，只能靠取样拿锚点 —— 不猜（§6.1）。
 
 > ⚠️ **颜色规则一律走主题令牌，禁止写死明暗色**（2026-10-13 真机取样后的硬纪律，PROJECT.md §12-B9）。
@@ -220,7 +224,8 @@ node tools\recon\find-ad-slots.mjs tests\fixtures\snapshot-YYYYMMDD-HHMM.html --
 | 项（虚拟槽位） | `div.vue-recycle-scroller__item-view`（`transform: translateY(...)` **绝对定位**，回收位为 `translateY(-9999px); opacity:0`）；⚠️ **`data-index` 不在槽位上**，在它里面的 `div.wbpro-scroller-item` 上（2026-10-14 实测纠正） |
 | 卡 | `div.wbpro-scroller-item` → `article` |
 | **帖子 ID** | 时间链接 `https://weibo.com/<uid>/<bid>` 里的 `bid`（base62） |
-| **可靠 `id` 锚点** | `#scroller`（虚拟列表容器）/ `#homeWrap`（首页整个主栏：发布器卡 → A 类广告位 → 时间线）/ `#app` |
+| **可靠 `id` 锚点** | `#scroller`（虚拟列表容器）/ `#homeWrap`（首页整个主栏）/ `#app` |
+| **首页主栏的真实结构**（2026-10-14 事故后更正） | `#homeWrap` 只有 2 个直接子节点：`div.woo-panel-main…`（发布器）+ 一个**匿名 div**；而那个匿名 div 里依次是 **A 类广告 banner（`div.woo-box-flex…`，85px）→ `div._visable_*`（另一块，含 `wbpro-tab2`，**不是广告**）→ 时间线（`div > #scroller`）**。⚠️ **广告与时间线是兄弟**；把它俩当成上下级会让 A 类收口连时间线一起收掉（§12-B10） |
 | **可靠 class** | `wbpro-*`（`wbpro-scroller-item` / `wbpro-feed-content` / `wbpro-feed-ogText` / `wbpro-feed-reText` / `wbpro-tag`）<br>`woo-*`（`woo-avatar-img` / `woo-icon-vipimg` / `woo-picture-main` / `woo-panel-main`）<br>`vue-*` / `vjs-*` |
 | ⛔ **禁止用作选择器** | `_name_hash_lineno`，形如 `_num_198pe_46`、`_normal_ecgcn_34`（构建哈希） |
 | ⛔ **也不能依赖** | `__yawf_*` —— **上游油猴脚本运行时注入**（已查明并卸载；同一次微博构建下实测 1928 处 ↔ 0 处） |
@@ -281,7 +286,7 @@ node tools\recon\find-ad-slots.mjs tests\fixtures\snapshot-YYYYMMDD-HHMM.html --
 | 里程碑 | 内容 | 状态 |
 | --- | --- | --- |
 | **M0 侦察** | 侦察采集 + DOM 快照夹具 + 结构报告 | 🟢 **全部闭环**：B1 ✅（广告判据）· B2 ✅（2026-10-13 16:21 实测 ⇒ **隐藏不可行**）· B3~B7 ✅（含 B7 ⇒ L0 走持续校正） |
-| **M1 管线** | 调度层 / 判定核心 / 应用层 + 广告识别 + 关键词过滤 | 🟢 **已接线 + 真机验收通过**（2026-10-13）：判定核心（`ad-detect` + `keyword` + `decision`）+ 调度层（`scheduler.js`）+ 应用层（`apply/`）；单测 **89/89 全绿**（含 4 份真快照上的端到端管线）。<br>真机：过滤生效、滚动无异常、A 类收掉无跳变、可逆。<br>遗留：关键词 `highlight` 只留接口未落样式；关键词规则暂无配置 UI（M3） |
+| **M1 管线** | 调度层 / 判定核心 / 应用层 + 广告识别 + 关键词过滤 | 🟢 **已接线 + 真机验收通过**（2026-10-13）：判定核心（`ad-detect` + `keyword` + `decision`）+ 调度层（`scheduler.js`）+ 应用层（`apply/`）；单测 **139/139 全绿**（含 4 份真快照上的端到端管线）。<br>真机：过滤生效、滚动无异常、可逆。<br>🔴 **2026-10-14 修正**：其中「A 类收掉无跳变」**不成立为验收证据** —— A 类 banner 间歇投放，那次很可能没遇到广告；遇到时会把**整条时间线**一起 `display:none`（信息流整页空白），见 PROJECT.md §12-B10。<br>遗留：关键词 `highlight` 只留接口未落样式；关键词规则暂无配置 UI（M3） |
 | **M2 低调模式** | L1 + L2 落地、首帧注入、可逆 | 🟡 **L0 已落地**；**L1 第一批（零高度影响子集）已落地且真机验收通过**（`src/features/l1.js` + `features/appearance.js`，**10 条规则**，`l1.test.mjs` 用「会改尺寸的属性」黑名单 + 锚点纪律 + **禁写死颜色** + **grayscale 白名单**四条守卫）；**「全局去橙红」已落地并验收**（`src/features/theme.js`：**零选择器**，只覆盖 26 个 CSS 变量；2026-10-14 用户定调「降彩度、不灭色相」⇒ 取值为同色相哑色 hsl，`theme.test.mjs` 守着色相/饱和度纪律；产物已改 `minify:true` 剥注释）；**L1 第二批开工：① 时间相对 → 绝对短格式已落地 + 真机验收通过**（`core/time-text.js` + `apply/time.js`，JS 改写 + `data-spb-t` 存原文可逆，`time-apply.test.mjs` 10 条守着）**② 视频封面 / 暂停帧降饱和已落地 + 真机验收通过**（视频走 **video.js** 而不是 `woo-picture` ⇒ 单加 `.vjs-poster img` + `.video-js.vjs-paused video.vjs-tech` 两条规则，**限定在卡内**；`l1.test.mjs` 三条守卫 + 探针 `video`。真机确认：封面变淡 / 播放恢复全彩 / 暂停又淡 / 小窗播放器不受影响）；L2 重排与其余改高度项待做 |
 | **M3 入口与面板** | 隐藏热区 + TM 菜单 + 配置导入导出 + 可解释性 + 探针注册表 + 诊断页 | ⛔ （探针**注册表**已在 `src/adapters/weibo-home.js#PROBES` 落好并有测试守着，M3 只差 UI；`scheduler.recent()` / `stats()` 已备好数据源） |
 
@@ -321,12 +326,16 @@ node tools\recon\find-ad-slots.mjs tests\fixtures\snapshot-YYYYMMDD-HHMM.html --
 **页面上的调试把手**（无界面，低调 —— §8.2 只约束「可见」入口）：
 
 ```js
-__spb.stats()    // { scans, slots, hidden, pageAds, records, lastScanAt, hidden/pageAd 当前计数 }
+__spb.stats()    // { scans, slots, hidden, pageAds, pageAdsRefused, records, lastScanAt, hidden/pageAd 当前计数 }
 __spb.recent()   // 最近命中（内存态，最多 200 条；刷新即清）
 __spb.rescan()   // 立刻重扫一次
 __spb.off()      // 停掉过滤并清空全部标记 —— 用来肉眼验证「关掉后完全恢复」
 __spb.on()       // 再打开
 ```
+
+⚠️ `pageAdsRefused`（2026-10-14 事故后新增）= 这一轮有**几处 A 类广告位找不到安全落点而放弃收掉**。
+正常应为 `0`。非 0 说明适配层宁可让广告露着也不愿冒吞掉时间线的风险 —— **这时页面是好的，请把这条反馈给我**
+（说明 `resolvePageAdContainer()` 的走位在这台机器上又变了，见 PROJECT.md §12-B10）。
 
 ⚠️ **把手挂在「页面 window」上，不是脚本沙箱**（2026-10-13 真机踩到，已修）：
 脚本声明了 `@grant GM_getValue/GM_setValue`（配置存 TM 存储，§9）⇒ Tampermonkey 启用**沙箱**，
@@ -376,6 +385,7 @@ __spb.css()                       // 看当前实际注入了哪些 CSS（排查
 | 1 | 广告卡消失了，**位置留空**而不是「后面的卡跳上来」 | 滚到广告卡处：应看到一块与原卡等高的空白；页面上下的卡位置不动 |
 | 2 | **反复上下滚动后没有串号** —— 普通微博不会被误隐藏，广告卡也不会又露出来 | 来回滚十几屏，扫一遍 `__spb.stats()` 的 `hidden` 是否稳定；发现异常卡用 `__spb.recent()` 查理由 |
 | 3 | A 类 banner 收掉后**内容上移是否顺滑**（虚拟列表会不会跳变） | 刷新页面时盯着发布器下方：banner 应直接不出现，其余内容不闪动 |
+| 3b | ⛔ **A 类收口绝不能吞掉信息流**（2026-10-14 真机事故后新增，**最高优先级**） | 页面上**出现广告 banner** 时刷新：中间那栏必须**照常是信息流**。事故形态 = 广告与时间线一起消失（整栏空白）；原因与修法见 PROJECT.md §12-B10。控制台 `__spb.stats()` 里 `pageAds` 应为 1 且 `pageAdsRefused` 为 0；若 `pageAdsRefused > 0`，说明适配层放弃了收掉（广告露着）—— 把这条反馈给我 |
 | 4 | **首帧不闪**：既不闪微博原皮，也不闪广告 | 硬刷新（Ctrl+Shift+R）时观察 |
 | 5 | **可逆**：`__spb.off()` 之后页面与没装脚本时一模一样 | 控制台跑 `__spb.off()`，确认被隐藏的卡全部回来、banner 也回来 |
 

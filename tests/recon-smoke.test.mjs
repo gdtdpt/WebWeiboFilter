@@ -346,10 +346,16 @@ function plain(v) {
  * 之前这个合成列表把 `data-index` 放在 `item-view` 上，于是**掩盖**了 recon.js 里
  * 「在错的那一层读下标 ⇒ 恒为 null ⇒ 注入自检算出空数组 ⇒ 报假警」这个 bug。
  * 结构必须与真实一致，否则测试只是在替错误背书。
+ *
+ * 参数：`slots` = [{ index, ty, h }]（`ty` = 内联 `translateY`，`h` = 实测高度）。
+ * `rectTop`（可选）：单独指定**矩形**的 top，用来表达真实世界里的一种反直觉状态 ——
+ *   **内联 `translateY` 有值、元素却没有盒子**（`display:none` 的子树里 `getBoundingClientRect()`
+ *   全归零）。2026-10-14 A 类事故的读数就长这样（`ty = 300` 而 `top/bottom/h = 0`）。
  */
 function syntheticVirtualList(slots) {
   const inner = slots.map((s) => `<div class="vue-recycle-scroller__item-view" ` +
-    `data-h="${s.h}" data-top="${s.ty}" style="transform: translateY(${s.ty}px) translateX(0px); opacity: 1;">` +
+    `data-h="${s.h}" data-top="${s.rectTop !== undefined ? s.rectTop : s.ty}" ` +
+    `style="transform: translateY(${s.ty}px) translateX(0px); opacity: 1;">` +
     `<div class="wbpro-scroller-item" data-index="${s.index}" data-h="${s.h}">` +
     '<article><div class="wbpro-feed-ogText">卡</div></article></div></div>').join('');
   return '<!DOCTYPE html><html><head><title>t</title></head><body>' +
@@ -424,6 +430,39 @@ test('recon 冒烟：回收位（translateY(-9999px) / opacity:0）必须被排�
   assert.equal(a.liveSlots, 2, '分析时只能剩 2 个活槽');
   assert.equal(a.pairs, 1, '活槽 0/1 构成 1 对');
   assert.equal(a.matchRate, 1, '排除回收位后应完全吻合（否则位置被挪走的槽会污染判据）');
+});
+
+test('recon 冒烟：全体槽位量不到盒子时必须判「读数无效」（2026-10-14 A 类事故的读数指纹）', { skip }, () => {
+  // 事故读数长这样（ffprobe-firstframe-20261014-1436.json）：
+  //   `d = 300`（来自槽位内联 translateY）却 `gap = 0`、`h = 0` —— 三者不可能同时成立，
+  //   因为 `gap = next.top − cur.bottom`：只有**所有矩形归零**才会是 0。
+  //   真因是某个祖先被 `display:none`（A 类收口吞掉整条时间线，PROJECT.md §12-B10）。
+  // ⇒ 探针必须自己认出这种页面态并拒绝给结论，而不是打出一堆看起来像数据的数。
+  const blank = syntheticVirtualList([
+    { index: 0, ty: 0, h: 0, rectTop: 0 },
+    { index: 1, ty: 300, h: 0, rectTop: 0 },
+    { index: 2, ty: 600, h: 0, rectTop: 0 },
+  ]);
+  const a = analyzeFixture(blank);
+
+  assert.equal(a.boxesMissing, true, '量不到盒子的页面必须被标记为读数无效');
+  assert.equal(a.pairs, 2);
+  assert.equal(a.samples[0].d, 300, '内联 translateY 仍在（所以 d 看着「正常」）');
+  assert.equal(a.samples[0].gap, 0, '而 gap 归零 —— 这组自相矛盾的数就是它的指纹');
+  assert.equal(a.hAvg, 0, '高度全为 0');
+
+  // 正常页面不得误报（否则守卫会把好读数也毙掉）
+  const normal = syntheticVirtualList([
+    { index: 0, ty: 0, h: 300 },
+    { index: 1, ty: 300, h: 300 },
+  ]);
+  const b = analyzeFixture(normal);
+  assert.equal(b.boxesMissing, false);
+  assert.equal(b.matchRate, 1);
+
+  // 空页面 / 全是回收位时不算「量不到盒子」（没有活槽可比，另有分支处理）
+  const recycledOnly = syntheticVirtualList([{ index: 98, ty: -9999, h: 0, rectTop: 0 }]);
+  assert.equal(analyzeFixture(recycledOnly).boxesMissing, false);
 });
 
 // ── 回归：槽位下标 `data-index` 在**内层**，必须从那一层读 ────────────────────────────────

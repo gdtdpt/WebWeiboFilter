@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { classifyFeedItem, classifyPageAdSlot } from '../src/core/ad-detect.js';
-import { SEL_CARD, readCardSignals, findPageAdSlots } from '../src/adapters/weibo-home.js';
+import { SEL_CARD, readCardSignals, findPageAdSlots, resolvePageAdContainer } from '../src/adapters/weibo-home.js';
 import { FIXTURE_DIR, fixtures, EXPECT, expectFor } from './_fixture-expect.mjs';
 
 // ── 环境探测：夹具 + DOM 实现 ────────────────────────────────────────────
@@ -115,6 +115,38 @@ test('适配层：能把实测推广卡的 URL 埋点与「关注」按钮抽出
   assert.ok(sig.tagTexts.includes('荐读'));                              // 文字标签被抓到
   assert.equal(sig.hasFollowButton, true);                               // 关注按钮被抓到
   assert.ok(sig.text.includes('京东') || sig.text.includes('红包'));      // 原创正文落点正确
+});
+
+test('适配层：A 类收口落点＝广告 banner 自己，而不是装着时间线的容器（2026-10-14 真机事故回归）', { skip }, () => {
+  // 事故：真机里「广告 banner」与「时间线」是**同一个匿名 div 的兄弟**：
+  //   #homeWrap > div(匿名) > [ div.woo-box-flex…(广告) , div._visable_* , div>#scroller(时间线) ]
+  // 旧实现「往上走到 #homeWrap 的直接子块」取到的正是那个共享 div
+  //   ⇒ display:none 把整条时间线一起收掉 ⇒ 信息流整页空白（四份快照里 3 份命中）。
+  let checked = 0;
+  for (const file of fixtures) {
+    const doc = loadDoc(file);
+    for (const slot of findPageAdSlots(doc)) {
+      if (slot.inFeed) continue;
+      checked++;
+      const el = resolvePageAdContainer(doc, slot.el);
+
+      assert.ok(el, `${file}: 有 A 类广告位却算不出安全落点`);
+      assert.equal(el.querySelectorAll('.vue-recycle-scroller').length, 0,
+        `${file}: 落点里含虚拟列表 —— 收下去会把整条时间线一起 display:none`);
+      assert.equal(el.querySelectorAll('.vue-recycle-scroller__item-view').length, 0,
+        `${file}: 落点里含信息流槽位 —— 收下去必然整页空白`);
+      assert.equal(el.querySelectorAll('.wbpro-scroller-item').length, 0,
+        `${file}: 落点里含卡片 —— 收下去必然整页空白`);
+      assert.equal(el.querySelectorAll('textarea,[contenteditable="true"]').length, 0,
+        `${file}: 落点里含发布器 —— 用户会写不了微博`);
+      // 落点必须**仍然包着广告图**（否则就是把不相干的邻居 / 祖先标掉了）
+      assert.ok(el.querySelector('img'), `${file}: 落点里没有广告图 —— 收错对象了`);
+      // 且不能一路收到 #homeWrap 那种量级（真机落点是 banner 本体，子树个位数）
+      assert.ok(el.querySelectorAll('*').length < 200,
+        `${file}: 落点子树过大（${el.querySelectorAll('*').length} 个节点）—— 疑似收过了头`);
+    }
+  }
+  assert.ok(checked > 0, '夹具里应当至少有一处 A 类广告位（否则这条回归形同虚设）');
 });
 
 test('适配层：自然卡的认证图标 wbpro-tag-img 不得进入 tagTexts', { skip }, () => {
