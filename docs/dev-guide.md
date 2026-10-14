@@ -49,6 +49,7 @@ WeiboFilter/
 │       ├── firstframe-probe.user.js 一次性油猴脚本：**首帧**注入「真实缩短卡片内容」验「改高度行不行」（v3，@run-at document-start）
 │       ├── analyze-snapshot.mjs     离线「体检」：class 词汇表 + 逐卡对照表（纯正则）
 │       ├── inspect-card.mjs         离线「卡片结构取样」：article 子树 + 每层 class 可锚性（linkedom；A0/§12-B13）
+│       ├── probe-ad-label.js        真机「广告标签」取样（Console）：定位「广告」二字长在哪个元素（§12-B13 ⑨）
 │       └── find-ad-slots.mjs        离线「广告位定位」：真 DOM + 祖先链 + 稳定签名（parse5）
 └── tests/
     ├── fixtures/           DOM 快照夹具（⚠️ 含真实内容，已 gitignore）

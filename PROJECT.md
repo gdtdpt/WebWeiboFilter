@@ -1041,6 +1041,28 @@ article
   与管线**同一套** `readCardSignals` + `decide`，现场吐出 `signals`（urls / tagTexts / imgSrcs /
   hasFollowButton）+ `decision`（action / adScore / reasons / suspect）。注意 `recent()` **看不出来**
   —— 它只记「动作非 KEEP」的卡，漏网卡恰好不留痕。**等回传 JSON 补样本，再决定加哪条判据。**
+- ✅ **`inspect` 首份回传（2026-10-14 17:05，券商投教卡）—— 缺口定位到「标签槽抽不到」**：
+
+  | 信号 | 读数 | 含义 |
+  | --- | --- | --- |
+  | `urls` | 3 条，**全是微博自身链接**（2× `weibo.com/u/<uid>` + 1× 帖地址） | ⛔ 埋点一条没有 ⇒ `campaign` / `reallog_mark_ad` / `weiboad` / `sclick` / `spm_mark` **全落空** |
+  | `imgSrcs` | 头像 + 会员角标 + `icon_auth_black.png` | ⛔ 无广告 CDN ⇒ `adHost` 落空 |
+  | `tagTexts` | **`[]`** | 🔴 **「广告」二字压根没抽到** —— 新变体的标签**不在 `wbpro-tag` 槽位里** |
+  | `hasFollowButton` | `true` | 只有这条命中 = **+2 ⇒ suspect，不到阈值 3** |
+  | `adScore` | **2** | ⇒ 判 `keep`、不隐藏（**判据本身没坏，是样本没见过这种形态**） |
+
+  ⇒ 结论：**修法唯一落在「标签槽抽取」上** —— 把「广告」标签的宿主元素找出来、纳入 `readCardSignals`
+  的 `tagTexts`（或新增一路「广告标识」判据），它即可独立 +3 判广告。
+  ⚠️ 但**标签宿主未知**（旧快照 `>广告<` 0 命中、`wbpro-tag` 只有「荐读」一处）
+  ⇒ 已新增样本探针 **`tools/recon/probe-ad-label.js`**（Console：选中广告卡内元素 → `probeAdLabel($0)`），
+  输出 `labelHits`（含「广告」文本的叶子 + 祖先链）/ `attrHits`（title / alt）/ `tokens`（卡内
+  `ad|tag|promo|sponsor|label|mark` 类令牌）/ `articleChildren`。
+  **拿到标签锚点后才动 `ad-detect.js` / 适配层**（纪律：先补样本）。
+- ⚠️ **同轮回传的第二个待查项**：归因条**仍量得 34.5px**。`visibility:hidden` 在物理上不该改高度，
+  所以要么「新 CSS 没真正生效」（页面没刷新 / TM 里还是旧版本），要么 **34.5 本来就是这张卡的自然高度**
+  （探针那次量的 35 是**另一张卡**）。两者必须分开 —— 已给出一条 A/B 自检（读 `getComputedStyle` 的
+  `display/visibility` 判哪份 CSS 在跑 + 就地切换箭头 `visibility/display` 看高度是否动）。
+  ⚠️ 提醒：34.5 与 35 **无洞风险**（切档强制刷新 ⇒ 首帧缓存按实际高度建），但红线是「**改了就是改了**」。
 
 #### B1 专节 · 广告判据（✅ 已定稿 · 2026-10-13 第二轮；`natural` 降级见 2026-10-13 追加）
 
