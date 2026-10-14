@@ -27,6 +27,7 @@ import {
 } from './adapters/weibo-home.js';
 import { decide, ACTION } from './core/decision.js';
 import { markSlot, markPageAd, clearAll, countMarks } from './apply/mark.js';
+import { applyAbsoluteTimes, restoreTimes, countTimes } from './apply/time.js';
 
 /** 一次扫描的间隔上限（trailing 去抖），毫秒 */
 export const SCAN_DEBOUNCE_MS = 120;
@@ -88,7 +89,7 @@ export function createScheduler(doc, config, options) {
 
   const recent = [];
   const stats = {
-    scans: 0, slots: 0, hidden: 0, pageAds: 0, records: 0, lastScanAt: 0,
+    scans: 0, slots: 0, hidden: 0, pageAds: 0, records: 0, times: 0, lastScanAt: 0,
   };
 
   let observer = null;
@@ -146,6 +147,12 @@ export function createScheduler(doc, config, options) {
     stats.scans++;
     stats.lastScanAt = Date.now();
 
+    // 外观档是否开启（§7.5.2：L2 蕴含 L1）—— 时间改绝对格式属 L1 的一条，
+    // 档位关着时这一趟顺带把已改写的文本**还原**（切档需刷新，见 §7.4；这里是兜底）。
+    const appearanceOn = !!(config && config.appearance && (config.appearance.l1 || config.appearance.l2));
+    const now = new Date();
+    let times = 0;
+
     const wrapper = doc.querySelector('.vue-recycle-scroller__item-wrapper');
     let slots = 0;
     let hidden = 0;
@@ -177,12 +184,17 @@ export function createScheduler(doc, config, options) {
           if (decision.action !== ACTION.KEEP) record(sig, decision);
         }
 
+        // ③ L1 的时间改写（与过滤无关；档位关着时还原）
+        const t = applyAbsoluteTimes(card, now, appearanceOn);
+        times += appearanceOn ? t.total : 0;
+
         if (decision.action === ACTION.HIDE) hidden++;
       }
     }
 
     stats.slots = slots;
     stats.hidden = hidden;
+    stats.times = times;
     applyPageAds();
 
     if (typeof opts.onScan === 'function') {
@@ -239,7 +251,11 @@ export function createScheduler(doc, config, options) {
 
     markedPageAds = [];
     const n = clearAll(doc);
-    log('过滤管线已停止，清掉 ' + n + ' 处标记');
+    // 时间文本是**唯一被改写的 DOM 内容** —— 停管线时一并还原（§7.4 约束 3「可逆」）。
+    // （外观 CSS 是 `<style>` 注入，撤销靠刷新或 `appearance()` 重建，见 dev-guide §6.5。）
+    const t = restoreTimes(doc);
+    stats.times = 0;
+    log('过滤管线已停止，清掉 ' + n + ' 处标记' + (t ? '、还原 ' + t + ' 处时间' : ''));
     return true;
   }
 
@@ -248,7 +264,7 @@ export function createScheduler(doc, config, options) {
     stop,
     rescan,
     isRunning: () => running,
-    stats: () => Object.assign({}, stats, countMarks(doc)),
+    stats: () => Object.assign({}, stats, countMarks(doc), { times: countTimes(doc) }),
     recent: () => recent.slice(),
   };
 }

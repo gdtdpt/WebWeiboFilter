@@ -55,6 +55,16 @@ export const SEL_TEXTCUT = ['.wbpro-textcut'];
  */
 export const SEL_MEDIA = ['[class*="woo-picture"]'];
 
+/**
+ * 卡内时间锚点（L1「相对时间 → 绝对短格式」的落点，§7.5 D 组）。
+ *
+ * ⚠️ 时间链接的类名是构建哈希（`_time_1tpft_33` / `_time_1t79r_33` 两种都见过）⇒ 不可用。
+ * 唯一可靠的特征是 **`title` 属性**：恒为 `YYYY-MM-DD HH:MM`（给鼠标悬停提示用的，
+ * 微博一定会保留）。这里先用 `a[title^="20"]` 粗筛缩小范围（避免遍历全部 `a`），
+ * 再由 `core/time-text.js` 的正则**复核** —— 双重判别，零误伤（作者昵称等 title 匹配不上）。
+ */
+export const SEL_TIME_ANCHOR = ['a[title^="20"]'];
+
 /** 答案选择：返回第一个命中的元素 */
 function pick(root, selectors) {
   for (const s of selectors) {
@@ -334,6 +344,13 @@ export const PROBES = [
     selector: `${SEL_OG_TEXT[0]} a / ${SEL_TEXTCUT[0]} a`,
     expect: 'optional',   // 没有链接的微博很常见
     failMeans: '正文链接锚点失效 ⇒ L1 的话题/@/外链去蓝不生效（不影响过滤）',
+  },
+  {
+    id: 'time-anchor',
+    desc: '卡内时间锚点（靠 title 的日期格式判别，L1 时间改绝对格式的落点）',
+    selector: SEL_TIME_ANCHOR.join(' / '),
+    expect: 'exists',   // 时间锚点与卡片一一对应：卡片在，时间就必然在 ⇒ 为空即失效
+    failMeans: '时间锚点失效 ⇒ L1「相对时间 → 绝对短格式」不生效（不影响过滤）',
   },
 ];
 

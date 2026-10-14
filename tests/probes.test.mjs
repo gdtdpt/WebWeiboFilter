@@ -70,7 +70,7 @@ for (const file of fixtures) {
     }
 
     // 首页时间线上，这些结构必然存在 —— 它们失效就意味着适配层被改版打穿了
-    const required = ['scroller', 'item-view', 'card', 'og-text', 'avatar', 'home-wrap', 'logo'];
+    const required = ['scroller', 'item-view', 'card', 'og-text', 'avatar', 'home-wrap', 'logo', 'time-anchor'];
     for (const id of required) {
       const r = results.find((x) => x.id === id);
       assert.equal(r.status, 'ok',
@@ -87,7 +87,7 @@ test('探针自检：空页面上「应当存在」的选择器必须报 fail（
   const fake = { querySelectorAll: () => [] };
   const results = runProbes(fake, ALL_PROBES);
 
-  for (const id of ['scroller', 'item-view', 'card', 'og-text', 'avatar', 'logo']) {
+  for (const id of ['scroller', 'item-view', 'card', 'og-text', 'avatar', 'logo', 'time-anchor']) {
     const r = results.find((x) => x.id === id);
     assert.equal(r.status, 'fail', `${id} 在空页面上应报 fail，实际 ${r.status}`);
   }
