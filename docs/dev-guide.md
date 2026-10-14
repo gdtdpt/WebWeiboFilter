@@ -46,6 +46,7 @@ WeiboFilter/
 │   ├── build.ps1           PowerShell 包装（首次自动 npm install）
 │   └── recon/
 │       ├── recon.js                 M0 结构侦察脚本（DevTools Console 粘贴即用）
+│       ├── firstframe-probe.user.js 一次性油猴脚本：**首帧**注入「卡片变矮 60px」验洞（@run-at document-start）
 │       ├── analyze-snapshot.mjs     离线「体检」：class 词汇表 + 逐卡对照表（纯正则）
 │       └── find-ad-slots.mjs        离线「广告位定位」：真 DOM + 祖先链 + 稳定签名（parse5）
 └── tests/
@@ -132,6 +133,22 @@ npm test          # 等价于 node --test（无参数会自动发现测试文件
      ⑧ **`theme` 段**：`<html data-theme / data-layout / data-dpr>` + 关键令牌取值（正文色 / 卡片底 / 分割线 / 品牌色 / `--main-width` / `--simple-width` …）
      ⑨ **`layout` 段**：当前走 `simple`（微博自己收起右栏）还是 `full`，判据是**算术**（内容宽 vs `--main-width`），不靠猜。
      **跑完自动下载 JSON**。⚠️ 它要遍历数千元素做 `getComputedStyle`，页面会卡半秒左右。
+   - `SpecBaseRecon.probeHeightCache()` —— **改高度可不可行**（2026-10-14 新增）。
+     回答一个**从未测过**、却同时决定 L1 剩余 4 项与整个 L2 重排生死的问题：
+     **槽位尺寸缓存是「量 DOM 得来的」还是「预先定好的」？**（前者 ⇒ 我们的 CSS 在 document-start 注入
+     就会被一起量进去 ⇒ 不留洞；后者 ⇒ 什么时候注入都留洞。）
+     判据两条：① 相邻槽的内联 `translateY` 差值 d(i) 是否等于上一槽的实际高度 h(i)（顺带记**小数位**
+     ——`287.6px` 这种值只可能来自实测）；② 注入 `-60px` 并让列表**重挂载**后，d 是否仍等于 h、
+     卡片之间**有没有洞**。
+     **两段式**：跑一次（给基线并注入 -60px）→ **切一次信息流 tab / 路由**（⚠️ **不要刷新** ——
+     刷新会同时丢掉注入的 CSS 与基线）→ 再跑一次（给结论、自动撤掉注入）。
+     中途不想继续：`SpecBaseRecon.probeHeightCache({clear:true})`。**跑完自动下载 JSON**。
+   - `tools/recon/firstframe-probe.user.js` —— 同上问题的**真实首帧路径**验证（一次性油猴脚本）。
+     Console 探针只能**在渲染完之后**注入，那正是 B2 已证无效的情形；要「早于微博的首次测量」
+     只有 `@run-at document-start` 的油猴脚本这条路。装脚本 → 刷新（MODE=`on`）→ 看有没有洞
+     → 把 `MODE` 改成 `'off'` 再刷一次（对照组）→ 自动对比并下载。
+     **对照组的价值**：证明「CSS 真的生效了（卡片确实矮了 60px）」，否则「规则没命中 ⇒ 自然没洞」
+     会让你把假阳性当成好消息。测完请卸载。
      用途：外壳类名**全是构建哈希**，只能靠取样拿锚点 —— 不猜（§6.1）。
 
 > ⚠️ **颜色规则一律走主题令牌，禁止写死明暗色**（2026-10-13 真机取样后的硬纪律，PROJECT.md §12-B9）。

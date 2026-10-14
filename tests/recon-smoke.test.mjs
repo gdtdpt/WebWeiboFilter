@@ -58,9 +58,12 @@ function patchDownload(source) {
 /**
  * 在沙箱里跑一遍 recon.js，返回 `{ recon, window, messages }`。
  * 沙箱里只补浏览器全局；标准内置对象由 vm context 自带。
+ * @param {string} html  页面 HTML（真实快照或合成页）
+ * @param {object} [win] 可选的**已预处理过的** window（比如已经把 getBoundingClientRect 桩掉）——
+ *                       传了就不再从 html 重建，避免桩被覆盖
  */
-function bootRecon(html) {
-  const { window, document } = parseHTML(html);
+function bootRecon(html, win) {
+  const { window, document } = win || parseHTML(html);
   const messages = [];
   const downloads = [];
 
@@ -289,3 +292,132 @@ test('recon 冒烟：probeTheme() 在真实快照上跑得通并产出关键字�
 function _countIconFamily(family) {
   return Object.keys(family || {}).length;
 }
+
+// ── 回归：`probeHeightCache` 的核心判据（「槽位尺寸缓存 = 实测高度」）──────────────────────────
+//
+// 2026-10-14 新增。它回答的是 **L1 剩余 4 项 + 整个 L2 重排能不能做** 这个前置问题
+// （PROJECT.md §13-M2「决定改高度项生死的一个未测假设」）。判据本体是纯计算，
+// 所以这里用**合成虚拟列表**把它焊住 —— 真机读数只跑一次，逻辑出错没人发现得了。
+//
+// ⚠️ linkedom 不做布局：`getBoundingClientRect()` 恒返回 0。所以这里**桩掉**它，
+//    用元素上的 `data-h` / `data-top` 喂进「高度」与「视觉位置」，再把内联 `translateY`
+//    当作微博预计算的槽位位置。三组数据分别对应三种世界：
+//    ① 缓存 = 实测高度（d ≈ h）· ② 缓存 = 固定步长（d ≠ h）· ③ 夹一个回收位（必须被排除）。
+
+function stubRects(window) {
+  window.Element.prototype.getBoundingClientRect = function () {
+    const h = Number(this.getAttribute('data-h') || 0);
+    const top = Number(this.getAttribute('data-top') || 0);
+    return { x: 0, y: top, top, left: 0, right: 0, bottom: top + h, width: 0, height: h };
+  };
+}
+
+/** 造一个虚拟信息流：`slots` = [{ index, ty, h }]（`ty` 是内联 translateY，`h` 是实测高度） */
+function syntheticVirtualList(slots) {
+  const inner = slots.map((s) => `<div class="vue-recycle-scroller__item-view" data-index="${s.index}" ` +
+    `data-h="${s.h}" data-top="${s.ty}" style="transform: translateY(${s.ty}px) translateX(0px); opacity: 1;">` +
+    '<div class="wbpro-scroller-item"><article><div class="wbpro-feed-ogText">卡</div></article></div></div>').join('');
+  return '<!DOCTYPE html><html><head><title>t</title></head><body>' +
+    '<div class="vue-recycle-scroller"><div class="vue-recycle-scroller__item-wrapper" ' +
+    `style="min-height: 4000px;">${inner}</div></div></body></html>`;
+}
+
+/** 采样分析：跑 recon 的真实现（`_sampleSlots` → `_analyzeSlots`），只桩掉矩形 */
+function analyzeFixture(html) {
+  const { window } = parseHTML(html);
+  stubRects(window);
+  const { recon } = bootRecon(html, window);
+  return recon._analyzeSlots(recon._sampleSlots());
+}
+
+test('recon 冒烟：尺寸缓存「量 DOM」时 —— d(i) 与 h(i) 吻合、无洞（⇒ 改高度可行）', { skip }, () => {
+  // 高度带小数：287.6px 这种值只可能来自实测，不可能来自固定值 / 接口
+  const heights = [287.6, 588.2, 300.4, 412.3];
+  let acc = 0;
+  const slots = heights.map((h, i) => {
+    const s = { index: i, ty: Math.round(acc), h };
+    acc += h;
+    return s;
+  });
+
+  const a = analyzeFixture(syntheticVirtualList(slots));
+
+  assert.equal(a.liveSlots, 4, '活槽数不对 —— 回收位过滤可能把正常槽也吃了');
+  assert.equal(a.pairs, 3, '相邻对应为 3 对');
+  assert.equal(a.matchRate, 1, `d 与 h 应完全吻合，实际 ${a.exact}/${a.pairs}（中位误差 ${a.medianAbsErr}）`);
+  assert.ok(a.medianAbsErr <= 2, '取整误差应在 2px 内');
+  assert.equal(a.gapHasHole, false, '不该有洞');
+  assert.ok(Math.abs(a.gapAvg) <= 2, `平均视觉空隙应≈0，实际 ${a.gapAvg}`);
+  assert.equal(a.hHasDecimal, true, '小数位是「实测」的关键旁证，必须被记录');
+  assert.equal(a.hDistinct, 4, '四张卡高度各不相同');
+});
+
+test('recon 冒烟：尺寸缓存「预先定好」时 —— d 是固定步长、与 h 脱节、并且看得到洞', { skip }, () => {
+  // 槽位按固定 400px 排布，但卡片实际高度五花八门 ⇒ 缓存与渲染高度无关
+  const heights = [287.6, 588.2, 300.4, 412.3];
+  const slots = heights.map((h, i) => ({ index: i, ty: i * 400, h }));
+
+  const a = analyzeFixture(syntheticVirtualList(slots));
+
+  assert.equal(a.pairs, 3);
+  assert.equal(a.matchRate, 0, `d 与 h 应完全脱节，实际 ${a.exact}/${a.pairs}`);
+  assert.ok(a.medianAbsErr > 50, '中位误差应很大');
+  assert.equal(a.gapHasHole, true, '固定步长下必然出现洞 —— 这是「不可行」的可视证据');
+});
+
+test('recon 冒烟：回收位（translateY(-9999px) / opacity:0）必须被排除在比对之外', { skip }, () => {
+  const html = syntheticVirtualList([
+    { index: 0, ty: 0, h: 300 },
+    { index: 1, ty: 300, h: 300 },
+    { index: 98, ty: -9999, h: 300 },              // 回收位（位置被挪走）
+    { index: 99, ty: -9999, h: 300 },
+  ]);
+
+  const { window } = parseHTML(html);
+  stubRects(window);
+  const { recon } = bootRecon(html, window);
+
+  // 先把回收位的 opacity 也设成 0（走另一条判定分支）
+  const slots = window.document.querySelectorAll('.vue-recycle-scroller__item-view');
+  slots[3].setAttribute('style', 'transform: translateY(-9999px) translateX(0px); opacity: 0;');
+
+  const rows = recon._sampleSlots();
+  assert.equal(rows.length, 4, '采样应把全部槽都记下来（含回收位）');
+  assert.equal(rows.filter((r) => r.recycled).length, 2, '两个回收位都应被标记');
+
+  const a = recon._analyzeSlots(rows);
+  assert.equal(a.liveSlots, 2, '分析时只能剩 2 个活槽');
+  assert.equal(a.pairs, 1, '活槽 0/1 构成 1 对');
+  assert.equal(a.matchRate, 1, '排除回收位后应完全吻合（否则位置被挪走的槽会污染判据）');
+});
+
+test('recon 冒烟：`probeHeightCache()` 两段式跑得通并各自下载 JSON（状态机 + 导出通道）', { skip }, () => {
+  const html = syntheticVirtualList([
+    { index: 0, ty: 0, h: 300 }, { index: 1, ty: 300, h: 320 }, { index: 2, ty: 620, h: 280 },
+  ]);
+  const { window } = parseHTML(html);
+  stubRects(window);
+  const { recon, downloads } = bootRecon(html, window);
+
+  const first = recon.probeHeightCache();
+  assert.equal(first.stage, 'baseline', '第一段应标记 stage=baseline');
+  assert.ok(first.consistency && typeof first.consistency.matchRate === 'number');
+  assert.ok(first.injectDelta, '第一段必须带「CSS 是否真的改变了高度」的自证字段');
+  assert.ok(window.document.getElementById('spb-recon-hprobe'), '第一段应注入 -60px 的实验 CSS');
+  assert.ok(downloads.some((d) => d.name.startsWith('probe-height-cache-baseline-')),
+    `第一段应下载基线 JSON，实际=${JSON.stringify(downloads)}`);
+
+  const second = recon.probeHeightCache();
+  assert.equal(second.stage, 'after-remount', '第二段应标记 stage=after-remount');
+  assert.ok(second.baseline && second.remount, '第二段必须同时给出基线与复量两组读数');
+  assert.equal(typeof second.remountDetected, 'boolean');
+  assert.ok(second.verdict.length > 0, '第二段必须给出结论');
+  assert.equal(window.document.getElementById('spb-recon-hprobe'), null, '第二段跑完必须撤掉注入的 CSS');
+  assert.ok(downloads.some((d) => d.name.startsWith('probe-height-cache-remount-')),
+    `第二段应下载复量 JSON，实际=${JSON.stringify(downloads)}`);
+
+  // 中止通道：清掉基线后，再跑一次应回到第一段
+  const cleared = recon.probeHeightCache({ clear: true });
+  assert.equal(cleared.stage, 'cleared');
+  assert.equal(recon.probeHeightCache().stage, 'baseline', 'clear 之后应能重新开始');
+});

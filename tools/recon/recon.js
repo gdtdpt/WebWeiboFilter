@@ -24,11 +24,19 @@
  *    `testHeight()` 跑**四组**实验：display:none / 1px 容器 / 1px + 主动触发重测量 / visibility:hidden（对照组）。
  *    ⚠️ 它会打印**目标身份**（tag/class/data-index）并校验「目标必须是 `.vue-recycle-scroller__item-view` 槽位」；
  *    若 `sanity.warning` 非空 ⇒ 读数作废（2026-10-13 曾误测到卡片内九宫格图片格，见 §12-B2）。
+ * 6b. **改高度可不可行（2026-10-14 新增）**：`SpecBaseRecon.probeHeightCache()` —— 回答
+ *     「槽位尺寸缓存是**量 DOM 得来的**还是**预先定好的**」。这条决定 L1 剩余 4 项（媒体缩略化 /
+ *     隐藏统计行 / 互动按钮行 / 字号行距）与**整个 L2 重排**能不能做（§7.5.4 押在「首帧注入」上）。
+ *     **两段式**：跑一次 → 注入 -60px 并给基线读数 → **切一次信息流 tab / 路由**（⚠️ 不要刷新）
+ *     → 再跑一次 → 给确定结论并自动撤掉注入。中途不想继续：`probeHeightCache({clear:true})`。
+ * 6c. 若上面两段式仍不够确定，用 `tools/recon/firstframe-probe.user.js`（一次性油猴脚本，
+ *     `@run-at document-start`）走**真实首帧路径**直接看有没有洞。
  *
  * 结果怎么拿走（不用从 Console 复制对象）
  * ------------------------------------
- *   · `testHeight()` / `watchTitle(20)` / `probeTheme()` —— 跑完**自动下载** JSON
- *     （`probe-height-*.json` / `probe-title-*.json` / `probe-theme-*.json`）
+ *   · `testHeight()` / `watchTitle(20)` / `probeTheme()` / `probeHeightCache()` —— 跑完**自动下载** JSON
+ *     （`probe-height-*.json` / `probe-title-*.json` / `probe-theme-*.json` /
+ *      `probe-height-cache-baseline-*.json` / `probe-height-cache-remount-*.json`）
  *   · `SpecBaseRecon.exportResults()` —— 把跑过的**所有**探针结果汇总成一份 `probe-all-*.json` 下载
  *   · `SpecBaseRecon.copyResult()` —— 兜底：把结果 JSON 塞进剪贴板（下载被浏览器拦时用）
  *
@@ -631,6 +639,314 @@
       res.error = String(err);
       return exportResult('height', res);
     });
+  }
+
+  // ---- ⑤b 槽位尺寸缓存的**来源**（M2 第二批「改高度」的前置判定 · 2026-10-14）--------------------
+  //
+  // 为什么需要它：B2 已证「运行中改高度」会留洞、且后续项不上移（四组实验：display:none / 1px /
+  // 1px + 主动重测 / visibility:hidden）。但那四组**全是在页面渲染完成之后**才改的 ⇒
+  // 只否定了「渲染后改」，**没有**回答「渲染前（首帧）改是否有效」——
+  // 而 §7.5.4「重排仍会改变项高度，因此必须在首帧注入（首帧就定稿则无害）」恰恰押在这上面。
+  //
+  // 两者的分水岭是一个**从未测过的假设**：**微博的槽位尺寸缓存是「量 DOM 得来的」还是「预先定好的」？**
+  //   ① 量 DOM ⇒ 我们的 CSS 只要早于那次测量生效（脚本本来就是 `@run-at document-start`）
+  //     就会被一起量进去 ⇒ 改高度**不留洞**；
+  //   ② 预先定好 ⇒ 什么时候注入都无效 ⇒ L1 剩余 4 项（媒体缩略化 / 隐藏统计行 / 互动按钮行 /
+  //     字号行距）与**整个 L2 重排**一起作废。
+  //
+  // 本探针用「纯观测 + 一次列表重挂载」回答它，**不改页面**（注入的 CSS 会自己清掉）：
+  //   判据 ①（一致性）：相邻槽的内联 `translateY` 差值 d(i) 是否等于**上一槽的实际高度** h(i)。
+  //     缓存若是量出来的，二者必然相等（取整误差内）；若是固定值 / 接口给的，则无关。
+  //     更强的旁证是**小数位**：h 带小数（如 287.6px）而 d 是整数 ⇒ 只有「量 DOM」能得到这种值。
+  //   判据 ②（会不会重测）：注入「卡片变矮 60px」的 CSS 后让列表**重挂载**（SPA 切页，**不是刷新**）
+  //     再复量。若 d 仍等于（已变矮的）h、且卡片之间**没有洞** ⇒ 微博按当前实际高度重算了
+  //     ⇒ **首帧注入必然有效**（确证）。若 d 与 h 脱节约 60px、并且看得到洞 ⇒ 只在初次渲染量一次。
+  //
+  // ⚠️ 为什么强调「切页而不是刷新」：刷新会**同时丢掉**我们注入的 CSS 与基线状态；
+  //    而重新粘贴脚本注入 CSS 时页面早就渲染完了 ⇒ 又退回 B2 的情形，读数无意义。
+
+  var HPROBE_STYLE_ID = 'spb-recon-hprobe';
+  var HPROBE_DELTA = 60;
+  var HPROBE_CSS = '.wbpro-scroller-item{margin-bottom:-' + HPROBE_DELTA + 'px !important}';
+  var hprobeBaseline = null;
+
+  function round1(n) { return Math.round(n * 10) / 10; }
+
+  function medianOf(arr) {
+    if (!arr || !arr.length) return null;
+    var a = arr.slice().sort(function (x, y) { return x - y; });
+    var mid = Math.floor(a.length / 2);
+    return a.length % 2 ? a[mid] : round1((a[mid - 1] + a[mid]) / 2);
+  }
+
+  /** 读槽位内联 `transform: translateY(Npx)` 的 N —— 这是微博 JS 预计算的**槽位位置** */
+  function parseTranslateY(el) {
+    var t = String((el && el.getAttribute && el.getAttribute('style')) || '');
+    var m = /translateY\(\s*(-?[\d.]+)px\s*\)/.exec(t);
+    return m ? parseFloat(m[1]) : null;
+  }
+
+  /** 回收位（滚出视口后被挪走的槽）：`translateY(-9999px)` 或 `opacity:0` —— 必须排除 */
+  function isRecycledSlot(el) {
+    var ty = parseTranslateY(el);
+    if (ty !== null && ty <= -9990) return true;
+    var op = cs(el, 'opacity');
+    return !!op && parseFloat(op) === 0;
+  }
+
+  /** 逐槽采样：内联 translateY / 实际高度（**保留一位小数**，小数位本身就是证据）/ 视觉位置 */
+  function sampleSlots() {
+    var list = feedItems();
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      var el = list[i], r = el.getBoundingClientRect();
+      out.push({
+        order: i,
+        dataIndex: (el.getAttribute && el.getAttribute('data-index')) || null,
+        ty: parseTranslateY(el),
+        h: round1(r.height),
+        top: round1(r.top),
+        bottom: round1(r.bottom),
+        recycled: isRecycledSlot(el)
+      });
+    }
+    return out;
+  }
+
+  function makeHeightPair(a, b) {
+    var d = round1(b.ty - a.ty);
+    return {
+      from: a.dataIndex, to: b.dataIndex,
+      d: d, h: a.h,
+      err: round1(Math.abs(d - a.h)),
+      gap: round1(b.top - a.bottom)
+    };
+  }
+
+  /**
+   * 把采样算成「d(i) vs h(i)」的比对。
+   * 配对策略：**优先按 `data-index` 找相邻项**（DOM 顺序 ≠ 内容顺序 —— 槽位由回收池复用、会被打乱），
+   * 取不到 `data-index` 时退回 DOM 顺序。
+   * `gap` 是两卡的**视觉空隙**（下一卡 top − 本卡 bottom）：无洞 ≈ 0，留洞则 ≈ 缩小量。
+   */
+  function analyzeSlots(rows) {
+    rows = rows || [];
+    var live = [];
+    for (var i = 0; i < rows.length; i++) if (!rows[i].recycled && rows[i].ty !== null) live.push(rows[i]);
+
+    var byIdx = {}, idxKeys = [];
+    for (var j = 0; j < live.length; j++) {
+      if (live[j].dataIndex === null) continue;
+      byIdx[live[j].dataIndex] = live[j];
+      var n = Number(live[j].dataIndex);
+      if (!isNaN(n) && idxKeys.indexOf(n) === -1) idxKeys.push(n);
+    }
+    idxKeys.sort(function (a, b) { return a - b; });
+
+    var pairs = [], k;
+    if (idxKeys.length >= 2) {
+      for (k = 0; k < idxKeys.length - 1; k++) {
+        if (idxKeys[k + 1] !== idxKeys[k] + 1) continue;   // 中间那项被回收掉了，跳过
+        pairs.push(makeHeightPair(byIdx[String(idxKeys[k])], byIdx[String(idxKeys[k + 1])]));
+      }
+    }
+    if (!pairs.length && live.length >= 2) {
+      for (k = 0; k < live.length - 1; k++) pairs.push(makeHeightPair(live[k], live[k + 1]));
+    }
+
+    var errs = pairs.map(function (p) { return p.err; });
+    var gaps = pairs.map(function (p) { return p.gap; });
+    var hs = live.map(function (r) { return r.h; });
+    var exact = pairs.filter(function (p) { return p.err <= 2; }).length;
+    return {
+      liveSlots: live.length,
+      pairs: pairs.length,
+      exact: exact,
+      matchRate: pairs.length ? Math.round(exact / pairs.length * 100) / 100 : null,
+      medianAbsErr: medianOf(errs),
+      maxAbsErr: errs.length ? Math.max.apply(null, errs) : null,
+      hAvg: hs.length ? round1(hs.reduce(function (a, b) { return a + b; }, 0) / hs.length) : null,
+      hMin: hs.length ? Math.min.apply(null, hs) : null,
+      hMax: hs.length ? Math.max.apply(null, hs) : null,
+      hDistinct: uniq(hs).length,
+      hHasDecimal: hs.some(function (v) { return Math.abs(v - Math.round(v)) > 0.05; }),
+      gapAvg: gaps.length ? round1(gaps.reduce(function (a, b) { return a + b; }, 0) / gaps.length) : null,
+      gapMax: gaps.length ? Math.max.apply(null, gaps) : null,
+      gapHasHole: gaps.some(function (g) { return g > 8; }),
+      samples: pairs.slice(0, 12)
+    };
+  }
+
+  function hprobeStyle() {
+    var s = document.getElementById(HPROBE_STYLE_ID);
+    if (!s) {
+      s = document.createElement('style');
+      s.id = HPROBE_STYLE_ID;
+      s.textContent = HPROBE_CSS;
+      (document.head || document.documentElement).appendChild(s);
+    }
+    return s;
+  }
+
+  function hprobeRemove() {
+    var s = document.getElementById(HPROBE_STYLE_ID);
+    if (s && s.parentNode) s.parentNode.removeChild(s);
+  }
+
+  function heightIndexOf(rows) {
+    var map = {};
+    for (var i = 0; i < rows.length; i++) {
+      if (!rows[i].recycled && rows[i].dataIndex !== null) map[rows[i].dataIndex] = rows[i];
+    }
+    return map;
+  }
+
+  /**
+   * 回答「槽位尺寸缓存是量 DOM 得来的，还是预先定好的」—— 决定 **L1 剩余 4 项 + 整个 L2 重排**
+   * 能不能做。用法（**两段式，中间不要刷新页面**）：
+   *
+   *   SpecBaseRecon.probeHeightCache()          // ① 基线一致性 + 注入 -60px（不撤）→ 自动下载 JSON
+   *   ← 手动切换一次信息流 tab（推荐 / 关注），或来回切一次路由，让列表**重挂载**
+   *   SpecBaseRecon.probeHeightCache()          // ② 复量并给结论 → 自动下载 JSON，随后自动撤掉注入
+   *   SpecBaseRecon.probeHeightCache({clear:true})   // 随时中止：撤掉注入、清掉基线
+   *
+   * @param {{clear?: boolean}} [opts]
+   * @returns {Object}
+   */
+  function probeHeightCache(opts) {
+    opts = opts || {};
+
+    if (opts.clear) {
+      hprobeRemove();
+      hprobeBaseline = null;
+      var cleared = { stage: 'cleared', note: '已移除实验用的 -60px CSS，页面恢复原状。' };
+      console.log('[SpecBase Recon] ' + cleared.note);
+      return stash('heightCache', cleared);
+    }
+
+    var rows = sampleSlots();
+    var now = analyzeSlots(rows);
+
+    // ---------- 第二段：重挂载之后再量，与基线对比 ----------
+    if (hprobeBaseline) {
+      var cur = feedItems(), kept = 0, i;
+      for (i = 0; i < cur.length; i++) if (hprobeBaseline.els.indexOf(cur[i]) !== -1) kept++;
+      var remountDetected = kept < Math.min(cur.length, hprobeBaseline.els.length);
+      var b = hprobeBaseline.analysis;
+
+      var v;
+      if (now.matchRate === null) {
+        v = '未能取到可比的相邻槽（活槽 ' + now.liveSlots + ' 个）—— 先把信息流滚出内容再跑一次。';
+      } else if (now.matchRate >= 0.8) {
+        v = '✅ **命中「量 DOM」**：重挂载后 d 仍等于 h（' + now.exact + '/' + now.pairs
+          + ' 对在 ±2px 内，中位误差 ' + now.medianAbsErr + 'px，平均视觉空隙 ' + now.gapAvg + 'px）'
+          + ' ⇒ 微博**按当前实际高度重新测量了槽位**（卡片已比注入前矮 ' + HPROBE_DELTA + 'px）'
+          + ' ⇒ **首帧注入改高度有效**：L1 剩余 4 项与 L2 重排都可以做。';
+      } else if (now.matchRate <= 0.4) {
+        v = '❌ **命中「预先定好」**：重挂载后 d 与 h 脱节（仅 ' + now.exact + '/' + now.pairs
+          + ' 对吻合，中位误差 ' + now.medianAbsErr + 'px，平均视觉空隙 ' + now.gapAvg + 'px'
+          + (now.gapHasHole ? '，已经看得到洞' : '') + '）⇒ 微博不按实际高度重测。'
+          + '⚠️ 这条只否定「重建会重测」；「首帧是否早于那次唯一的测量」仍须用 '
+          + 'tools/recon/firstframe-probe.user.js 直接验。';
+      } else {
+        v = '⚠️ 证据不足（' + now.exact + '/' + now.pairs + ' 对吻合，中位误差 ' + now.medianAbsErr
+          + 'px）—— 建议清掉后重跑，或用 firstframe-probe.user.js 直接验。';
+      }
+      if (!remountDetected) {
+        v += ' ⚠️ 本次**未检测到列表重挂载**（槽位元素没被替换）—— 请确认真的切了信息流 tab 或路由，'
+          + '否则这段读数只是「渲染后改高度」= 等价于 B2，**不构成新证据**。';
+      }
+
+      var res2 = {
+        question: '槽位尺寸缓存是「量 DOM 得来的」还是「预先定好的」？（第二段：注入 -60px 且重挂载之后）',
+        stage: 'after-remount',
+        method: '注入 `.wbpro-scroller-item{margin-bottom:-60px}`（卡片实际变矮 ' + HPROBE_DELTA
+          + 'px）后让列表重挂载，再复量 d(i) vs h(i) 与视觉空隙',
+        injectedCss: HPROBE_CSS,
+        remountDetected: remountDetected,
+        remountKeptSlots: kept + '/' + cur.length,
+        baseline: b,
+        remount: now,
+        verdict: v
+      };
+
+      hprobeRemove();
+      hprobeBaseline = null;
+
+      console.log('%c[SpecBase Recon] probeHeightCache 结果（第二段 · 重挂载后）',
+        'background:#2f3e34;color:#fff;padding:1px 4px', res2);
+      console.log('[SpecBase Recon] ' + v);
+      return exportResult('height-cache-remount', res2);
+    }
+
+    // ---------- 第一段：基线一致性 + 注入 + 即时复量 ----------
+    hprobeStyle();
+    var rows2 = sampleSlots();
+    var afterInject = analyzeSlots(rows2);
+
+    var h0 = heightIndexOf(rows), h1 = heightIndexOf(rows2), shrink = [], key;
+    for (key in h0) {
+      if (Object.prototype.hasOwnProperty.call(h0, key) && h1[key]) {
+        shrink.push(round1(h1[key].h - h0[key].h));
+      }
+    }
+    var shrinkMedian = medianOf(shrink);
+    var cssApplied = shrinkMedian !== null && Math.abs(shrinkMedian + HPROBE_DELTA) <= 6;
+
+    var v1;
+    if (now.matchRate === null) {
+      v1 = '未能取到可比的相邻槽 —— 先把信息流滚出内容再跑。';
+    } else if (now.matchRate >= 0.8) {
+      v1 = '倾向「量 DOM」：d 与 h 吻合 ' + now.exact + '/' + now.pairs + ' 对（中位误差 '
+        + now.medianAbsErr + 'px）⇒ 槽位位置与**实际渲染高度**一致'
+        + (now.hHasDecimal ? '，且高度带小数（' + now.hAvg + 'px 这种值只可能来自实测）' : '')
+        + ' ⇒ 首帧注入改高度**有机会成立**。'
+        + (cssApplied ? '注入 -60px 后卡片确实矮了 ~' + HPROBE_DELTA + 'px。'
+          : '⚠️ 但注入的 CSS 没按预期生效，读数存疑。');
+    } else if (now.matchRate <= 0.4) {
+      v1 = '倾向「预先定好」：d 与 h 只吻合 ' + now.exact + '/' + now.pairs + ' 对（中位误差 '
+        + now.medianAbsErr + 'px）⇒ 缓存不是当前渲染高度。';
+    } else {
+      v1 = '证据混杂（' + now.exact + '/' + now.pairs + ' 对吻合，中位误差 ' + now.medianAbsErr
+        + 'px）—— 需人工判读。';
+    }
+
+    var next = 'CSS 已注入且**先不撤**。请**手动切换一次信息流 tab（推荐 / 关注）或来回切一次路由**'
+      + '让列表重挂载，然后**再跑一次** SpecBaseRecon.probeHeightCache() —— 那一次给确定结论并自动下载 JSON。'
+      + '⚠️ **不要刷新页面**（刷新会同时丢掉注入的 CSS 与基线，读数作废）。'
+      + '不想继续就跑 SpecBaseRecon.probeHeightCache({clear:true}) 撤掉注入。';
+
+    var res1 = {
+      question: '槽位尺寸缓存是「量 DOM 得来的」还是「预先定好的」？（第一段：基线 + 注入即时读数）',
+      stage: 'baseline',
+      method: '纯观测：相邻槽内联 translateY 差值 d(i) vs 上一槽实际高度 h(i)；再注入 -60px 立即复量',
+      injectedCss: HPROBE_CSS,
+      consistency: now,
+      injectDelta: {
+        cssApplied: cssApplied,
+        medianHeightShrink: shrinkMedian,
+        expected: -HPROBE_DELTA,
+        samples: shrink.slice(0, 12),
+        note: cssApplied
+          ? 'CSS 确认生效（卡片实际矮了 ~' + HPROBE_DELTA + 'px）'
+          : '⚠️ CSS 没按预期生效 —— 后面读数不可信，先检查 .wbpro-scroller-item 这个锚点'
+      },
+      afterInject: afterInject,
+      next: next,
+      verdict: v1
+    };
+
+    hprobeBaseline = {
+      analysis: now, rows: rows,
+      els: [].slice.call(feedItems()),
+      at: new Date().toISOString()
+    };
+
+    console.log('%c[SpecBase Recon] probeHeightCache 结果（第一段 · 基线）',
+      'background:#2f3e34;color:#fff;padding:1px 4px', res1);
+    console.log('[SpecBase Recon] ' + v1);
+    console.log('[SpecBase Recon] ' + next);
+    return exportResult('height-cache-baseline', res1);
   }
 
   // ---- ⑤ 右下角悬浮占用（B5）----------------------------------------------------------------
@@ -1405,11 +1721,15 @@
     huntAds: huntAds,
     probeAds: probeAds,
     probeTheme: probeTheme,
+    probeHeightCache: probeHeightCache,
     findContainers: findContainers,
     // 内部钩子（供测试 / 排查用，不是面向用户的 API）—— 守「项集合必须是信息流槽位」这条线
     _feedItems: feedItems,
     _collectItems: collectItems,
     _isScrollerSlot: isScrollerSlot,
+    _sampleSlots: sampleSlots,
+    _analyzeSlots: analyzeSlots,
+    _parseTranslateY: parseTranslateY,
     _container: null,
     _items: [],
     _results: RESULTS,
