@@ -21,6 +21,8 @@ import { applyL0 } from './features/l0.js';
 import { appearanceCss } from './features/appearance.js';
 import { ensureStyle, composeCss, FILTER_CSS } from './apply/style.js';
 import { createScheduler } from './scheduler.js';
+import { readCardSignals } from './adapters/weibo-home.js';
+import { decide, ACTION } from './core/decision.js';
 
 const PREFIX = '[SpecBase]';
 const VERSION = '0.1.0';
@@ -180,6 +182,38 @@ if (page) {
       },
       /** 当前实际注入的完整样式（排查"规则到底有没有生效"用） */
       css: () => fullCss(readConfig()),
+      /**
+       * 现场判定一张卡：`__spb.inspect($0)`（先在 Elements 面板选中卡内任意元素）。
+       *
+       * 与扫描管线**同一套** `readCardSignals` + `decide`（不是复制品）——
+       * 专门回答「这张卡为什么**没**被处理」：`recent()` 只记「动作非 KEEP」的卡，
+       * 被判 KEEP 的（如漏网的广告卡）正好不留痕，只能靠这个现场问。
+       * 输出 `signals`（抽取到的原始信号）+ `decision`（action / adScore / reasons / suspect）。
+       */
+      inspect: (target) => {
+        try {
+          const el = target && target.closest ? target : null;
+          if (!el) {
+            return { error: '用法：Elements 面板选中卡内任意元素后，跑 __spb.inspect($0)' };
+          }
+          const card = el.closest('.wbpro-scroller-item');
+          if (!card) {
+            return { error: '选中的元素不在任何 .wbpro-scroller-item 卡内（选中广告卡内部再试）' };
+          }
+          const signals = readCardSignals(card);
+          const decision = decide(signals, readConfig());
+          return {
+            cardId: signals.id,
+            signals: signals,
+            decision: decision,
+            actionText: decision.action === ACTION.HIDE ? 'hide（隐藏）'
+              : decision.action === ACTION.HIGHLIGHT ? 'highlight（高亮）' : 'keep（保留）',
+            note: 'adScore ≥ 3 才判广告；只有 suspect=true 说明信号不够 —— 把这份 JSON 整个发回去',
+          };
+        } catch (e) {
+          return { error: String(e && e.message || e) };
+        }
+      },
     };
   } catch (e) {
     log('调试把手挂载失败（不影响过滤）', e);

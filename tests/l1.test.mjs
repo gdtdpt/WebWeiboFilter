@@ -238,6 +238,15 @@ test('L1：「更多」箭头的隐藏必须限定在归因条内（同名图标
   assert.equal(arrow.length, 1, '「更多」箭头的规则应恰好一条');
   assert.match(arrow[0].selector, /^article > div:has\(a\.feed-title_a\) /,
     `${arrow[0].selector}：必须带归因条前缀 —— .woo-font--angleDown 是通用字体图标，裸锚会误伤别处`);
+
+  // 🔴 必须用 `visibility:hidden` 而不是 `display:none` —— 真机实测（2026-10-14）：
+  //    `display:none` 让归因条 35px → 34.5px（图标参与了 0.5px 行盒计算）。
+  //    改高度是本项目红线，实测变了就退回 —— 这条断言把退回焊死，防止将来有人「优化」回去。
+  const d = arrow[0].decls.find((x) => x.prop === 'display');
+  const v = arrow[0].decls.find((x) => x.prop === 'visibility');
+  assert.ok(!d, '「更多」箭头不许 display:none（实测会把归因条改矮 0.5px，§12-B2 红线）');
+  assert.ok(v && /visibility/.test(v.prop) && /hidden/.test(v.value),
+    '「更多」箭头必须是 visibility:hidden');
 });
 
 test('L1：社交归因条的选择器在真实快照上确实命中（不是空转规则）', { skip: skipVideo }, () => {
