@@ -156,7 +156,10 @@ export function l1Css() {
     //     如「9 8 445」）。`.retweet` 是**语义类**（四份快照 13 处全部一致、每个恰好 1 个 footer）；
     //     卡内限定防误伤。中性化 = 转中性色（图标是字体图标跟 color；数字文本继承），
     //     零高度影响 —— 与归因条（③b）同一套语言。
-    rule(`${SEL_CARD[0]} .retweet footer`, 'color:var(--w-sub) !important'),
+    //     ⚠️ 2026-10-15 真机二轮反馈：只转色在深色主题下**看不出区别**（原行本来就是灰白）
+    //     ⇒ 补 opacity 把整行压暗 —— opacity 不在尺寸黑名单（不改布局），观感差异明确。
+    rule(`${SEL_CARD[0]} .retweet footer`,
+      'color:var(--w-sub) !important;opacity:.55 !important'),
 
     // ⑤ 外壳：logo 灰化（SVG 内的 fill 是硬编码的微博红，只能用滤镜压）。
     //    ⚠️ logo 是**伪装层**（§7.5-G「SpecBase」身份的一部分），不是内容配色 ——

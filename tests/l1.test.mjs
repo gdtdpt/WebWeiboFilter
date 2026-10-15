@@ -157,6 +157,9 @@ test('L1：A1 互动按钮行 —— 必须 visibility:hidden（空位摘要条�
     `${retweet[0].selector}：必须卡内限定（.retweet 是通用语义，裸锚有误伤面）`);
   assert.match(retweet[0].decls.find((x) => x.prop === 'color').value, /var\(--w-sub\)/,
     '转发块 footer 必须转主题令牌色（禁写死，§12-B9）');
+  // 2026-10-15 真机反馈：只转色在深色主题下看不出区别 ⇒ 必须 opacity 压暗（观感可感知）
+  assert.ok(retweet[0].decls.some((x) => x.prop === 'opacity'),
+    '转发块 footer 缺 opacity —— 深色主题下只转色与原版难以区分');
   for (const dd of retweet[0].decls) {
     assert.ok(!SIZE_AFFECTING.includes(dd.prop),
       `转发块 footer 中性化不得使用尺寸属性「${dd.prop}」（零高度影响）`);
