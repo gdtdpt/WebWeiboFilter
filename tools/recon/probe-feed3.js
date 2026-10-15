@@ -98,14 +98,20 @@ async function probeFeed3() {
     try { return /发布你的评论|按热度|按时间/.test(c.textContent || ''); } catch (_e) { return false; }
   }
   try {
+    // ⚠️ 目标选择（2026-10-15 首跑踩坑）：上一版要求「卡 top 在视口内」—— 但卡高 ~900px、
+    //    视口 ~800px，很多滚动位置下可见卡的 top 是负值（卡上半截在视口上方）⇒ 全员落选。
+    //    改为：取第一张「非回收位」卡，直接 scrollIntoView 居中后再测，不依赖当前滚动位置。
     var target = null;
     for (var ti = 0; ti < cards.length; ti++) {
-      var b = cards[ti].getBoundingClientRect();
-      if (b.h > 0 && b.top > 0 && b.top < window.innerHeight) { target = cards[ti]; break; }
+      var b2 = cards[ti].getBoundingClientRect();
+      if (b2.h > 0 && !(cards[ti].getAttribute('style') || '').includes('-9999')) { target = cards[ti]; break; }
     }
     if (!target) {
-      toggle.errors.push('视口内没有可见卡 —— 滚回信息流顶部再跑');
+      toggle.errors.push('页面上没有非回收位卡 —— 回到信息流再跑');
     } else {
+      target.scrollIntoView({ block: 'center' });
+      await sleep(400);
+      var b = target.getBoundingClientRect();
       var before = panelOpen(target);
       var btn = target.querySelector('article > footer .woo-font--comment');
       if (!btn) {

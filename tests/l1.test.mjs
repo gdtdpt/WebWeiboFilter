@@ -89,6 +89,9 @@ const SIZE_EXEMPT = [
   { sel: /\.wbpro-scroller-item \.u-col-1$/, prop: 'height', val: 'auto',
     why: '单图行容器带着与图相同的内联 height:224（2026-10-15 真机踩坑：只压内层留 84px 空白）'
       + ' —— auto 压掉重复声明、行回归内容高，不引入新裁切面（§12-B16）' },
+  { sel: /^\.wbpro-side-main$/, prop: 'display', val: 'none',
+    why: '右栏整体隐藏（2026-10-15 用户定调）—— 虚拟列表之外的流式容器，display:none 不留洞'
+      + '（A 类逻辑 §7.5.0）；B9 旧结论「无需落地」被宽窗口使用场景推翻（§12-B16 ⑧）' },
 ];
 
 function sizeExemptFor(rule, decl) {
@@ -129,17 +132,27 @@ test('L1：改尺寸属性必须有 SIZE_EXEMPT 登记 —— 无名有姓才放
   }
 });
 
-test('L1：SIZE_EXEMPT 的 display:none 只许「行内叶子图标」—— 不许开后门', () => {
+test('L1：SIZE_EXEMPT 的 display:none 只许「行内叶子图标」与「登记过的流外容器」—— 不许开后门', () => {
   // 反向守卫：如果哪天登记表被扩成"什么都放行"，这条会红。
   // ℹ️ A1 footer 曾在此列（display:none 改高度），2026-10-15 二轮拍板改为 visibility:hidden
   //    （空位摘要条，零高度影响）⇒ 已从登记表除名 —— 这里若再出现 footer 的 display:none 会红。
+  // ℹ️ ⑧ 右栏 .wbpro-side-main 是登记过的例外：虚拟列表之外的流式容器（A 类逻辑），
+  //    收掉不留洞 —— 卡内（.wbpro-scroller-item 之内）的 display:none 仍然一个都不许有。
   const rules = parseRules(l1Css()).filter((r) => r.decls.some(
     (d) => d.prop === 'display' && d.value.replace(/\s*!important$/, '').trim() === 'none'));
 
   assert.ok(rules.length > 0, 'L1 里应当还有行内图标的 display:none（认证角标 / 字体图标）');
   for (const r of rules) {
-    assert.ok(/woo-icon|woo-font--/.test(r.selector),
-      `${r.selector}：display:none 只允许用在行内叶子图标上（woo-icon* / woo-font--*）`);
+    const allowed = /woo-icon|woo-font--/.test(r.selector)
+      || /^\.wbpro-side-main$/.test(r.selector);
+    assert.ok(allowed,
+      `${r.selector}：display:none 只允许用在行内叶子图标（woo-icon* / woo-font--*）`
+      + '或登记过的流外容器（.wbpro-side-main）上');
+  }
+  // 🔴 关键红线：虚拟列表**之内**（卡内）不许出现任何 display:none —— 洞的根源
+  for (const r of rules) {
+    assert.ok(!r.selector.includes('.wbpro-scroller-item'),
+      `${r.selector}：卡内 display:none 会改卡片高度留洞（§12-B2），一律禁止`);
   }
 });
 

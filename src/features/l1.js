@@ -188,6 +188,17 @@ export function l1Css() {
     //    auto 只「去掉重复声明」、不引入新的裁切面，比再压一次 140 更保守。
     rule(`${SEL_CARD[0]} .u-col-1`, 'height:auto !important'),
 
+    // ⑧ 右栏整体隐藏（2026-10-15 用户定调「热搜列表 / 感兴趣的人没什么意义」，§12-B16 ⑧）
+    //    旧结论「无需落地」（B9：内容宽 < 1122px 时微博自己收起右栏）被推翻 —— 用户宽窗口
+    //    是常态，右栏长期可见。probeFeed3() 活页采样拿到锚点：右栏容器 = `.wbpro-side-main`
+    //    （库前缀 wbpro-*，链：wbpro-side-main > hotBand > .wbpro-side(面板) > .wbpro-side-tit），
+    //    热搜 / 推荐关注 / 创作者中心面板全在其中。
+    //    ⚠️ display:none 在这里**安全** —— 右栏在虚拟列表**之外**、正常流式布局
+    //    （A 类逻辑：流外容器可收掉，§7.5.0），与 B10 事故（信息流共享匿名 div）不同源。
+    //    ⛔ 不用 visibility —— 右栏收掉后主列该占满就占满，留白无意义。
+    //    副作用：主列变宽 ⇒ 信息流卡变宽 ⇒ 格子图更常超 140 阈值（⑦ 已天然处理），无洞风险。
+    rule('.wbpro-side-main', 'display:none !important'),
+
     // ⑤ 外壳：logo 灰化（SVG 内的 fill 是硬编码的微博红，只能用滤镜压）。
     //    ⚠️ logo 是**伪装层**（§7.5-G「SpecBase」身份的一部分），不是内容配色 ——
     //    这里保持 grayscale 而不是降饱和：品牌红的识别度必须压掉，属刻意的例外。
@@ -196,4 +207,4 @@ export function l1Css() {
 }
 
 /** 规则条数（探针 / 诊断页断言用；改 `l1Css()` 时记得同步） */
-export const L1_RULE_COUNT = 21;
+export const L1_RULE_COUNT = 22;
