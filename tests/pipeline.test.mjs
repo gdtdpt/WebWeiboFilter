@@ -161,6 +161,14 @@ test('样式注入：ensureStyle 幂等，removeStyle 能清干净', { skip }, (
   assert.ok(el.textContent.includes('visibility:hidden'), 'B 类样式缺失');
   assert.ok(el.textContent.includes('display:none'), 'A 类样式缺失');
 
+  // B 类空位占位提示（2026-10-15 方案 A）：必须挂在槽位的 ::after 上、
+  // 用「visibility 置回 visible」而不是动 display —— 后者会改布局，违反保高度（§12-B2）
+  assert.ok(el.textContent.includes('[data-spb="hidden"]::after'), '占位提示规则缺失');
+  const ph = el.textContent.split('\n').find((l) => l.includes('::after')) || '';
+  assert.ok(ph.includes('visibility:visible'), '占位提示必须把 visibility 置回 visible（卡才藏得住、提示才出得来）');
+  assert.ok(!ph.includes('display:none'), '占位提示不得用 display:none（那会把槽位整个收掉、改布局）');
+  assert.ok(ph.includes('pointer-events:none'), '占位提示不得拦截交互');
+
   assert.equal(removeStyle(document), true);
   assert.equal(document.getElementById(STYLE_ID), null);
 });

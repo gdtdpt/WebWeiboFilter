@@ -11,6 +11,12 @@
  * 好处：① 撤销 = 删属性，不残留内联样式；② 不碰微博自己写的内联 style
  *      （虚拟列表会往槽位上写 `transform`，若我们直接改 `style` 容易互相打架）。
  *
+ * ── B 类空位的占位提示（2026-10-15 用户拍板方案 A）─────────────────
+ * 广告 / 关键词卡隐藏后留下一块等高空白，观感上像「页面坏了」。
+ * `visibility` 是少数**可被后代重新置回 visible** 的继承属性（`display:none` 不行），
+ * 所以占位可以做成**槽位的 `::after`**：卡整卡隐藏，空位中央叠一条中性小字。
+ * 好处：零 JS 改动、零新增 DOM 属性（低调纪律不破）、撤销仍是删一个属性。
+ *
  * ⚠️ 属性名刻意取短且不自述（不用 `data-specbase-filtered` 这种一看就知道装了什么的写法）：
  *    低调是项目核心目标，DOM 里不该留下自我介绍的痕迹。
  */
@@ -34,6 +40,22 @@ export const STYLE_ID = 'spb-style';
 export const FILTER_CSS = [
   `[${MARK_ATTR}="${MARK_HIDDEN}"]{visibility:hidden !important}`,
   `[${MARK_ATTR}="${MARK_PAGE_AD}"]{display:none !important}`,
+  // B 类空位占位（方案 A）：::after 是槽位的后代 ⇒ 能把 visibility 重新置回 visible。
+  // 绝对定位 + pointer-events:none ⇒ 不改布局、不接交互；颜色用主题变量（禁写死，见 §7.5）。
+  `[${MARK_ATTR}="${MARK_HIDDEN}"]::after{`
+    + 'content:"已过滤";'
+    + 'visibility:visible !important;'
+    + 'position:absolute;'
+    + 'inset:0;'
+    + 'display:flex;'
+    + 'align-items:center;'
+    + 'justify-content:center;'
+    + 'font-size:13px;'
+    + 'letter-spacing:.08em;'
+    + 'color:var(--w-sub);'
+    + 'opacity:.55;'
+    + 'pointer-events:none'
+    + '}',
 ].join('\n') + '\n';
 
 /** 旧名（= `FILTER_CSS`），保留给既有调用与测试 */
