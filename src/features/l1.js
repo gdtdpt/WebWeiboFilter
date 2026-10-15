@@ -169,7 +169,16 @@ export function l1Css() {
     //    锚 `.woo-picture-main`（**库类**，probeMedia 四快照一致）；图片源全是 orj360 缩略图 ⇒ 不损清晰度。
     //    ⚠️ 真机复验「不留洞」是唯一防线（改高度项纪律）；**视频不动**（vjs 内部布局，二期单独评估）。
     rule(`${SEL_CARD[0]} .woo-picture-main`, 'max-height:140px !important'),
-    rule(`${SEL_CARD[0]} .woo-picture-main img`, 'height:100% !important'),
+    //    img 规则（2026-10-15 二轮真机返工）：height:100% 之外**必须带 top:auto** ——
+    //    🔴 微博有一套自己的 JS 居中裁切方案：按每张图原始比例给 img 写内联
+    //    「尺寸 133% + 负偏移」（竖图 width:100%;height:133%;top:-33%，横图 height:100%;
+    //    width:180%;left:-34%，全百分比 ⇒ 格子任意尺寸都自洽）。首版只压 height ⇒
+    //    竖图的 top:-33% 残留 ⇒ 图被顶上去 1/3、格子底部露空 —— 只有竖图格中招，
+    //    横图 / 方图天然无恙（探针抓到现行：img 顶点比格子上移 34.6px，§12-B16）。
+    //    top:auto 清掉残留偏移后 img 盒子与格子等大，微博自带的 object-fit:cover
+    //    接管居中裁切（压到 140 后自动按新框重裁）。left 不动 —— 横图的 left:-34%
+    //    与 height:100% 是自洽配对，动它反而破坏横向取景。
+    rule(`${SEL_CARD[0]} .woo-picture-main img`, 'height:100% !important;top:auto !important'),
     // ⑦b 单图行容器（2026-10-15 真机验收踩坑修正）：**显式 height 不止 picture-main 一处** ——
     //    外层行 `.u-col-1` 带着**同样的内联 height:224px**（夹具四份 10/10：卡内 u-col-1 全部
     //    且仅是单图行，九宫格走 u-col-3/4 且无内联高度）。只压内层 ⇒ 图缩了、行没缩，

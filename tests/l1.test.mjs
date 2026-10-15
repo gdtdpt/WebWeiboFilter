@@ -83,6 +83,9 @@ const SIZE_EXEMPT = [
   { sel: /\[data-spb="stats"\]/, prop: '*', val: '*', why: '我方绝对定位摘要条 —— 不进布局流（§12-B15）' },
   { sel: /\.woo-picture-main$/, prop: 'max-height', val: '140px', why: '媒体缩略化 —— 登记改高度项（§12-B16，probeMedia 读数定稿 140px）' },
   { sel: /\.woo-picture-main img$/, prop: 'height', val: '100%', why: 'img 跟随缩后的容器，cover 重算（§12-B16）' },
+  { sel: /\.woo-picture-main img$/, prop: 'top', val: 'auto',
+    why: '微博 JS 裁切方案的残留负偏移（top:-33%）必须清零 —— height:100% 压掉 height:133% 后'
+      + ' top 残留会让竖图格底部露空（2026-10-15 真机「有的缩有的不缩」实锤，§12-B16）' },
   { sel: /\.wbpro-scroller-item \.u-col-1$/, prop: 'height', val: 'auto',
     why: '单图行容器带着与图相同的内联 height:224（2026-10-15 真机踩坑：只压内层留 84px 空白）'
       + ' —— auto 压掉重复声明、行回归内容高，不引入新裁切面（§12-B16）' },
@@ -212,6 +215,9 @@ test('L1：媒体缩略化（§12-B16，改高度项）—— 数值法 max-heig
     '容器 max-height 必须是 140px（用户 2026-10-15 拍板）');
   assert.match(img.decls.find((d) => d.prop === 'height').value, /^100%/,
     'img 必须 height:100% 跟随容器（否则 cover 仍按原 224px 框裁切）');
+  assert.match(img.decls.find((d) => d.prop === 'top').value, /^auto/,
+    'img 必须 top:auto —— 微博 JS 裁切方案的负偏移（top:-33%）不清零，竖图格底部会露空'
+    + '（2026-10-15 真机「有的缩有的不缩」实锤，§12-B16）');
 
   // ⑦b 单图行容器：必须存在、必须 height:auto（不是再压一次 140）、必须卡内限定
   const row = parseRules(css).find((r) => /^\.wbpro-scroller-item \.u-col-1$/.test(r.selector));
@@ -518,4 +524,21 @@ test('L1：单图行规则确实命中真快照，且 u-col-1 在卡内全部是
   }
   assert.ok(sawRow > 0,
     '所有夹具里都没有卡内 u-col-1 ⇒ 规则空转（单图行锚点可能已失效，或夹具换了一批）');
+});
+
+test('L1：微博 JS 裁切方案确实存在「负 top 偏移」的竖图格（img top:auto 的机制前提）', { skip: skipVideo }, () => {
+  // 起因（2026-10-15 真机「九宫格有的缩有的不缩」）：微博按图片原始比例给 img 写内联
+  // 「height:133% + top:-33%」做居中裁切 —— 我们的 height:100% 压掉 height 后 top 残留
+  // ⇒ 竖图格底部露空。img 规则因此必须带 top:auto。这条测试焊住机制前提：
+  // 夹具里必须能找到「负 top 偏移」的 img（微博改掉这套方案时这里先红，届时 top:auto 需重评）。
+  let sawOffset = 0;
+  for (const file of fixtures) {
+    const { document } = parseHTML(readFileSync(join(FIXTURE_DIR, file), 'utf8'));
+    for (const img of document.querySelectorAll('.wbpro-scroller-item .woo-picture-main img')) {
+      const inline = img.getAttribute('style') || '';
+      if (/top:\s*-\d/.test(inline)) sawOffset++;
+    }
+  }
+  assert.ok(sawOffset > 0,
+    '夹具里没有负 top 偏移的图片格 —— 微博的 JS 裁切方案可能变了，img top:auto 的必要性需重评');
 });
