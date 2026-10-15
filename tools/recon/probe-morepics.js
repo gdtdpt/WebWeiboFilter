@@ -376,11 +376,32 @@ function probeDetailApi(bid) {
         }
       }
       walk(j, '$', 0);
+      // pic_infos 是「pic_id → 尺寸对象映射」（非数组），sinaimg 判据撞不上；
+      // 直接采样两条，看每条里有哪些尺寸字段、URL 长什么样（设计冻结的最后一块拼图）
+      var picInfosSample = null;
+      if (j && j.pic_infos && typeof j.pic_infos === 'object') {
+        var ids = Object.keys(j.pic_infos);
+        picInfosSample = ids.slice(0, 2).map(function (pid) {
+          var entry = j.pic_infos[pid];
+          var sizes = {};
+          var ek;
+          try { ek = Object.keys(entry); } catch (_e) { ek = []; }
+          for (var ei = 0; ei < ek.length && ei < 10; ei++) {
+            var sv = entry[ek[ei]];
+            sizes[ek[ei]] = sv && typeof sv === 'object' ? { url: sv.url ? sv.url.slice(0, 110) : null,
+              w: sv.width, h: sv.height } : typeof sv === 'string' ? sv.slice(0, 110) : sv;
+          }
+          return { picId: pid, keys: ek, sizes: sizes };
+        });
+      }
       return {
         bid: bid,
         ok: Boolean(j && j.id_str || j && j.pic_num != null),
         topKeys: j && typeof j === 'object' ? Object.keys(j).slice(0, 50) : null,
         picNum: j ? j.pic_num : null,
+        picIdsLen: j && Array.isArray(j.pic_ids) ? j.pic_ids.length : null,
+        picInfosCount: j && j.pic_infos ? Object.keys(j.pic_infos).length : null,
+        picInfosSample: picInfosSample,
         sinaimgArrays: hits,
       };
     })
