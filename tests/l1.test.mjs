@@ -115,6 +115,28 @@ test('L1：规则条数与 `L1_RULE_COUNT` 一致（改了规则要同步改常�
   assert.equal(parseRules(l1Css()).length, L1_RULE_COUNT);
 });
 
+test('L1：mediaCaps:false 只摘媒体尺寸规则组（B17 黑图归因开关，§12-B17）', () => {
+  // 背景：黑图与媒体缩略化上线**时间相关**（用户：改尺寸前无黑图、开后有）；
+  // 现场摘除（spbAB）洗不清「首帧布局干扰懒加载决策」的单向锁存路径 ⇒
+  // 提供「刷新级」归因开关：false = 三条尺寸规则不注入，L1 其余一切保留。
+  const off = parseRules(l1Css({ appearance: { mediaCaps: false } }));
+
+  assert.equal(off.length, L1_RULE_COUNT - 3, '恰好摘掉三条（容器 max-height / img / u-col-1）');
+  for (const r of off) {
+    assert.ok(!/woo-picture-main/.test(r.selector),
+      `mediaCaps:false 下不得出现 woo-picture-main 尺寸规则：${r.selector}`);
+    assert.ok(!/u-col-1/.test(r.selector),
+      `mediaCaps:false 下不得出现 u-col-1 尺寸规则：${r.selector}`);
+  }
+  // 滤镜（②）刻意保留：saturate(.4)+opacity:.85 只降显著度、不可能造出「全黑」，
+  // 且它是 L1 基线（「降彩度不灭色相」2026-10-14 用户定调）—— 归因时别把它混进来。
+  assert.ok(off.some((r) => r.selector.includes('img') && r.decls.some((d) => d.prop === 'filter')),
+    '媒体降饱和滤镜必须保留（归因变量只 isolate「改尺寸」这一族）');
+  // 摘掉后不再有任何「改尺寸」规则 ⇒ SIZE_EXEMPT 登记的媒体三项必然缺席
+  const sizeProps = off.flatMap((r) => r.decls.map((d) => d.prop));
+  assert.ok(!sizeProps.includes('max-height'), 'max-height 应随 mediaCaps 摘除');
+});
+
 test('L1：每条规则都带 !important（这是一套覆盖微博主题的样式）', () => {
   for (const r of parseRules(l1Css())) {
     for (const d of r.decls) {

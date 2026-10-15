@@ -26,7 +26,8 @@ export function appearanceCss(cfg) {
     // ⚠️ 顺序有意义：`themeCss()` 的 `:root` 覆盖放**后面**。
     // 两者都是 `!important`，靠后的同优先级声明在冲突时胜出 —— 变量覆盖是地基，先让位给具体规则。
     parts.push(themeCss());
-    parts.push(l1Css());
+    // cfg 透传：l1 内的媒体尺寸规则组受 `appearance.mediaCaps` 门控（B17 黑图归因开关）
+    parts.push(l1Css(cfg));
   }
   // L2 的重排规则、以及第二批「改高度」的规则以后接在这里（同样首帧注入）
 
