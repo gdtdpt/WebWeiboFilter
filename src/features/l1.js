@@ -160,6 +160,17 @@ export function l1Css() {
     rule(`${SEL_CARD[0]} .retweet footer`, 'visibility:hidden !important'),
     rule(`${SEL_CARD[0]} .retweet`, 'position:relative !important'),
 
+    // ⑦ 媒体缩略化（2026-10-15 用户拍板 140px，§12-B16）—— **改高度项，SIZE_EXEMPT 有登记**
+    //    probeMedia() 真机读数（11 卡 9 媒体块）：高度全是**显式固定像素**（竖图容器 224px、
+    //    横图 126px、九宫格格子 132.6px），img `position:absolute + object-fit:cover` 内建
+    //    ⇒ 手法 = 容器 `max-height` 压过显式 height（标准 CSS 行为）+ img `height:100%` 跟随。
+    //    ⭐ 数值法的妙处：**只有高于阈值的媒体被压** —— 横图 126 / 九宫格 132.6 天然免疫，
+    //    不需要按「单图 / 多图 / 横竖」分类写选择器（那要锚 `_picTall_/_inlineNum3_` 哈希，⛔）。
+    //    锚 `.woo-picture-main`（**库类**，probeMedia 四快照一致）；图片源全是 orj360 缩略图 ⇒ 不损清晰度。
+    //    ⚠️ 真机复验「不留洞」是唯一防线（改高度项纪律）；**视频不动**（vjs 内部布局，二期单独评估）。
+    rule(`${SEL_CARD[0]} .woo-picture-main`, 'max-height:140px !important'),
+    rule(`${SEL_CARD[0]} .woo-picture-main img`, 'height:100% !important'),
+
     // ⑤ 外壳：logo 灰化（SVG 内的 fill 是硬编码的微博红，只能用滤镜压）。
     //    ⚠️ logo 是**伪装层**（§7.5-G「SpecBase」身份的一部分），不是内容配色 ——
     //    这里保持 grayscale 而不是降饱和：品牌红的识别度必须压掉，属刻意的例外。
@@ -168,4 +179,4 @@ export function l1Css() {
 }
 
 /** 规则条数（探针 / 诊断页断言用；改 `l1Css()` 时记得同步） */
-export const L1_RULE_COUNT = 18;
+export const L1_RULE_COUNT = 20;

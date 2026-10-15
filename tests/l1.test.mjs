@@ -81,6 +81,8 @@ const SIZE_EXEMPT = [
   { sel: /\.wbpro-scroller-item article$/, prop: 'position', val: 'relative', why: '摘要条定位上下文，不占布局' },
   { sel: /\.wbpro-scroller-item \.retweet$/, prop: 'position', val: 'relative', why: '转发摘要条定位上下文，不占布局' },
   { sel: /\[data-spb="stats"\]/, prop: '*', val: '*', why: '我方绝对定位摘要条 —— 不进布局流（§12-B15）' },
+  { sel: /\.woo-picture-main$/, prop: 'max-height', val: '140px', why: '媒体缩略化 —— 登记改高度项（§12-B16，probeMedia 读数定稿 140px）' },
+  { sel: /\.woo-picture-main img$/, prop: 'height', val: '100%', why: 'img 跟随缩后的容器，cover 重算（§12-B16）' },
 ];
 
 function sizeExemptFor(rule, decl) {
@@ -184,6 +186,31 @@ test('L1：A1 互动按钮行 —— 必须 visibility:hidden（空位摘要条�
   // 定位上下文：article 必须 relative（否则摘要条会飘到更外层的定位祖先上去）
   assert.match(css, /\.wbpro-scroller-item article\{position:relative/,
     '缺少 article 的 relative 定位上下文 —— 摘要条的 bottom:0 将以槽位为基准');
+});
+
+test('L1：媒体缩略化（§12-B16，改高度项）—— 数值法 max-height，锚库类，视频不在列', () => {
+  // probeMedia() 真机读数（2026-10-15，11 卡 9 媒体块）：高度全是显式固定像素
+  //（竖图 224 / 横图 126 / 九宫格格子 132.6），img absolute + object-fit:cover 内建
+  // ⇒ 手法 = 容器 max-height 压过显式 height + img height:100% 跟随；只有高于阈值者被压。
+  const css = l1Css();
+  const rules = parseRules(css).filter((r) => r.selector.includes('woo-picture-main'));
+
+  assert.equal(rules.length, 2, '媒体缩略化应恰好两条（容器 + img）');
+  const container = rules.find((r) => !r.selector.includes(' img'));
+  const img = rules.find((r) => r.selector.includes(' img'));
+  assert.ok(container && img, '容器与 img 各一条');
+
+  assert.match(container.selector, /^\.wbpro-scroller-item \.woo-picture-main$/,
+    `${container.selector}：必须卡内限定 + 库类锚（_picTall_/_inlineNum3_ 是哈希 ⛔）`);
+  assert.match(container.decls.find((d) => d.prop === 'max-height').value, /^140px/,
+    '容器 max-height 必须是 140px（用户 2026-10-15 拍板）');
+  assert.match(img.decls.find((d) => d.prop === 'height').value, /^100%/,
+    'img 必须 height:100% 跟随容器（否则 cover 仍按原 224px 框裁切）');
+
+  // ⛔ 视频本轮不动（vjs 内部布局风险）—— 媒体缩略化规则里不得出现 video-js
+  for (const r of rules) {
+    assert.ok(!r.selector.includes('video'), '媒体缩略化不得波及视频（二期单独评估，§12-B16）');
+  }
 });
 
 test('L1：锚点纪律 —— 选择器里不许出现构建哈希或 __yawf_*', () => {
