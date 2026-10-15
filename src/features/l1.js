@@ -141,11 +141,15 @@ export function l1Css() {
     rule(`${SEL_CARD[0]} article`, 'position:relative !important'),
     //    摘要条本体：绝对定位浮在 footer 腾出的空间里，**不进布局流** ⇒ 它的建立 / 更新 /
     //    摘除永远不改卡片高度。整条是 <a>（刻意点击，无 hover —— 用户明确不要 hover）。
+    //    ⚠️ 必须带**不透明底色 + 高 z 序**（2026-10-15 真机反馈：视频卡上摘要条被播放器
+    //    压在下面，半截字看不见）—— 底色取卡片背景令牌，z 序压过播放器自建的层叠上下文；
+    //    视频卡上它盖的只是播放器最底一条的**中间**（左右是微博自己的「观看次数 / 时长」，错开）。
     rule(SUMMARY_SEL[0],
       'position:absolute !important;left:0 !important;right:0 !important;bottom:0 !important'
       + ';display:flex !important;align-items:center !important;justify-content:center !important'
       + ';font-size:13px !important;color:var(--w-sub) !important;opacity:.6 !important'
-      + ';text-decoration:none !important;z-index:1 !important'),
+      + ';background:var(--w-card-background) !important;z-index:30 !important'
+      + ';text-decoration:none !important'),
 
     // ⑤ 外壳：logo 灰化（SVG 内的 fill 是硬编码的微博红，只能用滤镜压）。
     //    ⚠️ logo 是**伪装层**（§7.5-G「SpecBase」身份的一部分），不是内容配色 ——

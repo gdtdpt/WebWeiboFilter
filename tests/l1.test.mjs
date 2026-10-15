@@ -155,6 +155,11 @@ test('L1：A1 互动按钮行 —— footer 规则必须直接子 + 限定卡内
   assert.match(props.bottom, /0/, '摘要条必须贴卡底（footer 腾出的位置）');
   assert.ok(!props['pointer-events'], '摘要条是详情页入口，必须可点（不许 pointer-events:none）');
   assert.match(props.color, /var\(--w-sub\)/, '摘要条颜色必须走主题令牌（禁写死，§12-B9）');
+  // 2026-10-15 真机反馈：视频卡上摘要条被播放器压住 ⇒ 必须不透明底色 + 高 z 序
+  assert.match(props.background, /var\(--w-card-background\)/,
+    '摘要条缺不透明底色 —— 压在视频 / 图片上会不可读（§12-B15）');
+  assert.ok(Number.parseInt(props['z-index'], 10) >= 10,
+    '摘要条 z-index 必须压过播放器自建的层叠上下文（真机 1 不够）');
 
   // 定位上下文：article 必须 relative（否则摘要条会飘到更外层的定位祖先上去）
   assert.match(css, /\.wbpro-scroller-item article\{position:relative/,
