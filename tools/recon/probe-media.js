@@ -298,6 +298,10 @@ function probeMedia2() {
     hasMediaRule: styleEl ? styleEl.textContent.indexOf('max-height:140px') !== -1 : false,
     hasUcol1Rule: styleEl ? styleEl.textContent.indexOf('u-col-1') !== -1 : false,
   };
+  // ⭐ 2026-10-15 补：窗口宽度必须一起记 —— 格子尺寸随窗口宽变（同一条九宫格，
+  //    窄窗口格子 132.6 天然低于阈值、宽窗口格子 340 会被压到 140），
+  //    「有的缩有的不缩」这类宽度相关态，没有 innerWidth 就无法对齐复现条件。
+  var innerWidth = (window.innerWidth || (document.documentElement && document.documentElement.clientWidth) || 0);
 
   // ── ② 找卡（与 v1 同一套视野 + 异常态闸）──────────────────────
   var cards = document.querySelectorAll('.vue-recycle-scroller__item-wrapper > .vue-recycle-scroller__item-view');
@@ -310,7 +314,7 @@ function probeMedia2() {
 
   var boxesMissing = 0;
   var grids = [];
-  var cellStats = { shrunk: 0, natural: 0 };
+  var cellStats = { shrunk: 0, natural: 0, capped: 0, uncapped: 0 };
 
   for (var i = 0; i < cards.length; i++) {
     var slot = cards[i];
@@ -379,7 +383,12 @@ function probeMedia2() {
       // 判「缩没缩」：看 woo-picture-main（第 1 层）的渲染高
       var mainBox = detail.chain[1] ? detail.chain[1].rect.h : detail.img.rect.h;
       detail.shrunk = mainBox > 0 && mainBox <= 141;
+      // ⭐ capped = max-height **真的在压**（渲染高贴着 140），区别于「天然低于阈值」——
+      //   上一轮读数里 132.6 的格子被误算成 shrunk，其实我们的规则根本没参与；
+      //   「有的缩有的不缩」要看的正是 capped 与否的**格子级差异**。
+      detail.capped = detail.shrunk && mainBox >= 139;
       if (detail.shrunk) cellStats.shrunk++; else cellStats.natural++;
+      if (detail.capped) cellStats.capped++; else cellStats.uncapped++;
       row.cells.push(detail);
     }
 
@@ -406,16 +415,28 @@ function probeMedia2() {
   } else if (cellStats.shrunk && cellStats.natural) {
     verdict = '🔴 复现：同一页里缩了 ' + cellStats.shrunk + ' 格、没缩 ' + cellStats.natural + ' 格'
       + ' —— 把整个输出回传，重点看 natural 格的 chain 里内联 style / computed maxHeight 差在哪层';
+  } else if (cellStats.capped && cellStats.uncapped && cellStats.natural) {
+    verdict = '🔴 疑似复现（宽度 ' + innerWidth + '）：capped ' + cellStats.capped + ' 格（真被压到 ~140）'
+      + ' / uncapped ' + cellStats.uncapped + ' 格（天然高于 140 却没被压）—— 这就是「有的缩有的不缩」，回传输出';
   } else if (cellStats.natural) {
-    verdict = '⚠️ ' + cellStats.natural + ' 格全部没缩（样式是新版）—— 规则没命中格子层，回传输出';
+    verdict = '⚠️ ' + cellStats.natural + ' 格全部没缩（宽度 ' + innerWidth
+      + '，含天然低于阈值的格子 ' + cellStats.uncapped + ' 个）—— 规则没命中格子层或都在阈值下，回传输出';
+  } else if (cellStats.capped) {
+    verdict = '✅ ' + cellStats.capped + ' 格全部被 max-height 压到 ~140（宽度 ' + innerWidth
+      + '）—— 均匀压高，这页没问题';
   } else {
-    verdict = '✅ ' + cellStats.shrunk + ' 格全部缩到 ≤141px —— 九宫格在这页没问题（若别页还有，滚过去再跑）';
+    verdict = '✅ ' + cellStats.shrunk + ' 格全部天然低于 140 阈值（宽度 ' + innerWidth
+      + '，max-height 未参与）—— 这页不需要压，若要测压高态请**拉宽窗口**让格子超过 140 再跑';
   }
 
   return {
     verdict: verdict,
     styleCheck: styleCheck,
-    summary: { grids: grids.length, shrunk: cellStats.shrunk, natural: cellStats.natural, boxesMissing: boxesMissing },
+    innerWidth: innerWidth,
+    summary: {
+      grids: grids.length, shrunk: cellStats.shrunk, natural: cellStats.natural,
+      capped: cellStats.capped, uncapped: cellStats.uncapped, boxesMissing: boxesMissing,
+    },
     grids: grids,
     note: '每格 chain[0]=img、[1]=woo-picture-main、[2]=item、[3]=行容器；'
       + '对比 shrunk/natural 两类格子的 inline 与 cs.maxHeight，差异层就是根因',
