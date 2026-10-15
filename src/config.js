@@ -42,6 +42,14 @@ export const DEFAULT_CONFIG = {
      * 非法值回退 90，越界夹回 [40, 400]。
      */
     mediaMaxH: 90,
+    /**
+     * 媒体格子的宽度上限（px）。null = **跟随 mediaMaxH**（正方格，默认）；
+     * 显式数值可压得比高度更窄 ⇒ inline-block 流式自动换行、一行挤进更多列
+     * （probeMedia3 实测 13/13 flow：u-col-3 容器 409.75px 在 90 宽装 4 列、72 宽装 5 列；
+     * u-col-4 容器 546px 在 90 装 5 列、72 装 7 列）。
+     * 控制台 `__spb.appearance({ mediaMaxW: 72 })` + 刷新试值。非法值回退跟随值，越界夹 [40, 400]。
+     */
+    mediaMaxW: null,
     /** 头像处理变体：alpha | beta | gamma（§7.5.5，默认 α） */
     avatarVariant: 'alpha',
     /** 缩略图高度预设：40 | 60 | 80（§7.5.3，默认 60） */

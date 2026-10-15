@@ -71,6 +71,17 @@ function normalizeMaxH(v) {
 }
 
 /**
+ * 宽度上限容错：`mediaMaxW` 缺省（null/undefined）= **跟随 mediaMaxH**（正方格），
+ * 显式数值则独立生效（用户想压得比高度更窄、一行挤更多列时用）。
+ */
+function normalizeMaxW(v, fallback) {
+  if (v == null || v === '') return fallback;
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(400, Math.max(40, Math.round(n)));
+}
+
+/**
  * 生成 L1 的 CSS 文本。逐组说明「为什么它不改高度」。
  *
  * @param {Object} [cfg] 完整配置；`cfg.appearance.mediaCaps` 门控 ⑦/⑦b 三条媒体尺寸规则
@@ -79,7 +90,8 @@ function normalizeMaxH(v) {
  *   - `false` = 三条全摘（归因对照；已实测无黑图）
  *   - `'partial'` = 旧 partial 形态（height:100%+top:auto）—— 🔴 **B17 黑图凶手**，
  *     仅留作法证复现档，**永不进默认路径**
- *   `cfg.appearance.mediaMaxH` = 容器 max-height 上限（默认 {@link DEFAULT_MEDIA_MAX_H}）。
+ *   `cfg.appearance.mediaMaxH` = 容器 max-height 上限（默认 {@link DEFAULT_MEDIA_MAX_H}）；
+ *   `cfg.appearance.mediaMaxW` = 宽度上限（null = 跟随 mediaMaxH，正方格；⑦c，probeMedia3 13/13 flow）。
  * @returns {string}
  */
 export function l1Css(cfg) {
@@ -87,6 +99,7 @@ export function l1Css(cfg) {
   const mc = a.mediaCaps;
   const mode = mc === false ? 'off' : mc === 'partial' ? 'partial' : 'all';
   const capPx = normalizeMaxH(a.mediaMaxH);
+  const capW = normalizeMaxW(a.mediaMaxW, capPx);
   // img 规则的两种形态（B17 结案 2026-10-15：'partial' 形态 = 黑图凶手，'cover' = 修复）：
   // · 'partial'（height:100%+top:auto）—— 🔴 真机实锤致「空 slot 黑图」（'noRow' 档黑、
   //   'onlyCap' 档净，刷新级二分三轮）。机制：微博 JS 裁切给 img 写「尺寸+负偏移」**配对**内联
@@ -116,21 +129,34 @@ export function l1Css(cfg) {
           IMG_RULE)
       : '',
     keep.row
-      ? // ⑦b 单图行容器（2026-10-15 真机验收踩坑修正）：**显式 height 不止 picture-main 一处** ——
-        //    外层行 `.u-col-1` 带着**同样的内联 height:224px**（夹具四份 10/10：卡内 u-col-1 全部
-        //    且仅是单图行，九宫格走 u-col-3/4 且无内联高度）。只压内层 ⇒ 图缩了、行没缩，
-        //    卡片下方留 84px 空白（用户截图实锤）。修法 = 行高 `height:auto` 压掉重复的内联高度，
-        //    让行回归**内容高**（图已被 ⑦ 压到上限内；数值法语义不变）。
-        //    ⚠️ 不能给 u-col-1 也上 max-height —— 万一微博哪天把更高的合法内容放进行里，
-        //    auto 只「去掉重复声明」、不引入新的裁切面，比再压一次 140 更保守。
+      ? // ⑦b+⑦c 单图行容器（一条规则两件事）：
+        //    ⑦b height:auto —— 2026-10-15 真机验收踩坑修正：显式 height 不止 picture-main 一处，
+        //    外层行 `.u-col-1` 带着同样的内联 height:224px，只压内层 ⇒ 图缩了、行没缩，卡下留 84px 空白。
+        //    auto 只「去掉重复声明」、不引入新裁切面，比再压一次上限更保守。
+        //    ⑦c max-width —— **宽度版同一个坑**：行还带内联 `width:168px`（且 class max-width:168），
+        //    不压行宽 ⇒ 格子窄了、行还是 168 宽，右侧留一条 78px 的死白（宽度版 84px 空白）。
+        //    max-width 按规范压过 width（含内联）⇒ 行宽跟随格宽。
         //    作用域同轮收窄（评论面板豁免，见 ⑦ 注）。
         rule(`${SEL_CARD[0]} .wbpro-feed-content .u-col-1,${SEL_CARD[0]} .retweet .u-col-1`,
-          'height:auto !important')
+          `height:auto !important;max-width:${capW}px !important`)
+      : '',
+    keep.row
+      ? // ⑦c 行子格压宽（2026-10-15 用户诉求「一行容纳更多图」，probeMedia3 读数定稿 13/13 flow）：
+        //    行容器 = block + 子格 inline-block（`._item_` 是哈希类 ⛔ 不能锚 ⇒ 用「u-col-N 的直接子」），
+        //    **没有任何固定列数的 grid / nowrap** ⇒ 压窄子格后 inline-block 自动换行挤进更多列
+        //    （实测：u-col-3 容器 409.75px 装下 4×94；u-col-4 容器 546px 装下 5×94）。
+        //    子格宽 136.578 是百分比算出来的（maxWidth:none）⇒ max-width 直接封顶；
+        //    格间距是「容器负 margin + 子格 padding 4px」做的，换行排列自然贴紧。
+        //    ⚠️ 只列 u-col-1/3/4：夹具与真机读数里卡内只有这三种（有夹具守卫测试，微博加新列数时先红）。
+        //    ⛔ 行容器 u-col-3/4 **不动**（无内联宽度，撑满内容区是「多列」的前提）。
+        rule(`${SEL_CARD[0]} .wbpro-feed-content .u-col-1 > *,${SEL_CARD[0]} .wbpro-feed-content .u-col-3 > *,${SEL_CARD[0]} .wbpro-feed-content .u-col-4 > *,${SEL_CARD[0]} .retweet .u-col-1 > *,${SEL_CARD[0]} .retweet .u-col-3 > *,${SEL_CARD[0]} .retweet .u-col-4 > *`,
+          `max-width:${capW}px !important`)
       : '',
     keep.cap
-      ? //    容器压高放最后（⑦ 本体；读数依据与收窄说明见 ⑦ 注释块）。
+      ? //    容器压高 + 压宽放最后（⑦ 本体 + ⑦c；读数依据与收窄说明见 ⑦ 注释块）。
+        //    max-width 压过 picture-main 的内联 width（单图 168 / 多图格 136.578，父子两层声明）。
         rule(`${SEL_CARD[0]} .wbpro-feed-content .woo-picture-main,${SEL_CARD[0]} .retweet .woo-picture-main`,
-          `max-height:${capPx}px !important`)
+          `max-height:${capPx}px !important;max-width:${capW}px !important`)
       : '',
   ].filter(Boolean);
 
@@ -278,4 +304,4 @@ export function l1Css(cfg) {
 }
 
 /** 规则条数（探针 / 诊断页断言用；改 `l1Css()` 时记得同步） */
-export const L1_RULE_COUNT = 22;
+export const L1_RULE_COUNT = 23;
