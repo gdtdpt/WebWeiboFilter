@@ -53,7 +53,7 @@ function parseRules(css) {
   });
 }
 
-/** 会改变盒子尺寸（进而改变项高度）的属性 —— 这一批里一个都不许出现 */
+/** 会改变盒子尺寸（进而改变项高度）的属性 —— 默认一个都不许出现 */
 const SIZE_AFFECTING = [
   'height', 'min-height', 'max-height', 'width', 'min-width', 'max-width',
   'padding', 'padding-top', 'padding-bottom', 'padding-left', 'padding-right',
@@ -62,9 +62,39 @@ const SIZE_AFFECTING = [
   'font-size', 'font-family', 'line-height', 'letter-spacing', 'word-spacing',
   'position', 'top', 'left', 'right', 'bottom', 'overflow', 'flex', 'order',
   // ⚠️ 2026-10-14 补：`display` 此前不在名单里（盲区）—— 而 `display:none` 掉一个**内容块**
-  //    当然是改高度（卡片直接变矮）。现在它会被逐条审查，白名单见下面那条断言。
+  //    当然是改高度（卡片直接变矮）。现在它会被逐条审查，例外见下面的 SIZE_EXEMPT 登记表。
   'display',
 ];
+
+/**
+ * 改尺寸属性的**登记表** —— 每一条都必须「有名有姓有理由」，测试按条复核：
+ *   ① 行内叶子图标的 `display:none`：认证角标 `woo-icon*` / 字体图标 `woo-font--*`
+ *      —— 不占行高，父容器尺寸另有来源 ⇒ 期望零布局变化（⚠️ 期望 ≠ 已验，真机仍要量）。
+ *   ② `article > footer` 的 `display:none`：**A1 互动按钮行**（§12-B15，2026-10-15 用户拍板）
+ *      —— 本项目**第一个登记的改高度项**：卡真实变矮 40px，前提是 §12-B12
+ *      （首帧注入的 CSS 会被算进虚拟列表尺寸缓存 ⇒ 缓存按矮卡建）；真机复验「不留洞」是唯一防线。
+ *   ③ `article` 的 `position:relative`：摘要条的定位上下文 —— relative 只挪坐标原点、
+ *      盒子留在原处 ⇒ 不参与高度。
+ *   ④ `[data-spb="stats"]`（摘要条）整条放行：它是我方**绝对定位浮层**，脱离文档流
+ *      ⇒ 建 / 更新 / 摘除永远不改卡片高度（§12-B15）。
+ */
+const SIZE_EXEMPT = [
+  { sel: /woo-icon|woo-font--/, prop: 'display', val: 'none', why: '行内叶子图标（认证角标 / 字体图标）' },
+  { sel: /article > footer$/, prop: 'display', val: 'none', why: 'A1 互动按钮行 —— 登记改高度项（§12-B15）' },
+  { sel: /\.wbpro-scroller-item article$/, prop: 'position', val: 'relative', why: '摘要条定位上下文，不占布局' },
+  { sel: /\[data-spb="stats"\]/, prop: '*', val: '*', why: '我方绝对定位摘要条 —— 不进布局流（§12-B15）' },
+];
+
+function sizeExemptFor(rule, decl) {
+  const bare = decl.value.replace(/\s*!important$/, '').trim();
+  for (const e of SIZE_EXEMPT) {
+    if (e.prop !== '*' && e.prop !== decl.prop) continue;
+    if (e.val !== '*' && e.val !== bare) continue;
+    if (!e.sel.test(rule.selector)) continue;
+    return e;
+  }
+  return null;
+}
 
 /** 构建哈希（`_logo_18dhr_77` / `_wrap_ecgcn_2`）—— 禁止进选择器 */
 const HASH_RE = /_[a-z0-9]+_[a-z0-9]{4,}_\d+/;
@@ -81,31 +111,54 @@ test('L1：每条规则都带 !important（这是一套覆盖微博主题的样�
   }
 });
 
-test('L1：零高度影响 —— 不许出现任何会改变盒子尺寸的属性', () => {
+test('L1：改尺寸属性必须有 SIZE_EXEMPT 登记 —— 无名有姓才放行', () => {
   for (const r of parseRules(l1Css())) {
     for (const d of r.decls) {
       if (!SIZE_AFFECTING.includes(d.prop)) continue;
-      const bare = d.value.replace(/\s*!important$/, '').trim();
-      // 白名单：**行内叶子图标**的 display:none（认证角标 woo-icon* / 字体图标 woo-font--*）。
-      // 它们不占行高、父容器尺寸另有来源 ⇒ 期望零布局变化；任何**内容块**被 display:none 都会被这里拦住。
-      const whitelisted = d.prop === 'display' && bare === 'none'
-        && (r.selector.includes('woo-icon') || r.selector.includes('woo-font--'));
-      assert.ok(whitelisted,
-        `${r.selector} 用了会改尺寸的属性「${d.prop}: ${bare}」—— 这一批必须零高度影响（§12-B2）`);
+      const exempt = sizeExemptFor(r, d);
+      assert.ok(exempt,
+        `${r.selector} 用了会改尺寸的属性「${d.prop}: ${d.value}」`
+        + ' —— 要么改掉，要么在 SIZE_EXEMPT 登记表里写明理由（§12-B2 / §12-B15）');
     }
   }
 });
 
-test('L1：白名单只放行「行内叶子图标」—— 别拿它给内容块的 display:none 开后门', () => {
-  // 反向守卫：如果哪天黑名单里的 display 白名单被扩成"什么都放行"，这条会红。
+test('L1：SIZE_EXEMPT 的 display:none 只许「行内叶子图标」和「A1 footer」—— 不许开后门', () => {
+  // 反向守卫：如果哪天登记表被扩成"什么都放行"，这条会红。
   const rules = parseRules(l1Css()).filter((r) => r.decls.some(
     (d) => d.prop === 'display' && d.value.replace(/\s*!important$/, '').trim() === 'none'));
 
-  assert.ok(rules.length > 0, 'L1 里应当还有行内图标的 display:none（认证角标 / 归因条「更多」箭头）');
+  assert.ok(rules.length > 0, 'L1 里应当还有 display:none 的登记项（图标 / A1 footer）');
   for (const r of rules) {
-    assert.ok(r.selector.includes('woo-icon') || r.selector.includes('woo-font--'),
-      `${r.selector}：display:none 只允许用在行内叶子图标上（woo-icon* / woo-font--*）`);
+    assert.ok(
+      /woo-icon|woo-font--/.test(r.selector) || /article > footer$/.test(r.selector),
+      `${r.selector}：display:none 只允许用在登记过的目标上（行内叶子图标 / A1 互动按钮行）`);
   }
+});
+
+test('L1：A1 互动按钮行 —— footer 规则必须直接子 + 限定卡内；摘要条必须绝对定位', () => {
+  const css = l1Css();
+
+  // footer 规则恰好一条、直接子、带 SEL_CARD 前缀（页面其它 footer 不能被误伤）
+  const footer = parseRules(css).filter((r) => /article > footer/.test(r.selector));
+  assert.equal(footer.length, 1, 'footer 规则应恰好一条');
+  assert.match(footer[0].selector, /^\.wbpro-scroller-item article > footer$/,
+    `${footer[0].selector}：必须「卡内 + article 直接子」—— 裸锚会误伤转发块内部的 footer 与页面其它 footer`);
+  assert.match(footer[0].decls.find((d) => d.prop === 'display').value, /none/,
+    'footer 必须 display:none（A1 的改高量 = 卡片真实变矮 40px）');
+
+  // 摘要条：绝对定位 + bottom:0（不进布局流 ⇒ 建/更/摘不改卡片高度）+ 可点击（不许 pointer-events:none）
+  const summary = parseRules(css).filter((r) => r.selector.includes('data-spb="stats"'));
+  assert.equal(summary.length, 1, '摘要条规则应恰好一条');
+  const props = Object.fromEntries(summary[0].decls.map((d) => [d.prop, d.value]));
+  assert.match(props.position, /absolute/, '摘要条必须绝对定位 —— 否则它的插入会改卡片高度');
+  assert.match(props.bottom, /0/, '摘要条必须贴卡底（footer 腾出的位置）');
+  assert.ok(!props['pointer-events'], '摘要条是详情页入口，必须可点（不许 pointer-events:none）');
+  assert.match(props.color, /var\(--w-sub\)/, '摘要条颜色必须走主题令牌（禁写死，§12-B9）');
+
+  // 定位上下文：article 必须 relative（否则摘要条会飘到更外层的定位祖先上去）
+  assert.match(css, /\.wbpro-scroller-item article\{position:relative/,
+    '缺少 article 的 relative 定位上下文 —— 摘要条的 bottom:0 将以槽位为基准');
 });
 
 test('L1：锚点纪律 —— 选择器里不许出现构建哈希或 __yawf_*', () => {

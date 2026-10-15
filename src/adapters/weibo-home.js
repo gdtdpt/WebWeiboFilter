@@ -15,6 +15,7 @@
 
 // 判据常量**只从判定核心引**，绝不在适配层复刻 —— 两处各写一份必然漂移。
 import { AD_IMG_HOSTS, matchAdHost } from '../core/ad-detect.js';
+import { isTimeTitle } from '../core/time-text.js';
 
 // ============================================================ 选择器（含回退）
 
@@ -136,6 +137,23 @@ export const SEL_SOCIAL_NAME = ['a.feed-title_a'];
  */
 export const SEL_SOCIAL_MORE = ['.woo-font--angleDown'];
 
+/**
+ * 互动按钮行（A1 的处理对象，§12-B15）—— 「转发 / 评论 / 赞」那一行。
+ *
+ * 结构（A0 取样 + 真机双向确认，§12-B13 ①）：`article` 的**直接子** `footer`，
+ * 39/39 卡恰好 1 个、真机高度恒 **40px**（= A1 的改高量）。
+ *
+ * 为什么用直接子选择器：转发块（`div.retweet`）内部还有一个自己的 footer，
+ * 那是**转发原文的按钮行** —— `article > footer` 天然只命中卡本身的按钮行。
+ * ⚠️ CSS 侧使用时必须带 `SEL_CARD` 前缀（见 `features/l1.js`），避免误伤页面其它 footer。
+ */
+export const SEL_ACTION_BAR = ['article > footer'];
+
+/** 按钮行内的图标 / 计数锚（`woo-*` 设计系统类；用于读出「N 转发 · N 评论 · N 赞」） */
+export const SEL_ACT_RETWEET = ['.woo-font--retweet'];
+export const SEL_ACT_COMMENT = ['.woo-font--comment'];
+export const SEL_ACT_LIKE = ['.woo-like-count'];
+
 /** 答案选择：返回第一个命中的元素 */
 function pick(root, selectors) {
   for (const s of selectors) {
@@ -198,6 +216,68 @@ export function readCardId(card) {
     if (m) return m[1];
   }
   return null;
+}
+
+/**
+ * 从文本里抠出**计数令牌**（原样保留微博的格式：`52` / `3.2万` / `1,234`）。
+ * 抠不到（按钮上没写数字，微博对 0 经常不显示）⇒ 返回 null。
+ */
+function countToken(text) {
+  const t = (text || '').replace(/\s+/g, '');
+  const m = t.match(/\d[\d,]*(?:\.\d+)?万?/);
+  return m ? m[0] : null;
+}
+
+/**
+ * 从按钮行里读一个计数：优先显式计数节点（赞有 `.woo-like-count`），
+ * 否则从图标往上找**第一个有文本的祖先**（转发 / 评论的数字与图标同容器）。
+ * 顶部就停 —— 不会窜到整行 footer 的文本上去（那会把别的数读进来）。
+ */
+function countFromActionBar(footer, iconSel, countSel) {
+  const c = countSel ? footer.querySelector(countSel) : null;
+  if (c) {
+    const t = countToken(c.textContent);
+    if (t) return t;
+  }
+  const icon = footer.querySelector(iconSel);
+  let el = icon && icon.parentElement;
+  while (el && el !== footer) {
+    const t = (el.textContent || '').trim();
+    if (t) return countToken(t);
+    el = el.parentElement;
+  }
+  return null;
+}
+
+/**
+ * 读一张卡的互动按钮行（A1 摘要条的数据源，§12-B15）。
+ *
+ * @param {Element} card  `.wbpro-scroller-item`
+ * @returns {?{footer:Element, counts:{repost:string|null, comment:string|null, like:string|null}, href:string|null}}
+ *   `null` = 这张卡没有 `article > footer`（某些非博文卡型）⇒ 上层**宁可不动**。
+ *   `href` = 详情页链接（取自时间锚点；时间锚点带 `title="YYYY-MM-DD HH:MM"` 双重复核）。
+ */
+export function readActionBar(card) {
+  if (!card || !card.querySelector) return null;
+  const footer = pick(card, SEL_ACTION_BAR);
+  if (!footer) return null;
+
+  let href = null;
+  const time = card.querySelector(SEL_TIME_ANCHOR[0]);
+  if (time && isTimeTitle(time.getAttribute && time.getAttribute('title'))) {
+    const h = time.getAttribute('href');
+    if (h) href = absUrl(h);
+  }
+
+  return {
+    footer,
+    counts: {
+      repost: countFromActionBar(footer, SEL_ACT_RETWEET[0], null),
+      comment: countFromActionBar(footer, SEL_ACT_COMMENT[0], null),
+      like: countFromActionBar(footer, '.woo-like-main', SEL_ACT_LIKE[0]),
+    },
+    href,
+  };
 }
 
 /**

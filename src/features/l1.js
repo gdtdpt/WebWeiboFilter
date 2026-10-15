@@ -30,18 +30,20 @@
  * ⚠️ **已知未做**（都缺确定锚点或属改高度，见 §7.5 与 PROJECT.md §13-M2）：
  *    隐藏右栏（实测窄窗口下**微博自己就收起了**：内容宽 < `--main-width` 1122px ⇒ simple 布局，§12-B9 ⑥；
  *      要落地得先在更宽的窗口复采锚点）· 底部推荐（实测首页不存在）、
- *    媒体缩略化（视频封面同样是"降饱和已做、缩略化待做"）/ 隐藏互动按钮行
- *      （**改高度** ⇒ 第二批，需先验洞）。
+ *    媒体缩略化（视频封面同样是"降饱和已做、缩略化待做"）。
  * ⚠️ 已**不**在"待隐藏"名单里：**社交归因条**（「xx 赞过 / xx 关注了」）——
  *    2026-10-14 用户定调「**保留信息、只做中性化**」（§7.5-E），见下面 ③b。
+ * ✅ 互动按钮行（A1）已落地为「缩略为摘要条」（⑥，改高度项，§12-B15）。
  */
 
 import {
   SEL_CARD, SEL_AVATAR, SEL_OG_TEXT, SEL_RE_TEXT, SEL_TEXTCUT, SEL_MEDIA,
   SEL_VIDEO_PLAYER, SEL_VIDEO_POSTER, SEL_VIDEO_TECH,
   SEL_SOCIAL_ROW, SEL_SOCIAL_NAME, SEL_SOCIAL_MORE,
+  SEL_ACTION_BAR,
 } from '../adapters/weibo-home.js';
 import { SEL_BADGE, SEL_LOGO } from '../adapters/weibo-shell.js';
+import { SUMMARY_SEL } from '../apply/summary.js';
 
 /** 正文容器族（原创正文 / 转发原文 / 截断容器） */
 const TEXT_SEL = [SEL_OG_TEXT[0], SEL_RE_TEXT[0], SEL_TEXTCUT[0]].join(',');
@@ -123,6 +125,28 @@ export function l1Css() {
     // 只走两层，避免把视频控件等深层元素的样式一起杀掉。
     rule(`${SEL_CARD[0]} > *,${SEL_CARD[0]} > * > *`, 'border-radius:0 !important;box-shadow:none !important'),
 
+    // ⑥ A1：互动按钮行 → 缩略为摘要条（2026-10-15 用户拍板方案 ②，§12-B15）
+    //    用户诉求（原话）：「还是希望看到原微博的转发评论列表，但是又不想用 hover
+    //    这种容易被误触的方式」⇒ footer 整行收掉（卡真实矮 40px），由 apply/summary.js
+    //    在原位置叠一条摘要条 <a>（「52 转发 · 3 评论 · 21 赞」），**点一下**直达详情页。
+    //
+    //    ⚠️⚠️ 这是**登记过的改高度项**（`tests/l1.test.mjs` 的 SIZE_EXEMPT 里有名有姓）：
+    //    §12-B12 已验「首帧注入的 CSS 会被算进虚拟列表尺寸缓存」⇒ 缓存按矮卡建 ⇒ 预期无洞，
+    //    但**真机复验「不留洞」仍是唯一防线**（滚动 + 反复上下 + `__spb.off()` 恢复）。
+    //    直接子选择器天然避开转发块内部自己的 footer（§12-B13 ①）。
+    rule(`${SEL_CARD[0]} ${SEL_ACTION_BAR[0]}`, 'display:none !important'),
+    //    摘要条的定位上下文：article 转 relative **不占布局、不参与高度**（relative 只挪坐标原点，
+    //    盒子留在原处）⇒ 零高度影响。⚠️ 真机要顺带看一眼卡内有没有绝对定位的微博元素
+    //    因定位上下文改变而错位（目前已知卡内视频控件锚在自己的 .video-js 上，不受影响）。
+    rule(`${SEL_CARD[0]} article`, 'position:relative !important'),
+    //    摘要条本体：绝对定位浮在 footer 腾出的空间里，**不进布局流** ⇒ 它的建立 / 更新 /
+    //    摘除永远不改卡片高度。整条是 <a>（刻意点击，无 hover —— 用户明确不要 hover）。
+    rule(SUMMARY_SEL[0],
+      'position:absolute !important;left:0 !important;right:0 !important;bottom:0 !important'
+      + ';display:flex !important;align-items:center !important;justify-content:center !important'
+      + ';font-size:13px !important;color:var(--w-sub) !important;opacity:.6 !important'
+      + ';text-decoration:none !important;z-index:1 !important'),
+
     // ⑤ 外壳：logo 灰化（SVG 内的 fill 是硬编码的微博红，只能用滤镜压）。
     //    ⚠️ logo 是**伪装层**（§7.5-G「SpecBase」身份的一部分），不是内容配色 ——
     //    这里保持 grayscale 而不是降饱和：品牌红的识别度必须压掉，属刻意的例外。
@@ -131,4 +155,4 @@ export function l1Css() {
 }
 
 /** 规则条数（探针 / 诊断页断言用；改 `l1Css()` 时记得同步） */
-export const L1_RULE_COUNT = 13;
+export const L1_RULE_COUNT = 16;

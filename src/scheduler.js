@@ -28,6 +28,9 @@ import {
 import { decide, ACTION } from './core/decision.js';
 import { markSlot, markPageAd, clearAll, countMarks } from './apply/mark.js';
 import { applyAbsoluteTimes, restoreTimes, countTimes } from './apply/time.js';
+import {
+  applyActionBarSummary, removeSummaries, countSummaries,
+} from './apply/summary.js';
 
 /** 一次扫描的间隔上限（trailing 去抖），毫秒 */
 export const SCAN_DEBOUNCE_MS = 120;
@@ -186,6 +189,10 @@ export function createScheduler(doc, config, options) {
         const t = applyAbsoluteTimes(card, now, appearanceOn);
         times += appearanceOn ? t.total : 0;
 
+        // ④ A1 摘要条（§12-B15，与时间改写同一套「幂等 + 可逆」模式；档位关着时逐卡摘除）。
+        //    摘要条绝对定位、不占布局 ⇒ 建/更/摘都不改卡片高度（l1.js 的 CSS 保证）。
+        applyActionBarSummary(card, appearanceOn);
+
         if (decision.action === ACTION.HIDE) hidden++;
       }
     }
@@ -252,8 +259,11 @@ export function createScheduler(doc, config, options) {
     // 时间文本是**唯一被改写的 DOM 内容** —— 停管线时一并还原（§7.4 约束 3「可逆」）。
     // （外观 CSS 是 `<style>` 注入，撤销靠刷新或 `appearance()` 重建，见 dev-guide §6.5。）
     const t = restoreTimes(doc);
+    // 摘要条是我方**元素**（clearAll 只摘属性不够）—— 停管线时整页摘除。
+    const sm = removeSummaries(doc);
     stats.times = 0;
-    log('过滤管线已停止，清掉 ' + n + ' 处标记' + (t ? '、还原 ' + t + ' 处时间' : ''));
+    log('过滤管线已停止，清掉 ' + n + ' 处标记' + (t ? '、还原 ' + t + ' 处时间' : '')
+      + (sm ? '、摘除 ' + sm + ' 条摘要' : ''));
     return true;
   }
 
@@ -262,7 +272,8 @@ export function createScheduler(doc, config, options) {
     stop,
     rescan,
     isRunning: () => running,
-    stats: () => Object.assign({}, stats, countMarks(doc), { times: countTimes(doc) }),
+    stats: () => Object.assign({}, stats, countMarks(doc),
+      { times: countTimes(doc), summaries: countSummaries(doc) }),
     recent: () => recent.slice(),
   };
 }
