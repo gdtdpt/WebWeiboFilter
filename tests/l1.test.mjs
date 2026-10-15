@@ -82,7 +82,7 @@ const SIZE_EXEMPT = [
   { sel: /\.wbpro-scroller-item \.retweet$/, prop: 'position', val: 'relative', why: '转发摘要条定位上下文，不占布局' },
   { sel: /\[data-spb="stats"\]/, prop: '*', val: '*', why: '我方绝对定位摘要条 —— 不进布局流（§12-B15）' },
   { sel: /\.woo-picture-main$/, prop: 'max-height', val: `${DEFAULT_MEDIA_MAX_H}px`,
-    why: '媒体缩略化 —— 登记改高度项（§12-B16；上限 = mediaMaxH，默认 110，2026-10-15 用户「再小一点」）；'
+    why: '媒体缩略化 —— 登记改高度项（§12-B16；上限 = mediaMaxH，默认 90，2026-10-15 两轮下调）；'
       + '三轮收窄：作用域限定 feed-content/retweet（评论面板豁免，防误伤评论图）' },
   // cover 全接管形态（B17 结案定稿）：配对内联（尺寸+负偏移）必须**整体**作废 ——
   // partial 形态（只压 height 留 top:auto）= B17 黑图凶手，严禁回潮。

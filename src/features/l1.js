@@ -57,11 +57,11 @@ function rule(selector, body) {
 }
 
 /**
- * 媒体缩略化的默认上限（px）。**审美参数**（用户 2026-10-15「图片还是过大，再小一点」，
- * 从 140 压到 110；横图 126 / 九宫格 132.6 从此不再免疫，尺寸更统一）——
- * 可通过 `appearance.mediaMaxH` 覆盖（`__spb.appearance({ mediaMaxH: 96 })` + 刷新即可试值）。
+ * 媒体缩略化的默认上限（px）。**审美参数**（用户 2026-10-15 两轮下调：140 → 110 → 90，
+ * 「图片还是过大」；横图 126 / 九宫格 132.6 早已入笼，尺寸统一）——
+ * 可通过 `appearance.mediaMaxH` 覆盖（`__spb.appearance({ mediaMaxH: 80 })` + 刷新即可试值）。
  */
-export const DEFAULT_MEDIA_MAX_H = 110;
+export const DEFAULT_MEDIA_MAX_H = 90;
 
 /** 容错：非法值（非数值 / 非正数）回退默认，越界值夹回 [40, 400] */
 function normalizeMaxH(v) {
@@ -239,7 +239,7 @@ export function l1Css(cfg) {
     rule(`${SEL_CARD[0]} .retweet footer`, 'visibility:hidden !important'),
     rule(`${SEL_CARD[0]} .retweet`, 'position:relative !important'),
 
-    // ⑦ 媒体缩略化（2026-10-15 用户拍板；上限现由 `mediaMaxH` 控制，默认 110px，§12-B16/B17）
+    // ⑦ 媒体缩略化（2026-10-15 用户拍板；上限现由 `mediaMaxH` 控制，默认 90px，§12-B16/B17）
     //    —— **改高度项，SIZE_EXEMPT 有登记**
     //    probeMedia() 真机读数（11 卡 9 媒体块）：高度全是**显式固定像素**（竖图容器 224px、
     //    横图 126px、九宫格格子 132.6px），img `position:absolute + object-fit:cover` 内建
