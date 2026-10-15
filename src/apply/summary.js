@@ -63,6 +63,50 @@ export function summaryText(counts) {
 }
 
 /**
+ * 找到一条摘要条对应的**原生评论开关按钮**（§12-B15 四轮定稿：摘要条点击 → 转发）。
+ *
+ * ── 为什么转发而不是跳详情 ──────────────────────────────────────────
+ * 用户诉求升级（2026-10-15）：想看**评论树**，跳详情页太重。probeFeed3() 实测钉死：
+ *   · 原生评论按钮是**开关** —— 程序化 click() 展开评论区（卡高 329.5→548），
+ *     再 click() 收起（548→329.5）—— 增高走 **Vue 合法路径**（组件状态驱动
+ *     scroller 重测，§12-B2 的「改高度留洞」只约束外部 CSS，不约束这条）；
+ *   · `visibility:hidden` 挡得住真手、挡不住程序化 click ⇒ 被隐藏的 footer 仍可代理。
+ * ⇒ 摘要条 = 原生评论区的**可见代理开关**；跳详情的入口由原生「查看全部评论」承担。
+ *
+ * 作用域（刻意收窄，防止误伤转发块的按钮）：
+ *   · 转发块摘要条（.retweet 内）→ `.retweet` 的 footer（每转发块恰 1 个，夹具实测）；
+ *   · 卡自身摘要条（article 直下）→ **article 的直接子 footer**（遍历 children 而不是
+ *     querySelector —— 后者会命中转发块内部那个 footer）。
+ *
+ * @param {Element} bar 摘要条元素（`[data-spb="stats"]`）
+ * @returns {Element|null} 原生评论图标（`.woo-font--comment`）；找不到返回 null
+ */
+export function findCommentToggle(bar) {
+  if (!bar || !bar.closest) return null;
+  const rt = bar.closest('.retweet');
+  if (rt) {
+    const f = rt.querySelector('footer');
+    return f ? f.querySelector('.woo-font--comment') : null;
+  }
+  const article = bar.closest('article');
+  if (!article || !article.children) return null;
+  for (let i = 0; i < article.children.length; i++) {
+    const ch = article.children[i];
+    if (ch.tagName === 'FOOTER') return ch.querySelector('.woo-font--comment');
+  }
+  return null;
+}
+
+/** 摘要条的点击代理：拦下导航，转发给原生评论开关（见 findCommentToggle 的说明） */
+function summaryToggleHandler(e) {
+  if (e && typeof e.preventDefault === 'function') e.preventDefault();
+  if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+  const btn = findCommentToggle(this);
+  if (btn && typeof btn.click === 'function') btn.click();
+  return false;
+}
+
+/**
  * 对一张卡做摘要条的**幂等**建立 / 更新 / 摘除（2026-10-15 起同时管两条：
  * 卡自身的 + 转发原文的 —— 同一套设计语言，用户拍板）。
  *
@@ -109,10 +153,13 @@ function upsert(existing, parent, text, href, out) {
 
   if (existing) {
     const sameHref = (existing.getAttribute('href') || null) === href;
-    if (existing.textContent === text && sameHref) return;   // 已是目标 ⇒ 不写
+    // onclick 幂等接线：每轮都会赋同一个函数引用 ⇒ 不产生自触发，也不怕槽位复用后丢失。
+    // 刻意不写 removeAttribute('onclick') 之类 —— update 路径的目标态就是「已接线」。
+    if (existing.textContent === text && sameHref && existing.onclick === summaryToggleHandler) return;
     existing.textContent = text;
     if (href) existing.setAttribute('href', href);
     else existing.removeAttribute('href');
+    existing.onclick = summaryToggleHandler;
     out.updated++;
     return;
   }
@@ -124,6 +171,11 @@ function upsert(existing, parent, text, href, out) {
   a.setAttribute(SUMMARY_ATTR, SUMMARY_MARK);
   a.textContent = text;
   if (href) a.setAttribute('href', href);
+  // 点击代理（§12-B15 定稿）：onclick 属性赋值（而非 addEventListener）——
+  // ① 幂等（同函数引用反复赋值无副作用）② 断言可读（existing.onclick 直接比对）
+  // ③ 只此一家，不与任何既有监听叠加。href 已由 preventDefault 拦下，仅作降级退路
+  // （代理按钮找不到时 return false 仍然拦导航 ⇒ 不会意外跳详情）。
+  a.onclick = summaryToggleHandler;
   parent.appendChild(a);
   out.created++;
 }

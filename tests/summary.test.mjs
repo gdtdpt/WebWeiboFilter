@@ -16,6 +16,7 @@ import { join } from 'node:path';
 
 import {
   summaryText, applyActionBarSummary, removeSummaries, countSummaries,
+  findCommentToggle,
   SUMMARY_ATTR, SUMMARY_MARK, SUMMARY_SEL, CARD_SUMMARY_SEL, RETWEET_SUMMARY_SEL,
 } from '../src/apply/summary.js';
 import { readActionBar } from '../src/adapters/weibo-home.js';
@@ -272,6 +273,109 @@ test('转发块摘要条：幂等（第二遍全零）+ 计数变化原地更新
   assert.equal(res.updated, 1, '只有转发条该更新');
   assert.equal(card.querySelector(RETWEET_SUMMARY_SEL[0]).textContent,
     '原微博 · 7-11 17:30 · 99 转发 · 8 评论 · 156 赞');
+});
+
+// ── ③′ 点击代理（§12-B15 四轮定稿：摘要条点击 → 转发给原生评论开关）────
+
+test('findCommentToggle：卡自身摘要条 → 卡的直接子 footer；转发块摘要条 → 转发块 footer（互不串）', () => {
+  const { document } = freshDoc();
+  const card = makeCard(document, {
+    repost: '1', comment: '1', like: '1',
+    retweet: { repost: '18', comment: '8', like: '156' },
+  });
+  document.body.appendChild(card);
+  applyActionBarSummary(card, true);
+
+  const cardBar = card.querySelector(CARD_SUMMARY_SEL[0]);
+  const rtBar = card.querySelector(RETWEET_SUMMARY_SEL[0]);
+  const cardFooter = card.querySelector('article > footer');
+  const rtFooter = card.querySelector('.retweet footer');
+
+  const cardIcon = findCommentToggle(cardBar);
+  const rtIcon = findCommentToggle(rtBar);
+  assert.ok(cardIcon, '卡摘要条必须锚到评论开关');
+  assert.ok(rtIcon, '转发摘要条必须锚到评论开关');
+  assert.equal(cardIcon.parentNode.parentNode, cardFooter,
+    '卡摘要条必须锚到**卡自己的** footer（不能误中转发块内部的）');
+  assert.equal(rtIcon.parentNode.parentNode, rtFooter,
+    '转发摘要条必须锚到转发块自己的 footer');
+});
+
+test('findCommentToggle：退化输入给 null（不抛异常）', () => {
+  const { document } = freshDoc();
+  assert.equal(findCommentToggle(null), null);
+  const bare = document.createElement('a');
+  document.body.appendChild(bare);
+  assert.equal(findCommentToggle(bare), null, '不在卡内 / 转发块内的摘要条 ⇒ null');
+});
+
+test('摘要条点击代理：拦截导航 + 转发给原生评论开关（卡自身 / 转发块各自验证）', () => {
+  const { document } = freshDoc();
+  const card = makeCard(document, {
+    repost: '1', comment: '1', like: '1',
+    retweet: { repost: '18', comment: '8', like: '156' },
+  });
+  document.body.appendChild(card);
+  applyActionBarSummary(card, true);
+
+  const fakeEvt = {
+    prevented: 0, stopped: 0,
+    preventDefault() { this.prevented++; },
+    stopPropagation() { this.stopped++; },
+  };
+  function spy(icon) {
+    let calls = 0;
+    icon.click = function () { calls++; };
+    return () => calls;
+  }
+
+  const cardBar = card.querySelector(CARD_SUMMARY_SEL[0]);
+  const cardCount = spy(findCommentToggle(cardBar));
+  const ret = cardBar.onclick.call(cardBar, fakeEvt);
+  assert.equal(ret, false, 'handler 必须 return false（双保险拦导航）');
+  assert.equal(fakeEvt.prevented, 1, '必须 preventDefault（拦下 href 跳详情）');
+  assert.equal(fakeEvt.stopped, 1, '必须 stopPropagation（不惊动微博自己的委托监听）');
+  assert.equal(cardCount(), 1, '必须恰好转发一次 click 给原生评论图标');
+
+  // 转发块摘要条 → 转发块自己的开关
+  const rtBar = card.querySelector(RETWEET_SUMMARY_SEL[0]);
+  const rtCount = spy(findCommentToggle(rtBar));
+  cardBar.onclick.call(cardBar, fakeEvt); // 先把卡侧再点一次，确认 spy 计数独立
+  assert.equal(cardCount(), 2);
+  const evt2 = { preventDefault() {}, stopPropagation() {} };
+  rtBar.onclick.call(rtBar, evt2);
+  assert.equal(rtCount(), 1, '转发摘要条只该触发转发块的开关');
+});
+
+test('摘要条点击代理：锚不到开关时静默放弃（拦导航但不抛错、不瞎点）', () => {
+  const { document } = freshDoc();
+  const card = makeCard(document, { repost: '1', comment: '1', like: '1' });
+  document.body.appendChild(card);
+  applyActionBarSummary(card, true);
+  const bar = card.querySelector(CARD_SUMMARY_SEL[0]);
+  // 拆掉评论图标（模拟未知卡型锚不到）
+  const icon = findCommentToggle(bar);
+  icon.parentNode.parentNode.removeChild(icon.parentNode);
+  const evt = { preventDefault() { evt.pd = true; }, stopPropagation() {} };
+  assert.doesNotThrow(() => bar.onclick.call(bar, evt));
+  assert.ok(evt.pd, '即使放弃转发也必须拦下导航');
+});
+
+test('摘要条创建时就带 onclick；第二遍幂等判定包含 onclick（接线不会丢）', () => {
+  const { document } = freshDoc();
+  const card = makeCard(document, { repost: '1', comment: '1', like: '1' });
+  document.body.appendChild(card);
+  applyActionBarSummary(card, true);
+  const bar = card.querySelector(CARD_SUMMARY_SEL[0]);
+  assert.equal(typeof bar.onclick, 'function', 'create 路径必须接线');
+
+  // 人为拆掉 onclick 模拟「旧版摘要条」—— 槽位复用 / 升级覆盖场景
+  bar.onclick = null;
+  const res = applyActionBarSummary(card, true);
+  assert.equal(res.updated, 1, 'onclick 丢失 ⇒ 必须判为需更新并重新接线');
+  assert.equal(typeof card.querySelector(CARD_SUMMARY_SEL[0]).onclick, 'function', '重新接线成功');
+  // 再跑一遍：已接线 + 内容没变 ⇒ 零写入
+  assert.deepEqual(applyActionBarSummary(card, true), { created: 0, updated: 0, removed: 0 });
 });
 
 // ── ④ 真快照回放 ────────────────────────────────────────────────────────
