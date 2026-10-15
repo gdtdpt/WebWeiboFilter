@@ -56,6 +56,7 @@ async function probeFeed3() {
       if (g.closest('[class*="wbpro-tag-img"]')) continue;
       var r = g.getBoundingClientRect();
       if (r.width && r.width <= 48) continue;         // 小图标
+      var srcFull = g.getAttribute('src') || '';
       var rec = {
         postId: postId,
         natural: g.naturalWidth + 'x' + g.naturalHeight,
@@ -63,8 +64,20 @@ async function probeFeed3() {
         rect: { w: +r.width.toFixed(1), h: +r.height.toFixed(1) },
         inline: clip(g.getAttribute('style') || '', 100),
         cls: clip(clsOf(g), 60),
-        src: clip((g.getAttribute('src') || '').split('/').pop(), 70),
+        src: clip(srcFull.split('/').pop(), 70),
       };
+      // 🔴 占位图判定（2026-10-15 黑图线索）：src 是 data:URI（svg 占位）⇒ 懒加载没换真图
+      //    ⇒ 深色主题下就是一块黑。转储全部属性（找真图 URL 藏在哪个 data-* 里）+ 父链。
+      rec.placeholder = /^data:/.test(srcFull.trim());
+      if (rec.placeholder) {
+        rec.attrs = clip(g.outerHTML, 400);
+      }
+      // 父链两层（第二种图集变体 img.woo-picture-img 的容器是谁，决定我们的规则覆盖不覆盖）
+      var p1 = g.parentElement, p2 = p1 && p1.parentElement;
+      rec.parents = [
+        p1 ? p1.tagName.toLowerCase() + '|' + clsOf(p1) : '',
+        p2 ? p2.tagName.toLowerCase() + '|' + clsOf(p2) : '',
+      ];
       rec.suspect = (!g.complete || g.naturalWidth === 0) && r.width > 0;
       imgs.push(rec);
     }
@@ -98,20 +111,20 @@ async function probeFeed3() {
     try { return /发布你的评论|按热度|按时间/.test(c.textContent || ''); } catch (_e) { return false; }
   }
   try {
-    // ⚠️ 目标选择（2026-10-15 首跑踩坑）：上一版要求「卡 top 在视口内」—— 但卡高 ~900px、
-    //    视口 ~800px，很多滚动位置下可见卡的 top 是负值（卡上半截在视口上方）⇒ 全员落选。
-    //    改为：取第一张「非回收位」卡，直接 scrollIntoView 居中后再测，不依赖当前滚动位置。
+    // ⚠️ 目标选择（2026-10-15 首跑踩坑两连）：① 最初要求「卡 top 在视口内」—— 卡高 ~900px、
+    //    视口 ~800px，可见卡 top 常为负 ⇒ 全员落选；② 二版用 `b.h` —— 但原生 DOMRect 的字段是
+    //    `.height`，`.h` 不存在（probe-media.js 有自建 {w,h} 映射，这里没有）⇒ 永远选不中。
+    //    终版：`b2.height > 0` + 排除回收位，scrollIntoView 居中后测，不依赖滚动位置。
     var target = null;
     for (var ti = 0; ti < cards.length; ti++) {
       var b2 = cards[ti].getBoundingClientRect();
-      if (b2.h > 0 && !(cards[ti].getAttribute('style') || '').includes('-9999')) { target = cards[ti]; break; }
+      if (b2.height > 0 && !(cards[ti].getAttribute('style') || '').includes('-9999')) { target = cards[ti]; break; }
     }
     if (!target) {
       toggle.errors.push('页面上没有非回收位卡 —— 回到信息流再跑');
     } else {
       target.scrollIntoView({ block: 'center' });
       await sleep(400);
-      var b = target.getBoundingClientRect();
       var before = panelOpen(target);
       var btn = target.querySelector('article > footer .woo-font--comment');
       if (!btn) {
