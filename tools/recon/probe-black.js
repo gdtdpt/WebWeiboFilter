@@ -185,4 +185,106 @@
 
   console.log('[spb-black] 就绪。黑图在屏上时：① spbAB("filterOff") 看 A/B；② copy(JSON.stringify(await probeBlack(), null, 2))');
   console.log('[spb-black] v2：copy(JSON.stringify(await spbDecodeAll(), null, 2)) 重下视口内全部图并解码读亮度（分辨「源图黑」vs「绘制黑」）；单张用 spbDecode("图片地址")');
+
+  // ── v3：spbDeep($0) —— 黑块解剖 ──────────────────────────────────────────
+  // 背景：右键黑块没有「在新标签页中打开图片」⇒ 黑块不是 <img>；probeBlack 只采
+  // woo-picture-img，对漫剧卡等新卡型是盲区。此函数对「右键→检查选中的那个元素」
+  // 做全解剖：本体 / 我们哪些规则打在它及其祖先上 / 子树每层背景与 img 状态 /
+  // 中心点最顶层元素（解释右键菜单为何没有图片项）。
+  function nodeSnap(n, depth, withStyle) {
+    if (!n || n.nodeType !== 1) return null;
+    var r = n.getBoundingClientRect();
+    var c = W.getComputedStyle(n);
+    var o = {
+      tag: n.tagName.toLowerCase(),
+      cls: String(n.className || '').slice(0, 110),
+      rect: { w: Math.round(r.width), h: Math.round(r.height), top: Math.round(r.top), left: Math.round(r.left) },
+      bg: c.backgroundColor,
+      bgImg: c.backgroundImage !== 'none' ? c.backgroundImage.slice(0, 90) : undefined,
+      op: c.opacity, vis: c.visibility, disp: c.display, ovf: c.overflow,
+    };
+    if (withStyle && n.getAttribute && n.getAttribute('style')) o.inline = n.getAttribute('style').slice(0, 140);
+    if (depth > 0) return o;
+    // 深度 0 的节点：附加子元素概览
+    o.children = [];
+    for (var i = 0; i < n.children.length && i < 12; i++) {
+      o.children.push(nodeSnap(n.children[i], 1));
+    }
+    return o;
+  }
+
+  function matchedSpbRules(el) {
+    // 找我们的样式表（style#spb-style），逐条试 el 及其祖先是否命中
+    var sheet = null;
+    for (var i = 0; i < D.styleSheets.length; i++) {
+      var s = D.styleSheets[i];
+      if (s.ownerNode && s.ownerNode.id === 'spb-style') { sheet = s; break; }
+    }
+    if (!sheet) return { err: '没找到 style#spb-style' };
+    var chain = [];
+    for (var n = el; n && n.nodeType === 1; n = n.parentElement) chain.push(n);
+    var hits = [];
+    try {
+      for (var j = 0; j < sheet.cssRules.length; j++) {
+        var rule = sheet.cssRules[j];
+        if (!rule.selectorText || /:root/.test(rule.selectorText)) continue;
+        for (var k = 0; k < chain.length; k++) {
+          var m = false;
+          try { m = chain[k].matches(rule.selectorText); } catch (e2) { break; }
+          if (m) {
+            hits.push({
+              sel: rule.selectorText.slice(0, 120),
+              on: k === 0 ? '本体' : '祖辈+' + k + '(' + chain[k].tagName.toLowerCase() + '.' + String(chain[k].className || '').split(' ')[0].slice(0, 40) + ')',
+              css: rule.style && rule.style.cssText ? rule.style.cssText.slice(0, 110) : '',
+            });
+            break;
+          }
+        }
+      }
+    } catch (e) { return { err: String(e).slice(0, 80), partial: hits }; }
+    return hits;
+  }
+
+  function treeSnap(n, depth, maxDepth, budget) {
+    if (!n || n.nodeType !== 1 || depth > maxDepth || budget.n <= 0) return null;
+    budget.n--;
+    var o = nodeSnap(n, depth === 0 ? 0 : 1);
+    if (n.tagName === 'IMG') {
+      o.img = {
+        natural: n.naturalWidth + 'x' + n.naturalHeight,
+        complete: n.complete,
+        curSrc: String(n.currentSrc || n.src || '').slice(0, 90),
+        isPlaceholder: /^data:/.test(n.currentSrc || n.src || ''),
+      };
+    }
+    var kids = [];
+    for (var i = 0; i < n.children.length; i++) {
+      var k = treeSnap(n.children[i], depth + 1, maxDepth, budget);
+      if (k) kids.push(k);
+    }
+    if (kids.length) o.kids = kids;
+    return o;
+  }
+
+  W.spbDeep = function (el) {
+    if (!el || !el.getBoundingClientRect) return '用法：右键黑块 → 检查 → Console 里跑 copy(JSON.stringify(spbDeep($0), null, 2))';
+    var out = { script: 'specbase-deep-v3', ts: Date.now() };
+    out.self = nodeSnap(el, 0, true);
+    out.spbRulesOnSelfAndAncestors = matchedSpbRules(el);
+    var r = el.getBoundingClientRect();
+    var cx = r.left + r.width / 2, cy = Math.max(0, Math.min(W.innerHeight - 1, r.top + r.height / 2));
+    var top = D.elementFromPoint(cx, cy);
+    out.elementAtCenter = top ? { tag: top.tagName.toLowerCase(), cls: String(top.className || '').slice(0, 100) } : null;
+    out.ancestors = [];
+    var p = el.parentElement, hops = 0;
+    while (p && p.nodeType === 1 && hops < 8) {
+      out.ancestors.push(nodeSnap(p, 1, true));
+      if (/(wbpro-scroller-item|homeWrap)/i.test(p.className || '') || p.id === 'homeWrap') break;
+      p = p.parentElement; hops++;
+    }
+    out.tree = treeSnap(el, 0, 5, { n: 60 });
+    return out;
+  };
+
+  console.log('[spb-black] v3：右键黑块 → 检查 → copy(JSON.stringify(spbDeep($0), null, 2))（本体+我方规则命中+子树解剖+顶层元素）');
 })();
