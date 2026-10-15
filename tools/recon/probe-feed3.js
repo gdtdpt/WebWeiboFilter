@@ -68,6 +68,7 @@ async function probeFeed3() {
       };
       // 🔴 占位图判定（2026-10-15 黑图线索）：src 是 data:URI（svg 占位）⇒ 懒加载没换真图
       //    ⇒ 深色主题下就是一块黑。转储全部属性（找真图 URL 藏在哪个 data-* 里）+ 父链。
+      //    ⚠️ 占位图也计入 suspect —— 它 complete=true / natural>0，旧判定会漏（黑图首恶）。
       rec.placeholder = /^data:/.test(srcFull.trim());
       if (rec.placeholder) {
         rec.attrs = clip(g.outerHTML, 400);
@@ -78,7 +79,8 @@ async function probeFeed3() {
         p1 ? p1.tagName.toLowerCase() + '|' + clsOf(p1) : '',
         p2 ? p2.tagName.toLowerCase() + '|' + clsOf(p2) : '',
       ];
-      rec.suspect = (!g.complete || g.naturalWidth === 0) && r.width > 0;
+      rec.suspect = rec.placeholder
+        || ((!g.complete || g.naturalWidth === 0) && r.width > 0);
       imgs.push(rec);
     }
   }
@@ -104,54 +106,62 @@ async function probeFeed3() {
   }
   out.rail = rail;
 
-  // ── ③ 评论 toggle 测试（对第一张可见卡）────────────────────────
-  // 面板出现判据：卡内出现「发布你的评论 / 按热度 / 按时间」等评论区特征文本。
+  // ── ③ 评论 toggle 测试（对视口中央的卡）────────────────────────
+  // 🔴 展开判据（2026-10-15 三跑误报修正）：不要猜面板文案 —— 用**结构判据**：
+  //    卡内出现 textarea / contenteditable（评论输入框）+ 卡高增长。旧版猜
+  //    「发布你的评论/按热度」文案，猜错就是假阴性。
+  //    ⚠️ 竞态：scrollIntoView 会触发虚拟列表换槽 ⇒ 点前**重选**离视口中心最近的卡。
   var toggle = { clicked: 0, errors: [] };
-  function panelOpen(c) {
-    try { return /发布你的评论|按热度|按时间/.test(c.textContent || ''); } catch (_e) { return false; }
+  function panelProbe(c) {
+    var inputs = [];
+    try { inputs = c.querySelectorAll('textarea, [contenteditable="true"]'); } catch (_e) { /* 忽略 */ }
+    return {
+      open: inputs.length > 0,
+      h: +(c.getBoundingClientRect().height || 0).toFixed(1),
+      inputTag: inputs.length ? inputs[0].tagName.toLowerCase() + '|' + clsOf(inputs[0]) : '',
+    };
+  }
+  function pickCenterCard() {
+    var best = null, bestDist = Infinity, mid = (window.innerHeight || 800) / 2;
+    for (var pi = 0; pi < cards.length; pi++) {
+      var rc = cards[pi].getBoundingClientRect();
+      if (!(rc.height > 0)) continue;
+      if ((cards[pi].getAttribute('style') || '').includes('-9999')) continue;
+      var dist = Math.abs(rc.top + rc.height / 2 - mid);
+      if (dist < bestDist) { bestDist = dist; best = cards[pi]; }
+    }
+    return best;
   }
   try {
-    // ⚠️ 目标选择（2026-10-15 首跑踩坑两连）：① 最初要求「卡 top 在视口内」—— 卡高 ~900px、
-    //    视口 ~800px，可见卡 top 常为负 ⇒ 全员落选；② 二版用 `b.h` —— 但原生 DOMRect 的字段是
-    //    `.height`，`.h` 不存在（probe-media.js 有自建 {w,h} 映射，这里没有）⇒ 永远选不中。
-    //    终版：`b2.height > 0` + 排除回收位，scrollIntoView 居中后测，不依赖滚动位置。
-    var target = null;
-    for (var ti = 0; ti < cards.length; ti++) {
-      var b2 = cards[ti].getBoundingClientRect();
-      if (b2.height > 0 && !(cards[ti].getAttribute('style') || '').includes('-9999')) { target = cards[ti]; break; }
-    }
+    var target = pickCenterCard();
     if (!target) {
       toggle.errors.push('页面上没有非回收位卡 —— 回到信息流再跑');
     } else {
       target.scrollIntoView({ block: 'center' });
       await sleep(400);
-      var before = panelOpen(target);
+      target = pickCenterCard() || target;   // 换槽后重选
+      toggle.before = panelProbe(target);
       var btn = target.querySelector('article > footer .woo-font--comment');
       if (!btn) {
         toggle.errors.push('没找到评论按钮（article > footer .woo-font--comment）');
       } else {
-        toggle.before = before;
         btn.click(); toggle.clicked++;
-        await sleep(400);
-        toggle.afterFirstClick = panelOpen(target);
-        // 展开面板 class 链（摘要条避让规则要用）：找「发布你的评论」输入区向上 5 层
-        if (toggle.afterFirstClick && !toggle.before) {
-          var panel = null, divs = target.querySelectorAll('div, textarea');
-          for (var pi = 0; pi < divs.length; pi++) {
-            if (/发布你的评论/.test(divs[pi].getAttribute && (divs[pi].getAttribute('placeholder') || divs[pi].getAttribute('title') || ''))) { panel = divs[pi]; break; }
-          }
-          if (panel) {
-            var pc = [], p = panel, pd = 0;
+        await sleep(500);
+        toggle.afterFirstClick = panelProbe(target);
+        // 展开面板 class 链（摘要条避让规则要用）：输入框向上 5 层
+        if (toggle.afterFirstClick.open && !toggle.before.open) {
+          var input = target.querySelector('textarea, [contenteditable="true"]');
+          if (input) {
+            var pc = [], p = input, pd = 0;
             while (p && p !== target && pd < 6) { pc.push(p.tagName.toLowerCase() + '|' + clsOf(p)); p = p.parentElement; pd++; }
             toggle.panelChain = pc;
           }
         }
         btn.click(); toggle.clicked++;
-        await sleep(400);
-        toggle.afterSecondClick = panelOpen(target);
-        // 第二次后若还开着 → 再等一下（面板动画）并记录最终态
+        await sleep(500);
+        toggle.afterSecondClick = panelProbe(target);
         await sleep(300);
-        toggle.finalState = panelOpen(target);
+        toggle.finalState = panelProbe(target);
       }
     }
   } catch (e) {
@@ -161,12 +171,14 @@ async function probeFeed3() {
 
   // ── 判词 ─────────────────────────────────────────────────────
   var parts = [];
-  parts.push('黑图可疑 ' + out.imgScan.suspect + '/' + out.imgScan.total);
+  parts.push('黑图/占位可疑 ' + out.imgScan.suspect + '/' + out.imgScan.total);
   parts.push('右栏样本 ' + out.rail.length);
   if (toggle.errors.length) parts.push('toggle 未完成：' + toggle.errors[0]);
-  else if (toggle.afterFirstClick && !toggle.afterSecondClick) parts.push('toggle=✅ 原生是开关（二click收起）');
-  else if (toggle.afterFirstClick && toggle.afterSecondClick) parts.push('toggle=❌ 原生单向展开（二click无效）');
-  else if (!toggle.afterFirstClick) parts.push('toggle=⚠️ 第一次点击没展开（看 toggle.errors）');
+  else if (toggle.afterFirstClick.open && !toggle.afterSecondClick.open) parts.push('toggle=✅ 原生是开关（二click收起）');
+  else if (toggle.afterFirstClick.open && toggle.afterSecondClick.open) parts.push('toggle=❌ 原生单向展开（二click无效）');
+  else parts.push('toggle=⚠️ 两次点击都没展开（结构判据 textarea/contenteditable 未出现；'
+    + '卡高 before=' + toggle.before.h + ' → after1=' + toggle.afterFirstClick.h
+    + ' → after2=' + toggle.afterSecondClick.h + '）');
   out.verdict = parts.join('；') + ' —— copy(await probeFeed3()) 已进剪贴板，整个回传';
   return JSON.stringify(out, null, 1);
 }
