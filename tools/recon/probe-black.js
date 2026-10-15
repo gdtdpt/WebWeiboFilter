@@ -268,8 +268,38 @@
 
   W.spbDeep = function (el) {
     if (!el || !el.getBoundingClientRect) return '用法：右键黑块 → 检查 → Console 里跑 copy(JSON.stringify(spbDeep($0), null, 2))';
-    var out = { script: 'specbase-deep-v3', ts: Date.now() };
+    var out = { script: 'specbase-deep-v4', ts: Date.now() };
     out.self = nodeSnap(el, 0, true);
+    // 本体与父级的全部属性（data-* 里可能藏着图片 URL / 状态）
+    out.selfAttrs = el.attributes ? [].slice.call(el.attributes).map(function (a) { return a.name + '=' + String(a.value).slice(0, 80); }) : [];
+    if (el.parentElement) {
+      out.parentAttrs = [].slice.call(el.parentElement.attributes).map(function (a) { return a.name + '=' + String(a.value).slice(0, 80); });
+    }
+    // 兄弟层：健康的格子 = img+slot 共存；黑格 = 只有 slot。兄弟里有没有 img 一眼定案
+    out.siblings = [];
+    if (el.parentElement) {
+      for (var s = 0; s < el.parentElement.children.length; s++) {
+        out.siblings.push(nodeSnap(el.parentElement.children[s], 1, false));
+      }
+    }
+    // 整卡统计：多少个 picture-main、多少个没挂 img（同卡同时间 ⇒ 别的格子的图都好着 = 单图请求失败实锤）
+    var card = el.closest ? el.closest('.wbpro-scroller-item') : null;
+    if (card) {
+      var mains = card.querySelectorAll('.woo-picture-main');
+      var imgLess = [];
+      for (var i = 0; i < mains.length; i++) {
+        if (!mains[i].querySelector('img')) {
+          var rr = mains[i].getBoundingClientRect();
+          imgLess.push({ w: Math.round(rr.width), h: Math.round(rr.height), top: Math.round(rr.top) });
+        }
+      }
+      var ta = card.querySelector('a[title^="20"]');
+      out.card = {
+        postId: ta ? (ta.getAttribute('href') || '').split('?')[0].split('/').pop() : null,
+        pictureMainCount: mains.length,
+        imgLessMains: imgLess,
+      };
+    }
     out.spbRulesOnSelfAndAncestors = matchedSpbRules(el);
     var r = el.getBoundingClientRect();
     var cx = r.left + r.width / 2, cy = Math.max(0, Math.min(W.innerHeight - 1, r.top + r.height / 2));
@@ -286,5 +316,59 @@
     return out;
   };
 
+  // ── v4：spbWatch —— 黑格「速率」统计（控住信息流随机性）──────────────────
+  // 「关脚本翻几页没黑图」控不了变量（内容随机）。改比 **发生率**：开着脚本挂上
+  // 监视翻几分钟 → stop 读数；TM 关掉我们脚本再粘贴本脚本挂上翻几分钟 → 对比。
+  // 判读：开/关发生率同量级 ⇒ 微博自己丢图（与本项目无关，结案）；
+  //       开着显著更高 ⇒ 真和我们相关，再回头挖。
+  var watch = { timer: null, obs: 0, imgLessTotal: 0, maxConcurrent: 0, samples: [] };
+
+  function scanImgLess() {
+    var mains = D.querySelectorAll('.woo-picture-main');
+    var bad = [];
+    for (var i = 0; i < mains.length; i++) {
+      if (mains[i].querySelector('img')) continue;
+      var r = mains[i].getBoundingClientRect();
+      if (!(r.top < W.innerHeight && r.bottom > 0 && r.width > 0)) continue; // 只看视口内的
+      var card = mains[i].closest('.wbpro-scroller-item');
+      var ta = card && card.querySelector('a[title^="20"]');
+      bad.push({
+        postId: ta ? (ta.getAttribute('href') || '').split('?')[0].split('/').pop() : null,
+        rect: { w: Math.round(r.width), h: Math.round(r.height), top: Math.round(r.top) },
+      });
+    }
+    return bad;
+  }
+
+  W.spbWatch = {
+    start: function () {
+      if (watch.timer) return '已在监视中';
+      watch.obs = 0; watch.imgLessTotal = 0; watch.maxConcurrent = 0; watch.samples = [];
+      watch.timer = W.setInterval(function () {
+        var bad = scanImgLess();
+        watch.obs++;
+        watch.imgLessTotal += bad.length;
+        if (bad.length > watch.maxConcurrent) watch.maxConcurrent = bad.length;
+        for (var i = 0; i < bad.length && watch.samples.length < 12; i++) {
+          watch.samples.push({ at: new Date().toISOString().slice(11, 19), postId: bad[i].postId, rect: bad[i].rect });
+        }
+      }, 2000);
+      return '监视已启动（每 2s 扫视口内 img-less 格子）。正常刷微博，几分钟后 spbWatch.stop()';
+    },
+    stop: function () {
+      if (!watch.timer) return '没在监视';
+      W.clearInterval(watch.timer); watch.timer = null;
+      return {
+        observations: watch.obs,
+        imgLessTotal: watch.imgLessTotal,
+        maxConcurrent: watch.maxConcurrent,
+        rate: watch.obs ? +(watch.imgLessTotal / watch.obs).toFixed(2) : 0,
+        samples: watch.samples,
+      };
+    },
+    now: function () { return { imgLessInViewport: scanImgLess() }; },
+  };
+
   console.log('[spb-black] v3：右键黑块 → 检查 → copy(JSON.stringify(spbDeep($0), null, 2))（本体+我方规则命中+子树解剖+顶层元素）');
+  console.log('[spb-black] v4：spbWatch.start() 正常刷微博几分钟后 spbWatch.stop() —— 黑格发生率统计（脚本开/关各测一轮对比）');
 })();
