@@ -19,7 +19,7 @@
 import { loadConfig, saveConfig } from './config.js';
 import { applyL0 } from './features/l0.js';
 import { appearanceCss } from './features/appearance.js';
-import { ensureStyle, composeCss, FILTER_CSS } from './apply/style.js';
+import { ensureStyle, composeCss, FILTER_CSS, removeStyle } from './apply/style.js';
 import { createScheduler } from './scheduler.js';
 import { readCardSignals } from './adapters/weibo-home.js';
 import { decide, ACTION } from './core/decision.js';
@@ -154,15 +154,21 @@ if (page) {
       rescan: () => (scheduler ? scheduler.rescan() : null),
       stats: () => (scheduler ? scheduler.stats() : null),
       recent: () => (scheduler ? scheduler.recent() : []),
-      /** 关掉过滤：清掉全部标记并停止观测 —— 用来肉眼确认「可逆」 */
+      /** 关掉过滤：清掉全部标记、停止观测、**撤掉注入的样式表** —— 用来肉眼确认「可逆」 */
       off: () => {
-        if (!scheduler) return 0;
-        scheduler.stop();
-        filterStarted = false;
-        return true;
+        // ⚠️ 2026-10-15 真机反馈修正：L1 落地改高度项（媒体缩略化）后，只清标记不够 ——
+        //    媒体缩小 / footer 隐藏全是**纯 CSS**，样式表不走 `removeStyle` 就永远不恢复
+        //    （用户实测 `__spb.off()` 后图片仍是缩小的）。过滤 CSS 一并撤没有副作用：
+        //    stop() 已清完全部标记，过滤规则此时无东西可表达。
+        const stopped = scheduler ? scheduler.stop() : false;
+        if (scheduler) filterStarted = false;
+        const styleGone = removeStyle(document);
+        if (stopped) log('过滤管线与注入样式已全部撤除（虚拟列表高度缓存按首帧建的，建议刷新一次）');
+        return Boolean(stopped || styleGone);
       },
-      /** 重新打开过滤 */
+      /** 重新打开过滤：先重建样式表（off 撤掉了），再起管线 */
       on: () => {
+        ensureStyle(document, fullCss(readConfig()));
         startFilter();
         return Boolean(scheduler && scheduler.isRunning());
       },

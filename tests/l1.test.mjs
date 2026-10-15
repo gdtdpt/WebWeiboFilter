@@ -83,6 +83,9 @@ const SIZE_EXEMPT = [
   { sel: /\[data-spb="stats"\]/, prop: '*', val: '*', why: '我方绝对定位摘要条 —— 不进布局流（§12-B15）' },
   { sel: /\.woo-picture-main$/, prop: 'max-height', val: '140px', why: '媒体缩略化 —— 登记改高度项（§12-B16，probeMedia 读数定稿 140px）' },
   { sel: /\.woo-picture-main img$/, prop: 'height', val: '100%', why: 'img 跟随缩后的容器，cover 重算（§12-B16）' },
+  { sel: /\.wbpro-scroller-item \.u-col-1$/, prop: 'height', val: 'auto',
+    why: '单图行容器带着与图相同的内联 height:224（2026-10-15 真机踩坑：只压内层留 84px 空白）'
+      + ' —— auto 压掉重复声明、行回归内容高，不引入新裁切面（§12-B16）' },
 ];
 
 function sizeExemptFor(rule, decl) {
@@ -192,6 +195,9 @@ test('L1：媒体缩略化（§12-B16，改高度项）—— 数值法 max-heig
   // probeMedia() 真机读数（2026-10-15，11 卡 9 媒体块）：高度全是显式固定像素
   //（竖图 224 / 横图 126 / 九宫格格子 132.6），img absolute + object-fit:cover 内建
   // ⇒ 手法 = 容器 max-height 压过显式 height + img height:100% 跟随；只有高于阈值者被压。
+  // 🔴 真机验收修正（同日）：**显式 height 有两处** —— 外层单图行 `.u-col-1` 带着同样的
+  //    内联 height:224px，只压内层 woo-picture-main ⇒ 图缩了、卡片没矮、留 84px 空白。
+  //    第三条规则 `u-col-1{height:auto}` 压掉重复声明（夹具 10/10：卡内 u-col-1 全部且仅是单图行）。
   const css = l1Css();
   const rules = parseRules(css).filter((r) => r.selector.includes('woo-picture-main'));
 
@@ -207,8 +213,14 @@ test('L1：媒体缩略化（§12-B16，改高度项）—— 数值法 max-heig
   assert.match(img.decls.find((d) => d.prop === 'height').value, /^100%/,
     'img 必须 height:100% 跟随容器（否则 cover 仍按原 224px 框裁切）');
 
+  // ⑦b 单图行容器：必须存在、必须 height:auto（不是再压一次 140）、必须卡内限定
+  const row = parseRules(css).find((r) => /^\.wbpro-scroller-item \.u-col-1$/.test(r.selector));
+  assert.ok(row, '缺单图行规则 u-col-1{height:auto} —— 只压内层会留 84px 空白（真机实锤）');
+  assert.match(row.decls.find((d) => d.prop === 'height').value, /^auto/,
+    'u-col-1 必须用 height:auto（去掉重复的内联高度），不得引入新裁切面');
+
   // ⛔ 视频本轮不动（vjs 内部布局风险）—— 媒体缩略化规则里不得出现 video-js
-  for (const r of rules) {
+  for (const r of [...rules, row]) {
     assert.ok(!r.selector.includes('video'), '媒体缩略化不得波及视频（二期单独评估，§12-B16）');
   }
 });
@@ -483,4 +495,27 @@ test('L1：视频降饱和的选择器在真实快照上确实命中（不是空
 
   assert.ok(sawFeedVideo > 0,
     '所有夹具里都没有卡内视频 ⇒ 这条守卫空转（视频锚点可能已失效，或夹具换了一批）');
+});
+
+test('L1：单图行规则确实命中真快照，且 u-col-1 在卡内全部是「带内联高度的单图行」（§12-B16 真机修正的不变量）', { skip: skipVideo }, () => {
+  // 起因（2026-10-15 真机验收）：图片缩了、卡片没矮、图下留 84px 空白 ——
+  // 根因是显式 height 有两处（.woo-picture-main 与外层行 .u-col-1 各一份内联 height:224px）。
+  // 这条测试焊住两个不变量：
+  //   ① `.wbpro-scroller-item .u-col-1` 在真快照里真的命中（规则不空转）；
+  //   ② 卡内每个 u-col-1 都「含 woo-picture-main + 自带内联 height」——
+  //      若微博哪天把 u-col-1 挪作他用，height:auto 会误伤 ⇒ 这里先红。
+  let sawRow = 0;
+  for (const file of fixtures) {
+    const { document } = parseHTML(readFileSync(join(FIXTURE_DIR, file), 'utf8'));
+    for (const row of document.querySelectorAll('.wbpro-scroller-item .u-col-1')) {
+      sawRow++;
+      assert.ok(row.querySelector('.woo-picture-main'),
+        `${file}: 卡内 u-col-1 不含 woo-picture-main —— 它不再专属单图行，height:auto 会误伤，需重评`);
+      const inline = row.getAttribute('style') || '';
+      assert.match(inline, /height/,
+        `${file}: 单图行 u-col-1 没有内联 height 了 —— 「重复声明」前提被打破（height:auto 或已无必要，或结构变了）`);
+    }
+  }
+  assert.ok(sawRow > 0,
+    '所有夹具里都没有卡内 u-col-1 ⇒ 规则空转（单图行锚点可能已失效，或夹具换了一批）');
 });

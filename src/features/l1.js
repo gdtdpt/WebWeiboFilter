@@ -170,6 +170,14 @@ export function l1Css() {
     //    ⚠️ 真机复验「不留洞」是唯一防线（改高度项纪律）；**视频不动**（vjs 内部布局，二期单独评估）。
     rule(`${SEL_CARD[0]} .woo-picture-main`, 'max-height:140px !important'),
     rule(`${SEL_CARD[0]} .woo-picture-main img`, 'height:100% !important'),
+    // ⑦b 单图行容器（2026-10-15 真机验收踩坑修正）：**显式 height 不止 picture-main 一处** ——
+    //    外层行 `.u-col-1` 带着**同样的内联 height:224px**（夹具四份 10/10：卡内 u-col-1 全部
+    //    且仅是单图行，九宫格走 u-col-3/4 且无内联高度）。只压内层 ⇒ 图缩了、行没缩，
+    //    卡片下方留 84px 空白（用户截图实锤）。修法 = 行高 `height:auto` 压掉重复的内联高度，
+    //    让行回归**内容高**（已被 ⑦ 压到 ≤140 的图；横图 126 时 auto=126，数值法语义不变）。
+    //    ⚠️ 不能给 u-col-1 也上 max-height:140 —— 万一微博哪天把更高的合法内容放进行里，
+    //    auto 只「去掉重复声明」、不引入新的裁切面，比再压一次 140 更保守。
+    rule(`${SEL_CARD[0]} .u-col-1`, 'height:auto !important'),
 
     // ⑤ 外壳：logo 灰化（SVG 内的 fill 是硬编码的微博红，只能用滤镜压）。
     //    ⚠️ logo 是**伪装层**（§7.5-G「SpecBase」身份的一部分），不是内容配色 ——
@@ -179,4 +187,4 @@ export function l1Css() {
 }
 
 /** 规则条数（探针 / 诊断页断言用；改 `l1Css()` 时记得同步） */
-export const L1_RULE_COUNT = 20;
+export const L1_RULE_COUNT = 21;
