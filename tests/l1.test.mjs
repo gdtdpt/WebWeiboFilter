@@ -81,14 +81,17 @@ const SIZE_EXEMPT = [
   { sel: /\.wbpro-scroller-item article$/, prop: 'position', val: 'relative', why: '摘要条定位上下文，不占布局' },
   { sel: /\.wbpro-scroller-item \.retweet$/, prop: 'position', val: 'relative', why: '转发摘要条定位上下文，不占布局' },
   { sel: /\[data-spb="stats"\]/, prop: '*', val: '*', why: '我方绝对定位摘要条 —— 不进布局流（§12-B15）' },
-  { sel: /\.woo-picture-main$/, prop: 'max-height', val: '140px', why: '媒体缩略化 —— 登记改高度项（§12-B16，probeMedia 读数定稿 140px）' },
+  { sel: /\.woo-picture-main$/, prop: 'max-height', val: '140px',
+    why: '媒体缩略化 —— 登记改高度项（§12-B16，probeMedia 读数定稿 140px）；'
+      + '2026-10-15 三轮收窄：作用域限定 feed-content/retweet（评论面板豁免，防误伤评论图）' },
   { sel: /\.woo-picture-main img$/, prop: 'height', val: '100%', why: 'img 跟随缩后的容器，cover 重算（§12-B16）' },
   { sel: /\.woo-picture-main img$/, prop: 'top', val: 'auto',
     why: '微博 JS 裁切方案的残留负偏移（top:-33%）必须清零 —— height:100% 压掉 height:133% 后'
       + ' top 残留会让竖图格底部露空（2026-10-15 真机「有的缩有的不缩」实锤，§12-B16）' },
-  { sel: /\.wbpro-scroller-item \.u-col-1$/, prop: 'height', val: 'auto',
+  { sel: /\.wbpro-scroller-item \.(wbpro-feed-content|retweet) \.u-col-1$/, prop: 'height', val: 'auto',
     why: '单图行容器带着与图相同的内联 height:224（2026-10-15 真机踩坑：只压内层留 84px 空白）'
-      + ' —— auto 压掉重复声明、行回归内容高，不引入新裁切面（§12-B16）' },
+      + ' —— auto 压掉重复声明、行回归内容高，不引入新裁切面（§12-B16）；'
+      + '作用域限定 feed-content/retweet（评论面板豁免）' },
   { sel: /^\.wbpro-side-main$/, prop: 'display', val: 'none',
     why: '右栏整体隐藏（2026-10-15 用户定调）—— 虚拟列表之外的流式容器，display:none 不留洞'
       + '（A 类逻辑 §7.5.0）；B9 旧结论「无需落地」被宽窗口使用场景推翻（§12-B16 ⑧）' },
@@ -214,6 +217,9 @@ test('L1：媒体缩略化（§12-B16，改高度项）—— 数值法 max-heig
   // 🔴 真机验收修正（同日）：**显式 height 有两处** —— 外层单图行 `.u-col-1` 带着同样的
   //    内联 height:224px，只压内层 woo-picture-main ⇒ 图缩了、卡片没矮、留 84px 空白。
   //    第三条规则 `u-col-1{height:auto}` 压掉重复声明（夹具 10/10：卡内 u-col-1 全部且仅是单图行）。
+  // 🔴 三轮收窄（2026-10-15 真机实锤）：评论面板在**卡内**复用同一批组件类 ⇒ 裸「卡内」
+  //    作用域会误伤评论图（错位 + 黑框，用户截图）⇒ 作用域必须限定 feed-content/retweet
+  //    （夹具 61/61 + 10/10：卡内媒体类全部在这两个区域之内，收窄 = 信息流行为零变化）。
   const css = l1Css();
   const rules = parseRules(css).filter((r) => r.selector.includes('woo-picture-main'));
 
@@ -222,8 +228,23 @@ test('L1：媒体缩略化（§12-B16，改高度项）—— 数值法 max-heig
   const img = rules.find((r) => r.selector.includes(' img'));
   assert.ok(container && img, '容器与 img 各一条');
 
-  assert.match(container.selector, /^\.wbpro-scroller-item \.woo-picture-main$/,
-    `${container.selector}：必须卡内限定 + 库类锚（_picTall_/_inlineNum3_ 是哈希 ⛔）`);
+  // 作用域守卫：feed-content 与 retweet 两个变体都必须在（缺一个 = 转发图 / 正文图漏掉一个）
+  for (const r of [container, img]) {
+    assert.ok(r.selector.includes('.wbpro-feed-content .woo-picture-main'),
+      `${r.selector}：缺 feed-content 变体`);
+    assert.ok(r.selector.includes('.retweet .woo-picture-main'),
+      `${r.selector}：缺 retweet 变体（转发原文的图也要缩）`);
+    assert.ok(!/^\.wbpro-scroller-item \.woo-picture-main/.test(r.selector),
+      `${r.selector}：不许退回裸「卡内」作用域 —— 会误伤评论面板（三轮真机实锤）`);
+  }
+  const containerSel = container.selector.split(',');
+  const imgSel = img.selector.split(',');
+  assert.ok(containerSel.length === 2 && imgSel.length === 2, '每条媒体规则 = 两个作用域变体');
+
+  assert.match(containerSel[0], /^\.wbpro-scroller-item \.wbpro-feed-content \.woo-picture-main$/,
+    '容器变体 ① 必须卡内 + feed-content 限定 + 库类锚（_picTall_/_inlineNum3_ 是哈希 ⛔）');
+  assert.match(containerSel[1], /^\.wbpro-scroller-item \.retweet \.woo-picture-main$/,
+    '容器变体 ② 必须卡内 + retweet 限定');
   assert.match(container.decls.find((d) => d.prop === 'max-height').value, /^140px/,
     '容器 max-height 必须是 140px（用户 2026-10-15 拍板）');
   assert.match(img.decls.find((d) => d.prop === 'height').value, /^100%/,
@@ -232,9 +253,11 @@ test('L1：媒体缩略化（§12-B16，改高度项）—— 数值法 max-heig
     'img 必须 top:auto —— 微博 JS 裁切方案的负偏移（top:-33%）不清零，竖图格底部会露空'
     + '（2026-10-15 真机「有的缩有的不缩」实锤，§12-B16）');
 
-  // ⑦b 单图行容器：必须存在、必须 height:auto（不是再压一次 140）、必须卡内限定
-  const row = parseRules(css).find((r) => /^\.wbpro-scroller-item \.u-col-1$/.test(r.selector));
+  // ⑦b 单图行容器：必须存在、必须 height:auto（不是再压一次 140）、必须同轮收窄的作用域
+  const row = parseRules(css).find((r) => /\.wbpro-scroller-item \.(wbpro-feed-content|retweet) \.u-col-1$/.test(r.selector));
   assert.ok(row, '缺单图行规则 u-col-1{height:auto} —— 只压内层会留 84px 空白（真机实锤）');
+  assert.ok(!/^\.wbpro-scroller-item \.u-col-1$/.test(row.selector),
+    'u-col-1 规则不许退回裸「卡内」作用域 —— 会误伤评论面板');
   assert.match(row.decls.find((d) => d.prop === 'height').value, /^auto/,
     'u-col-1 必须用 height:auto（去掉重复的内联高度），不得引入新裁切面');
 
@@ -554,4 +577,25 @@ test('L1：微博 JS 裁切方案确实存在「负 top 偏移」的竖图格（
   }
   assert.ok(sawOffset > 0,
     '夹具里没有负 top 偏移的图片格 —— 微博的 JS 裁切方案可能变了，img top:auto 的必要性需重评');
+});
+
+test('L1：卡内媒体类全部活在 feed-content / retweet 之内（媒体规则三轮收窄的前提，评论面板豁免的依据）', { skip: skipVideo }, () => {
+  // 起因（2026-10-15 真机实锤）：评论面板（摘要条点开的评论区）在**卡内**、复用同一批组件类
+  // ⇒ 裸「卡内 .woo-picture-main」会误伤评论图（错位 + 黑框，用户截图）。
+  // 修法 = 作用域收窄到 .wbpro-feed-content / .retweet。这条测试焊住收窄的前提：
+  // 卡内所有 woo-picture-main / u-col-1 必须在这两个区域之内 —— 若微博哪天把媒体放到
+  // 别的位置（收窄后会漏掉它），这里先红。
+  let sawPic = 0, sawRow = 0;
+  for (const file of fixtures) {
+    const { document } = parseHTML(readFileSync(join(FIXTURE_DIR, file), 'utf8'));
+    for (const sel of ['.woo-picture-main', '.u-col-1']) {
+      for (const el of document.querySelectorAll(`.wbpro-scroller-item ${sel}`)) {
+        if (sel === '.woo-picture-main') sawPic++; else sawRow++;
+        const scoped = el.closest('.wbpro-feed-content') || el.closest('.retweet');
+        assert.ok(scoped,
+          `${file}: 卡内 ${sel} 不在 feed-content / retweet 之内 —— 收窄后的媒体规则会漏掉它，需重评作用域`);
+      }
+    }
+  }
+  assert.ok(sawPic > 0, '所有夹具里都没有卡内 woo-picture-main ⇒ 这条守卫空转');
 });

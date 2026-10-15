@@ -174,8 +174,14 @@ export function l1Css() {
     //    ⭐ 数值法的妙处：**只有高于阈值的媒体被压** —— 横图 126 / 九宫格 132.6 天然免疫，
     //    不需要按「单图 / 多图 / 横竖」分类写选择器（那要锚 `_picTall_/_inlineNum3_` 哈希，⛔）。
     //    锚 `.woo-picture-main`（**库类**，probeMedia 四快照一致）；图片源全是 orj360 缩略图 ⇒ 不损清晰度。
+    //    🔴 **三轮收窄（2026-10-15 真机实锤）**：评论面板（摘要条点开的原生评论区）在**卡内**、
+    //    复用同一批组件类 ⇒ 裸的「卡内 .woo-picture-main」会**误伤评论图**（错位 + 黑框，
+    //    用户截图）。夹具四份 61/61：卡内 woo-picture-main **全部**在 `.wbpro-feed-content`
+    //    或 `.retweet` 之内 ⇒ 收窄到这两个区域，信息流行为零变化、评论面板天然豁免
+    //    （面板是 feed-content 的兄弟区域；probeComments() 首轮读数再钉死面板位置）。
     //    ⚠️ 真机复验「不留洞」是唯一防线（改高度项纪律）；**视频不动**（vjs 内部布局，二期单独评估）。
-    rule(`${SEL_CARD[0]} .woo-picture-main`, 'max-height:140px !important'),
+    rule(`${SEL_CARD[0]} .wbpro-feed-content .woo-picture-main,${SEL_CARD[0]} .retweet .woo-picture-main`,
+      'max-height:140px !important'),
     //    img 规则（2026-10-15 二轮真机返工）：height:100% 之外**必须带 top:auto** ——
     //    🔴 微博有一套自己的 JS 居中裁切方案：按每张图原始比例给 img 写内联
     //    「尺寸 133% + 负偏移」（竖图 width:100%;height:133%;top:-33%，横图 height:100%;
@@ -185,7 +191,9 @@ export function l1Css() {
     //    top:auto 清掉残留偏移后 img 盒子与格子等大，微博自带的 object-fit:cover
     //    接管居中裁切（压到 140 后自动按新框重裁）。left 不动 —— 横图的 left:-34%
     //    与 height:100% 是自洽配对，动它反而破坏横向取景。
-    rule(`${SEL_CARD[0]} .woo-picture-main img`, 'height:100% !important;top:auto !important'),
+    //    作用域与容器规则同轮收窄（评论面板豁免，见上）。
+    rule(`${SEL_CARD[0]} .wbpro-feed-content .woo-picture-main img,${SEL_CARD[0]} .retweet .woo-picture-main img`,
+      'height:100% !important;top:auto !important'),
     // ⑦b 单图行容器（2026-10-15 真机验收踩坑修正）：**显式 height 不止 picture-main 一处** ——
     //    外层行 `.u-col-1` 带着**同样的内联 height:224px**（夹具四份 10/10：卡内 u-col-1 全部
     //    且仅是单图行，九宫格走 u-col-3/4 且无内联高度）。只压内层 ⇒ 图缩了、行没缩，
@@ -193,7 +201,9 @@ export function l1Css() {
     //    让行回归**内容高**（已被 ⑦ 压到 ≤140 的图；横图 126 时 auto=126，数值法语义不变）。
     //    ⚠️ 不能给 u-col-1 也上 max-height:140 —— 万一微博哪天把更高的合法内容放进行里，
     //    auto 只「去掉重复声明」、不引入新的裁切面，比再压一次 140 更保守。
-    rule(`${SEL_CARD[0]} .u-col-1`, 'height:auto !important'),
+    //    作用域同轮收窄（评论面板豁免，见 ⑦ 注）。
+    rule(`${SEL_CARD[0]} .wbpro-feed-content .u-col-1,${SEL_CARD[0]} .retweet .u-col-1`,
+      'height:auto !important'),
 
     // ⑧ 右栏整体隐藏（2026-10-15 用户定调「热搜列表 / 感兴趣的人没什么意义」，§12-B16 ⑧）
     //    旧结论「无需落地」（B9：内容宽 < 1122px 时微博自己收起右栏）被推翻 —— 用户宽窗口
