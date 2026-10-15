@@ -444,3 +444,172 @@ function probeMedia2() {
 }
 
 try { window.probeMedia2 = probeMedia2; } catch (_e) { /* 控制台总有 window */ }
+
+/**
+ * v3：媒体**宽度**机制取样（2026-10-15 用户诉求「宽度也压小，一行容纳更多图」前置）
+ *
+ * ── 为什么要有 v3 ──────────────────────────────────────────────────
+ * 高度侧已结案（max-height 数值法 + img cover 全接管，B16/B17），但宽度侧从未采样：
+ *   ① 已知单图格子是「内联 width:168px 父子两层重复声明」（B16 首轮 84px 空白的宽度版隐患）；
+ *   ② 「压窄 ⇒ 一行挤进更多格」**只在行容器是流式排版（inline-block 换行 / flex wrap）时成立**；
+ *      若是 flex nowrap 或固定列数 grid，压窄只会「格子变小、右边留白」—— 机制决定可行性；
+ *   ③ 行内空隙（gap）有多大 ⇒ 容器宽还能塞几列（potentialCols），是「值得压多窄」的直接依据。
+ * v3 对每个 u-col-* 行容器采：容器（类名 / 内联 / rect / display·flexWrap·gridTemplate）
+ * + 前 4 个子格（内联 width / rect / computed width·maxWidth）+ 行机制判词。
+ * 用法同前：粘进 Console → `probeMedia3()` → 整个输出回传。
+ */
+function probeMedia3() {
+  var clip = function (s, n) {
+    s = (s == null ? '' : String(s)).replace(/\s+/g, ' ').trim();
+    n = n || 60;
+    return s.length > n ? s.slice(0, n) + '…' : s;
+  };
+  var clsOf = function (e) {
+    var c = e.getAttribute && e.getAttribute('class');
+    return c ? clip(c, 120) : '';
+  };
+  var inlineOf = function (e) {
+    var s = e.getAttribute && e.getAttribute('style');
+    return s ? clip(s, 160) : '';
+  };
+  var rect = function (e) {
+    var b = e.getBoundingClientRect();
+    return { w: +b.width.toFixed(1), h: +b.height.toFixed(1), top: +b.top.toFixed(1), left: +b.left.toFixed(1) };
+  };
+  var csOf = function (e, keys) {
+    var cs;
+    try { cs = getComputedStyle(e); } catch (_e) { return null; }
+    if (!cs) return null;
+    var out = {};
+    for (var i = 0; i < keys.length; i++) out[keys[i]] = cs[keys[i]];
+    return out;
+  };
+  var level = function (e, keys) {
+    return {
+      desc: e.tagName.toLowerCase() + (clsOf(e) ? '.' + clsOf(e).replace(/\s+/g, '.') : ''),
+      inline: inlineOf(e),
+      rect: rect(e),
+      cs: csOf(e, keys),
+    };
+  };
+
+  // ── ① 样式体检（排除旧版假故障；宽度数值不写死 —— 用户可能 mediaMaxH 试值中）──
+  var styleEl = document.getElementById('spb-style');
+  var styleCheck = {
+    present: Boolean(styleEl),
+    hasMediaRule: styleEl ? /max-height:\d+px !important/.test(styleEl.textContent) : false,
+    hasCoverRule: styleEl ? styleEl.textContent.indexOf('object-fit:cover') !== -1 : false,
+  };
+  var innerWidth = (window.innerWidth || (document.documentElement && document.documentElement.clientWidth) || 0);
+
+  // ── ② 找卡（同一套视野 + 异常态闸）────────────────────────────
+  var cards = document.querySelectorAll('.vue-recycle-scroller__item-wrapper > .vue-recycle-scroller__item-view');
+  if (!cards.length) {
+    cards = document.querySelectorAll('.wbpro-scroller-item');
+    if (!cards.length) {
+      return { error: '页面上找不到信息流卡（要在微博首页信息流里跑）', styleCheck: styleCheck };
+    }
+  }
+
+  var ROW_CS_KEYS = ['display', 'flexWrap', 'gridTemplateColumns', 'width', 'maxWidth', 'overflowX', 'justifyContent'];
+  var CELL_CS_KEYS = ['display', 'position', 'width', 'maxWidth', 'height'];
+
+  var boxesMissing = 0;
+  var rows = [];
+  var mechStats = { flow: 0, flexNowrap: 0, grid: 0, other: 0 };
+
+  for (var i = 0; i < cards.length; i++) {
+    var slot = cards[i];
+    var card = slot.querySelector('.wbpro-scroller-item') || slot;
+    var transform = slot.style && slot.style.transform || '';
+    var box = rect(card);
+    var missing = box.h === 0 && box.top === 0 && /translateY/.test(transform) && !/translateY\(0px\)/.test(transform);
+    if (missing) { boxesMissing++; continue; }
+
+    var postId = null, m, as = card.querySelectorAll('a[href]');
+    for (var k = 0; k < as.length && !postId; k++) {
+      m = /weibo\.com\/\d+\/([A-Za-z0-9]+)/.exec(as[k].getAttribute('href') || '');
+      if (m) postId = m[1];
+    }
+
+    // 作用域与媒体规则同款：feed-content / retweet（评论面板豁免）
+    var scopes = card.querySelectorAll('.wbpro-feed-content, .retweet');
+    if (!scopes.length) continue;
+
+    for (var s2 = 0; s2 < scopes.length; s2++) {
+      var scope = scopes[s2];
+      // 行容器：类名含 u-col- 的元素（u-col-1 单图 / u-col-3、u-col-4 多图，探针现场确认还有什么）
+      var rowEls = scope.querySelectorAll('[class*="u-col-"]');
+      for (var r2 = 0; r2 < rowEls.length; r2++) {
+        var rowEl = rowEls[r2];
+        var rl = level(rowEl, ROW_CS_KEYS);
+        var kids = rowEl.children;
+        var cells = [];
+        for (var c2 = 0; c2 < kids.length && c2 < 4; c2++) {
+          cells.push(level(kids[c2], CELL_CS_KEYS));
+        }
+        // 行机制判词：决定「压窄能否挤进更多格」
+        var disp = rl.cs && rl.cs.display || '';
+        var mech = 'other';
+        if (disp.indexOf('grid') !== -1) mech = 'grid';
+        else if (disp.indexOf('flex') !== -1 && rl.cs.flexWrap === 'nowrap') mech = 'flexNowrap';
+        else if (disp.indexOf('flex') !== -1 || disp === 'block') mech = 'flow';
+        mechStats[mech] = (mechStats[mech] || 0) + 1;
+        // 行内空隙与潜在列数：cell[0] 与 cell[1] 的 left 差 − cell0 宽
+        var potentialCols = null, gap = null;
+        if (cells.length >= 2) {
+          gap = +(cells[1].rect.left - (cells[0].rect.left + cells[0].rect.w)).toFixed(1);
+          var unit = cells[0].rect.w + (gap > 0 ? gap : 0);
+          if (unit > 0) potentialCols = Math.floor(rl.rect.w / unit);
+        }
+        rows.push({
+          postId: postId,
+          scope: scope.getAttribute('class').indexOf('retweet') !== -1 ? 'retweet' : 'feed-content',
+          row: rl,
+          childCount: kids.length,
+          cells: cells,
+          mech: mech,
+          gap: gap,
+          potentialCols: potentialCols,
+        });
+      }
+    }
+  }
+
+  // ── ③ 判词 ──────────────────────────────────────────────────
+  var verdict;
+  if (!styleCheck.present) {
+    verdict = '⛔ 页面上没有 #spb-style —— 脚本没在跑（重装后要刷新页面）';
+  } else if (!styleCheck.hasMediaRule || !styleCheck.hasCoverRule) {
+    verdict = '⛔ #spb-style 不是新版（' + JSON.stringify(styleCheck) + '）—— 重装产物后刷新再跑';
+  } else if (boxesMissing) {
+    verdict = '⛔ 页面异常态：' + boxesMissing + ' 张卡矩形全零（§12-B10）—— 先刷新再跑';
+  } else if (!rows.length) {
+    verdict = '⚠️ 当前页没采到 u-col-* 行 —— 滚到有图的位置再跑（单图 / 多图都要出现）';
+  } else if (mechStats.grid || mechStats.flexNowrap) {
+    verdict = '🔴 行机制含固定排版（grid ' + (mechStats.grid || 0) + ' / flexNowrap ' + (mechStats.flexNowrap || 0)
+      + ' / 流式 ' + (mechStats.flow || 0) + '）—— 固定列数下压窄只会留白，需连行容器一起接管；回传输出看 gridTemplateColumns';
+  } else {
+    verdict = '✅ 行机制全是流式（flow ' + (mechStats.flow || 0) + '）—— 压窄格子后理论可自动换行挤进更多格；'
+      + '回传输出，重点看 potentialCols 与 cells[0].inline.width（父子两层重复声明的宽度版 84px 隐患）';
+  }
+
+  return {
+    verdict: verdict,
+    styleCheck: styleCheck,
+    innerWidth: innerWidth,
+    summary: {
+      rows: rows.length,
+      mech: mechStats,
+      boxesMissing: boxesMissing,
+      childCounts: rows.map(function (x) { return x.childCount; }),
+      potentialCols: rows.map(function (x) { return x.potentialCols; }),
+    },
+    rows: rows,
+    note: 'row.cs.gridTemplateColumns / flexWrap / justifyContent 决定「压窄后格子去哪」；'
+      + 'cells[].inline 与 row.inline 里的 width 是「宽度版重复声明」的判定材料；'
+      + 'potentialCols = 容器宽还能容纳几列（含 gap 估算），是定目标宽度的直接依据',
+  };
+}
+
+try { window.probeMedia3 = probeMedia3; } catch (_e) { /* 控制台总有 window */ }
