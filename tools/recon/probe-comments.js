@@ -1,20 +1,24 @@
 /**
- * 现场探针：评论面板结构 + 面板图片 + 信息流黑图取证（2026-10-15，Console 用）
+ * 现场探针 v2：评论面板结构 + 信息流黑图取证 + 被过滤卡扫描（2026-10-15，Console 用）
  *
- * ── 为什么有这个探针 ────────────────────────────────────────────────
- * ① **评论面板豁免验证**：用户真机实锤「评论中的图片会错位，也存在黑图」——
- *    面板在卡内、复用同一批组件类，被媒体缩略化规则误伤。已收窄作用域到
- *    feed-content/retweet，本探针钉死「面板不在那两个区域之内」（修复前提）
- *    并采样面板图片（修复后应当全 natural）。
- * ② **黑图取证升级**：probeFeed3 只记了 attrs，这次连**父链三层的内联样式 +
- *    computed 尺寸**一起记 —— 判断黑图是「img 没加载」（占位/失败）还是
- *    「img 加载了但被布局吃掉」（我们的规则干扰）。
+ * ── v2 改了什么（依据首轮读数的三个缺口）──────────────────────────
+ * ① **可疑图补记 `cardMarked`**：首轮 14 张可疑图全部「加载成功 + 几何健康」，
+ *    黑图不是没加载。头号新假设：用户看到的「黑图」其实是**被过滤卡的等高空位**
+ *    （`data-spb="hidden"` = visibility:hidden 保高，深色主题 #191919 ≈ 纯黑；
+ *    长图卡特别高 ⇒ 空位特别大）。首轮没记卡的标记 ⇒ 补上。
+ * ② **遮挡检测（coverCheck）**：对每张可疑图在自己中心点跑 elementFromPoint ——
+ *    若站在它上面的是别的元素，记下那个元素的 class 与背景色（黑 = 被深色层盖住）。
+ * ③ **被过滤卡扫描**：全页 `[data-spb="hidden"]` 逐卡记高度 / 帖 ID / 视口位置
+ *    —— 直接回答「那块黑是不是被过滤的卡」。
+ * ④ **评论面板图采样修正**：v1 从 textarea 走到卡体根，采到的是**整卡**的图
+ *    （含信息流自己的图，`hasPictureMain` 因此失真）。v2 只采「不在 feed-content /
+ *    retweet / header 里」的图 = 真正属于评论面板的图。
  *
  * ── 用法 ──────────────────────────────────────────────────────────
  *   ① 微博首页信息流（登录态），F12 → Console 粘贴本文件全部内容
- *   ② 先把摘要条展开一两张有评论的卡（面板出现才有得采）
- *   ③ 跑：`copy(await probeComments())`（结果进剪贴板，直接粘贴回传）
- *      （老控制台不支持顶层 await 时：`probeComments().then(copy)`）
+ *   ② 跑：`copy(await probeComments())`（结果进剪贴板，直接粘贴回传）
+ *   ③ 配套：看到黑块时顺手跑 `copy(JSON.stringify(__spb.recent(), null, 2))`
+ *      —— 看那些卡是不是被判了过滤、理由是什么（可解释性出口）。
  */
 
 async function probeComments() {
@@ -27,13 +31,20 @@ async function probeComments() {
     var c = e.getAttribute && e.getAttribute('class');
     return c ? clip(c, 160) : '';
   };
+  var postIdOf = function (card) {
+    var as = card.querySelectorAll('a[href]');
+    for (var i = 0; i < as.length; i++) {
+      var m = /weibo\.com\/\d+\/([A-Za-z0-9]+)/.exec(as[i].getAttribute('href') || '');
+      if (m) return m[1];
+    }
+    return null;
+  };
 
-  var out = { script: 'specbase-comments-probe', ts: Date.now(), innerWidth: window.innerWidth || 0 };
-
-  // ── ① 评论面板定位与归属 ──────────────────────────────────────
-  // 面板根 = textarea 往上走到卡片的**直接子**为止（card 的 child）。
-  var panels = [];
+  var out = { script: 'specbase-comments-probe-v2', ts: Date.now(), innerWidth: window.innerWidth || 0 };
   var cards = document.querySelectorAll('.wbpro-scroller-item');
+
+  // ── ① 评论面板定位（面板根 = textarea 往上到卡的直接子）────────
+  var panels = [];
   var seenPanelRoots = [];
   for (var ci = 0; ci < cards.length; ci++) {
     var card = cards[ci];
@@ -44,16 +55,17 @@ async function probeComments() {
       if (!root || root === card || seenPanelRoots.indexOf(root) >= 0) continue;
       seenPanelRoots.push(root);
 
-      // 面板根 → card 的祖先 class 链（从面板根自身往下记到 card 前一层）
-      var chain = [];
-      var cur = root;
-      while (cur && cur !== card) { chain.push(clsOf(cur)); cur = cur.parentNode; }
-
-      // 面板内的图片采样（最多 6 张）
+      // v2：只采**真正属于评论面板**的图（不在正文区 / 转发块 / 头部里）
       var pimgs = [];
       var im = root.querySelectorAll('img');
-      for (var ii = 0; ii < im.length && pimgs.length < 6; ii++) {
+      var panelImgTotal = 0;
+      for (var ii = 0; ii < im.length; ii++) {
         var g = im[ii];
+        if (g.closest('.wbpro-feed-content')) continue;
+        if (g.closest('.retweet')) continue;
+        if (g.closest('header')) continue;
+        panelImgTotal++;
+        if (pimgs.length >= 6) continue;
         var r = g.getBoundingClientRect();
         var parents = [];
         var p = g.parentElement;
@@ -71,12 +83,11 @@ async function probeComments() {
         });
       }
       panels.push({
-        chain: chain,
+        rootCls: clsOf(root),
         insideFeedContent: !!root.closest('.wbpro-feed-content'),
         insideRetweet: !!root.closest('.retweet'),
-        hasPictureMain: !!root.querySelector('.woo-picture-main'),
-        hasUcol1: !!root.querySelector('.u-col-1'),
         imgCount: im.length,
+        panelImgTotal: panelImgTotal,
         imgs: pimgs,
       });
     }
@@ -84,17 +95,10 @@ async function probeComments() {
   out.panels = panels;
   out.panelCount = panels.length;
 
-  // ── ② 信息流黑图取证（升级版：父链内联样式 + computed）────────
-  // 可疑 = 占位图（src 是 data:）或没加载（naturalWidth===0）或加载器放弃（data-src="false"）。
-  // ⚠️ 「纯黑」若是「加载了但被布局吃掉」，natural 会 >0 而 rect 异常 —— 都记全，回传人工比对。
+  // ── ② 信息流黑图取证（v2：补 cardMarked + 遮挡检测）────────────
   var suspects = [];
   for (var cj = 0; cj < cards.length; cj++) {
     var c2 = cards[cj];
-    var postId = null, mm, as2 = c2.querySelectorAll('a[href]');
-    for (var aj = 0; aj < as2.length && !postId; aj++) {
-      mm = /weibo\.com\/\d+\/([A-Za-z0-9]+)/.exec(as2[aj].getAttribute('href') || '');
-      if (mm) postId = mm[1];
-    }
     var im2 = c2.querySelectorAll('img');
     for (var ij = 0; ij < im2.length; ij++) {
       var g2 = im2[ij];
@@ -109,20 +113,20 @@ async function probeComments() {
         src2.indexOf('data:') === 0 ||
         g2.naturalWidth === 0;
       if (!bad) continue;
-      var parents2 = [];
-      var p2 = g2.parentElement;
-      for (var pj = 0; p2 && pj < 3; pj++, p2 = p2.parentElement) {
-        var cs = getComputedStyle(p2);
-        parents2.push({
-          cls: clsOf(p2),
-          inline: clip(p2.getAttribute('style') || '', 200),
-          disp: cs.display, pos: cs.position, ovf: cs.overflow,
-          h: Math.round(p2.getBoundingClientRect().height),
-        });
+      var marked = c2.getAttribute('data-spb') || null;
+      // 遮挡检测：图自己中心点最顶上的元素是谁（null = 在视口外）
+      var cover = null;
+      var cx = r2.left + r2.width / 2, cy = r2.top + r2.height / 2;
+      if (r2.width && cx >= 0 && cy >= 0 && cx <= window.innerWidth && cy <= window.innerHeight) {
+        var topEl = document.elementFromPoint(cx, cy);
+        if (topEl && topEl !== g2 && !g2.contains(topEl)) {
+          var tb = getComputedStyle(topEl).backgroundColor;
+          cover = { topCls: clsOf(topEl), topBg: tb, sameCard: !!topEl.closest('.wbpro-scroller-item') };
+        }
       }
-      var cs2 = getComputedStyle(g2);
       suspects.push({
-        post: postId,
+        post: postIdOf(c2),
+        cardMarked: marked,
         inFeedContent: !!g2.closest('.wbpro-feed-content'),
         inRetweet: !!g2.closest('.retweet'),
         cls: clsOf(g2),
@@ -130,18 +134,34 @@ async function probeComments() {
         dataSrc: dsrc == null ? null : clip(dsrc, 40),
         natural: g2.naturalWidth + 'x' + g2.naturalHeight,
         complete: g2.complete,
-        loading: g2.getAttribute('loading') || null,
         rect: { w: Math.round(r2.width), h: Math.round(r2.height), top: Math.round(r2.top) },
-        imgInline: clip(g2.getAttribute('style') || '', 200),
-        imgComputed: { disp: cs2.display, pos: cs2.position, vis: cs2.visibility, op: cs2.opacity },
-        parents: parents2,
+        imgInline: clip(g2.getAttribute('style') || '', 120),
+        cover: cover,
       });
     }
   }
   out.suspects = suspects;
   out.suspectCount = suspects.length;
+  out.suspectInMarkedCards = suspects.filter(function (s) { return s.cardMarked === 'hidden'; }).length;
 
-  // ── ③ 样式版本自检（确认跑的是收窄后的新规则）────────────────
+  // ── ③ 被过滤卡扫描（直接回答「那块黑是不是被过滤的卡」）────────
+  var markedCards = [];
+  var allMarked = document.querySelectorAll('[data-spb="hidden"]');
+  for (var mi = 0; mi < allMarked.length; mi++) {
+    var mc = allMarked[mi];
+    var r3 = mc.getBoundingClientRect();
+    markedCards.push({
+      post: postIdOf(mc),
+      tag: mc.tagName.toLowerCase(),
+      cls: clsOf(mc),
+      rect: { w: Math.round(r3.width), h: Math.round(r3.height), top: Math.round(r3.top) },
+      inViewport: r3.bottom > 0 && r3.top < window.innerHeight,
+    });
+  }
+  out.markedHiddenCards = markedCards;
+  out.markedHiddenCount = markedCards.length;
+
+  // ── ④ 样式版本自检 ────────────────────────────────────────────
   var st = document.getElementById('spb-style');
   out.styleCheck = st
     ? {
