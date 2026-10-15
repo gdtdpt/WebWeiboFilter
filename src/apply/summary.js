@@ -27,7 +27,7 @@
  *    绝对定位挂 `bottom:0`，定位上下文由 l1.js 给 `article` 补 `position:relative`。
  */
 
-import { readActionBar } from '../adapters/weibo-home.js';
+import { readActionBar, readRetweetActionBar } from '../adapters/weibo-home.js';
 
 /** 摘要条的自有标记（复用 `data-spb` 属性名 —— 低调纪律：DOM 不新增自述属性名） */
 export const SUMMARY_ATTR = 'data-spb';
@@ -35,8 +35,15 @@ export const SUMMARY_ATTR = 'data-spb';
 /** `data-spb` 的取值：摘要条（与 hidden / ad 并列；CSS 按取值分流，互不干扰） */
 export const SUMMARY_MARK = 'stats';
 
-/** 摘要条选择器（l1.js 的样式规则与这里的查询共用一个来源） */
+/** 摘要条选择器（l1.js 的样式规则与这里的查询共用一个来源；卡自身 / 转发块共用一套样式） */
 export const SUMMARY_SEL = [`[${SUMMARY_ATTR}="${SUMMARY_MARK}"]`];
+
+/** 卡自身摘要条的**作用域**选择器（挂 article 直下）；转发块摘要条挂 .retweet 内部 */
+export const CARD_SUMMARY_SEL = [`article > ${SUMMARY_SEL[0]}`];
+export const RETWEET_SUMMARY_SEL = [`.retweet ${SUMMARY_SEL[0]}`];
+
+/** 转发块摘要条的文本前缀 —— 与卡自身的摘要条区分（两者计数不同：卡 vs 原微博） */
+export const RETWEET_PREFIX = '原微博';
 
 /**
  * 计数 → 摘要文本（**纯函数**）。
@@ -56,7 +63,8 @@ export function summaryText(counts) {
 }
 
 /**
- * 对一张卡做摘要条的**幂等**建立 / 更新 / 摘除。
+ * 对一张卡做摘要条的**幂等**建立 / 更新 / 摘除（2026-10-15 起同时管两条：
+ * 卡自身的 + 转发原文的 —— 同一套设计语言，用户拍板）。
  *
  * @param {Element} card  `.wbpro-scroller-item`
  * @param {boolean} on    L1/L2 档位是否开启（false ⇒ 摘除已有摘要条）
@@ -66,39 +74,51 @@ export function applyActionBarSummary(card, on) {
   const out = { created: 0, updated: 0, removed: 0 };
   if (!card || !card.querySelector) return out;
 
-  const existing = card.querySelector(SUMMARY_SEL[0]);
-
+  // ── ① 卡自身的按钮行 ──
+  const existing = card.querySelector(CARD_SUMMARY_SEL[0]);
   if (!on) {
-    if (existing && existing.parentNode) {
-      existing.parentNode.removeChild(existing);
-      out.removed++;
-    }
+    // 关档 ⇒ 两条一起摘（转发块的那条见下）
+    const rtOff = card.querySelector(RETWEET_SUMMARY_SEL[0]);
+    if (existing && existing.parentNode) { existing.parentNode.removeChild(existing); out.removed++; }
+    if (rtOff && rtOff.parentNode) { rtOff.parentNode.removeChild(rtOff); out.removed++; }
     return out;
   }
 
   const bar = readActionBar(card);
   // 没有 footer 的卡型（推荐关注 / 话题大卡等，A0 未覆盖）⇒ **宁可不动**：
   // 摘要条锚不到计数、CSS 的 footer 规则也收不掉什么，硬插只会制造噪音。
-  if (!bar) return out;
+  if (bar) {
+    upsert(existing, bar.footer.parentNode, summaryText(bar.counts), bar.href || null, out);
+  }
 
-  const text = summaryText(bar.counts);
-  const href = bar.href || null;
+  // ── ② 转发原文的按钮行（同一套设计语言；没有转发块的卡自然跳过）──
+  const rt = readRetweetActionBar(card);
+  if (rt) {
+    const text = RETWEET_PREFIX
+      + (rt.timeText ? ' · ' + rt.timeText : '')
+      + ' · ' + summaryText(rt.counts);
+    upsert(card.querySelector(RETWEET_SUMMARY_SEL[0]), rt.footer.parentNode, text, rt.href || null, out);
+  }
+
+  return out;
+}
+
+/** 幂等 upsert 一条摘要条（卡自身 / 转发块共用；已是目标 ⇒ 一个字节都不写） */
+function upsert(existing, parent, text, href, out) {
+  if (!parent || !parent.appendChild) return;
 
   if (existing) {
     const sameHref = (existing.getAttribute('href') || null) === href;
-    if (existing.textContent === text && sameHref) return out;   // 已是目标 ⇒ 不写
+    if (existing.textContent === text && sameHref) return;   // 已是目标 ⇒ 不写
     existing.textContent = text;
     if (href) existing.setAttribute('href', href);
     else existing.removeAttribute('href');
     out.updated++;
-    return out;
+    return;
   }
 
-  // 与 footer 同层（article）—— l1.js 已把 article 设为 relative 定位上下文
-  const parent = bar.footer.parentNode;
-  if (!parent || !parent.appendChild) return out;
-  const doc = card.ownerDocument || (typeof document !== 'undefined' ? document : null);
-  if (!doc || !doc.createElement) return out;
+  const doc = parent.ownerDocument || (typeof document !== 'undefined' ? document : null);
+  if (!doc || !doc.createElement) return;
 
   const a = doc.createElement('a');
   a.setAttribute(SUMMARY_ATTR, SUMMARY_MARK);
@@ -106,7 +126,6 @@ export function applyActionBarSummary(card, on) {
   if (href) a.setAttribute('href', href);
   parent.appendChild(a);
   out.created++;
-  return out;
 }
 
 /** 全页摘除摘要条（停管线时用）—— 与逐卡摘除等价，给「stop()」一个整页出口。 */

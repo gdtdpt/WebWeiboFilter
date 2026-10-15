@@ -16,7 +16,7 @@ import { join } from 'node:path';
 
 import {
   summaryText, applyActionBarSummary, removeSummaries, countSummaries,
-  SUMMARY_ATTR, SUMMARY_MARK, SUMMARY_SEL,
+  SUMMARY_ATTR, SUMMARY_MARK, SUMMARY_SEL, CARD_SUMMARY_SEL, RETWEET_SUMMARY_SEL,
 } from '../src/apply/summary.js';
 import { readActionBar } from '../src/adapters/weibo-home.js';
 import { FIXTURE_DIR, fixtures } from './_fixture-expect.mjs';
@@ -33,7 +33,7 @@ const skipFixture = !fixtures.length
   : (!parseHTML ? 'linkedom 未安装 —— 运行 npm install 后重试' : false);
 
 /** 合成一张带按钮行的卡（结构对齐 §12-B13 ①：card > article > [header, footer]） */
-function makeCard(doc, { repost, comment, like, href } = {}) {
+function makeCard(doc, { repost, comment, like, href, retweet } = {}) {
   const card = doc.createElement('div');
   card.setAttribute('class', 'wbpro-scroller-item');
   const article = doc.createElement('article');
@@ -45,7 +45,7 @@ function makeCard(doc, { repost, comment, like, href } = {}) {
   header.appendChild(time);
   const footer = doc.createElement('footer');
 
-  function btn(iconCls, countSel, countText) {
+  function btn(parent, iconCls, countSel, countText) {
     const a = doc.createElement('a');
     const icon = doc.createElement('i');
     icon.setAttribute('class', iconCls);
@@ -56,13 +56,13 @@ function makeCard(doc, { repost, comment, like, href } = {}) {
       s.textContent = countText;
       a.appendChild(s);
     }
-    footer.appendChild(a);
+    parent.appendChild(a);
     return a;
   }
 
-  btn('woo-font woo-font--retweet', null, repost);
-  btn('woo-font woo-font--comment', null, comment);
-  if (like != null) btn('woo-like-main', 'woo-like-count', like);
+  btn(footer, 'woo-font woo-font--retweet', null, repost);
+  btn(footer, 'woo-font woo-font--comment', null, comment);
+  if (like != null) btn(footer, 'woo-like-main', 'woo-like-count', like);
   else {
     const likeBtn = doc.createElement('a');
     const icon = doc.createElement('i');
@@ -73,6 +73,29 @@ function makeCard(doc, { repost, comment, like, href } = {}) {
 
   article.appendChild(header);
   article.appendChild(footer);
+
+  // 可选：转发块（结构对齐真机：.retweet > [正文, footer(原微博计数)]）
+  if (retweet) {
+    const block = doc.createElement('div');
+    block.setAttribute('class', 'retweet');
+    const body = doc.createElement('div');
+    body.textContent = retweet.text || '@某人：原微博内容';
+    block.appendChild(body);
+    const rtFooter = doc.createElement('footer');
+    btn(rtFooter, 'woo-font woo-font--retweet', null, retweet.repost);
+    btn(rtFooter, 'woo-font woo-font--comment', null, retweet.comment);
+    if (retweet.like != null) btn(rtFooter, 'woo-like-main', 'woo-like-count', retweet.like);
+    if (retweet.timeTitle) {
+      const rtTime = doc.createElement('a');
+      rtTime.setAttribute('title', retweet.timeTitle);
+      rtTime.setAttribute('href', retweet.timeHref || 'https://weibo.com/789/ROrigBid1');
+      rtTime.textContent = retweet.timeText || '7-11 17:30';
+      rtFooter.appendChild(rtTime);
+    }
+    block.appendChild(rtFooter);
+    article.appendChild(block);
+  }
+
   card.appendChild(article);
   return card;
 }
@@ -189,6 +212,68 @@ test('removeSummaries / countSummaries：整页摘除并计数', () => {
   assert.equal(removeSummaries(document), 0, '再摘一遍应为 0（幂等）');
 });
 
+// ── 转发块摘要条（2026-10-15 三轮拍板：与卡自身同一套设计语言）─────────
+
+test('转发块摘要条：原文计数 + 「原微博」前缀 + 时间；与卡自身的并存', () => {
+  const { document } = freshDoc();
+  const card = makeCard(document, {
+    repost: '1', comment: null, like: '2',
+    retweet: { repost: '18', comment: '8', like: '156', timeTitle: '2026-07-11 17:30', timeText: '7-11 17:30' },
+  });
+  document.body.appendChild(card);
+
+  const res = applyActionBarSummary(card, true);
+  assert.equal(res.created, 2, '卡自身 + 转发块各一条');
+
+  const bars = card.querySelectorAll(SUMMARY_SEL[0]);
+  assert.equal(bars.length, 2);
+  const cardBar = card.querySelector(CARD_SUMMARY_SEL[0]);
+  const rtBar = card.querySelector(RETWEET_SUMMARY_SEL[0]);
+  assert.ok(cardBar && rtBar, '两条都应存在');
+  assert.equal(cardBar.textContent, '1 转发 · 评论 · 2 赞');
+  assert.equal(rtBar.textContent, '原微博 · 7-11 17:30 · 18 转发 · 8 评论 · 156 赞');
+  assert.equal(rtBar.getAttribute('href'), 'https://weibo.com/789/ROrigBid1',
+    '转发摘要条必须指向**原微博**详情页');
+  assert.equal(rtBar.parentNode.getAttribute('class'), 'retweet',
+    '转发摘要条应挂在转发块内部（footer 原位）');
+});
+
+test('转发块摘要条：无时间锚时省略时间段；关档两条一起摘', () => {
+  const { document } = freshDoc();
+  const card = makeCard(document, {
+    repost: '1', comment: '1', like: '1',
+    retweet: { repost: '3', comment: '13', like: null },
+  });
+  document.body.appendChild(card);
+  applyActionBarSummary(card, true);
+  const rtBar = card.querySelector(RETWEET_SUMMARY_SEL[0]);
+  assert.equal(rtBar.textContent, '原微博 · 3 转发 · 13 评论 · 赞',
+    '快照实测转发 footer 常无时间锚 ⇒ 省略时间段、不瞎猜');
+
+  const res = applyActionBarSummary(card, false);
+  assert.equal(res.removed, 2, '关档必须两条一起摘');
+  assert.equal(card.querySelectorAll(SUMMARY_SEL[0]).length, 0);
+});
+
+test('转发块摘要条：幂等（第二遍全零）+ 计数变化原地更新', () => {
+  const { document } = freshDoc();
+  const card = makeCard(document, {
+    repost: '1', comment: '1', like: '1',
+    retweet: { repost: '18', comment: '8', like: '156', timeTitle: '2026-07-11 17:30' },
+  });
+  document.body.appendChild(card);
+  applyActionBarSummary(card, true);
+  assert.deepEqual(applyActionBarSummary(card, true), { created: 0, updated: 0, removed: 0 },
+    '第二遍必须零写入');
+
+  // 槽位复用：转发块计数被微博换成新内容
+  card.querySelector('.retweet footer span').textContent = '99';
+  const res = applyActionBarSummary(card, true);
+  assert.equal(res.updated, 1, '只有转发条该更新');
+  assert.equal(card.querySelector(RETWEET_SUMMARY_SEL[0]).textContent,
+    '原微博 · 7-11 17:30 · 99 转发 · 8 评论 · 156 赞');
+});
+
 // ── ④ 真快照回放 ────────────────────────────────────────────────────────
 
 test('真快照回放：有 footer 的卡恰好一条摘要条、链接对齐时间锚、第二遍全零', { skip: skipFixture }, () => {
@@ -197,29 +282,39 @@ test('真快照回放：有 footer 的卡恰好一条摘要条、链接对齐时
     const cards = document.querySelectorAll('.wbpro-scroller-item');
     if (!cards.length) continue;
 
-    let withFooter = 0;
+    let withFooter = 0, withRetweet = 0;
     for (const card of cards) {
       const res = applyActionBarSummary(card, true);
       const hasFooter = Boolean(card.querySelector('article > footer'));
+      const hasRetweetFooter = Boolean(card.querySelector('.retweet footer'));
+      const expectBars = (hasFooter ? 1 : 0) + (hasRetweetFooter ? 1 : 0);
       if (hasFooter) {
         withFooter++;
-        assert.equal(res.created, 1, `${file}: 有 footer 的卡必须建出摘要条`);
-        const a = card.querySelector(SUMMARY_SEL[0]);
+        assert.equal(card.querySelectorAll(CARD_SUMMARY_SEL[0]).length, 1,
+          `${file}: 有 footer 的卡必须建出摘要条`);
+        const a = card.querySelector(CARD_SUMMARY_SEL[0]);
         assert.ok(a && a.textContent.includes('转发'), `${file}: 摘要条文本不应为空`);
-        const timeA = card.querySelector('a[title^="20"]');
+        const timeA = card.querySelector('article > header a[title^="20"], article header a[title^="20"]');
         if (timeA) {
           assert.equal(a.getAttribute('href'), timeA.getAttribute('href'),
             `${file}: 摘要条链接必须与时间锚（详情页）一致`);
         }
       } else {
-        assert.equal(res.created, 0, `${file}: 没有 footer 的卡不许插摘要条`);
+        assert.equal(card.querySelectorAll(CARD_SUMMARY_SEL[0]).length, 0,
+          `${file}: 没有 footer 的卡不许插摘要条`);
       }
-      // 不变量：不变式 —— footer 数与摘要条数一一对应
-      assert.equal(card.querySelectorAll(SUMMARY_SEL[0]).length, hasFooter ? 1 : 0,
-        `${file}: 每张有 footer 的卡恰好一条摘要条`);
+      if (hasRetweetFooter) {
+        withRetweet++;
+        const rt = card.querySelector(RETWEET_SUMMARY_SEL[0]);
+        assert.ok(rt, `${file}: 有转发块 footer 的卡必须建出转发摘要条`);
+        assert.match(rt.textContent, /^原微博 /, `${file}: 转发摘要条必须带「原微博」前缀`);
+      }
+      assert.equal(card.querySelectorAll(SUMMARY_SEL[0]).length, expectBars,
+        `${file}: 摘要条总数应为「卡自身 + 转发块」各自至多一条`);
     }
 
-    assert.ok(withFooter > 0, `${file}: 这份快照居然一张有 footer 的卡都没有 —— 夹具或锚点需复核`);
+    assert.ok(withFooter > 0,
+      `${file}: 这份快照居然一张有 footer 的卡都没有 —— 夹具或锚点需复核`);
 
     // 第二遍全零（幂等）
     for (const card of cards) {

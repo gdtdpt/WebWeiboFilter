@@ -79,6 +79,7 @@ const SIZE_AFFECTING = [
 const SIZE_EXEMPT = [
   { sel: /woo-icon|woo-font--/, prop: 'display', val: 'none', why: '行内叶子图标（认证角标 / 字体图标）' },
   { sel: /\.wbpro-scroller-item article$/, prop: 'position', val: 'relative', why: '摘要条定位上下文，不占布局' },
+  { sel: /\.wbpro-scroller-item \.retweet$/, prop: 'position', val: 'relative', why: '转发摘要条定位上下文，不占布局' },
   { sel: /\[data-spb="stats"\]/, prop: '*', val: '*', why: '我方绝对定位摘要条 —— 不进布局流（§12-B15）' },
 ];
 
@@ -134,7 +135,7 @@ test('L1：SIZE_EXEMPT 的 display:none 只许「行内叶子图标」—— 不
   }
 });
 
-test('L1：A1 互动按钮行 —— 必须 visibility:hidden（空位摘要条），禁止 display:none；转发块 footer 一并中性化', () => {
+test('L1：A1 互动按钮行 —— 必须 visibility:hidden（空位摘要条），禁止 display:none；转发块 footer 同语言处理', () => {
   const css = l1Css();
 
   // footer 规则恰好一条、直接子、带 SEL_CARD 前缀（页面其它 footer 不能被误伤）
@@ -150,24 +151,25 @@ test('L1：A1 互动按钮行 —— 必须 visibility:hidden（空位摘要条�
   assert.ok(v && /hidden/.test(v.value), 'footer 必须 visibility:hidden（空位摘要条定稿，§12-B15）');
   assert.ok(!d, 'footer 禁止 display:none（2026-10-15 二轮拍板：遮挡随内容不一致，已废弃）');
 
-  // 转发原文的按钮行：中性化一条、转主题令牌、零尺寸属性
+  // 转发原文的按钮行：与卡自身**同一套设计语言**（2026-10-15 三轮拍板：初稿只中性化，
+  // 用户指「与原版区别不大」且将来整个界面要走日志形态 ⇒ 统一为隐藏 + 摘要条）
   const retweet = parseRules(css).filter((r) => /\.retweet footer$/.test(r.selector));
   assert.equal(retweet.length, 1, '转发块 footer 规则应恰好一条');
   assert.match(retweet[0].selector, /^\.wbpro-scroller-item \.retweet footer$/,
     `${retweet[0].selector}：必须卡内限定（.retweet 是通用语义，裸锚有误伤面）`);
-  assert.match(retweet[0].decls.find((x) => x.prop === 'color').value, /var\(--w-sub\)/,
-    '转发块 footer 必须转主题令牌色（禁写死，§12-B9）');
-  // 2026-10-15 真机反馈：只转色在深色主题下看不出区别 ⇒ 必须 opacity 压暗（观感可感知）
-  assert.ok(retweet[0].decls.some((x) => x.prop === 'opacity'),
-    '转发块 footer 缺 opacity —— 深色主题下只转色与原版难以区分');
-  for (const dd of retweet[0].decls) {
-    assert.ok(!SIZE_AFFECTING.includes(dd.prop),
-      `转发块 footer 中性化不得使用尺寸属性「${dd.prop}」（零高度影响）`);
-  }
+  const rv = retweet[0].decls.find((x) => x.prop === 'visibility');
+  assert.ok(rv && /hidden/.test(rv.value),
+    '转发块 footer 必须 visibility:hidden（与卡自身 footer 同语言，§12-B15 ⑥b）');
+  assert.ok(!retweet[0].decls.find((x) => x.prop === 'display'),
+    '转发块 footer 禁止 display:none（零高度影响纪律）');
+  // 定位上下文：.retweet 必须 relative（转发摘要条的 bottom:0 以它为基准）
+  assert.match(css, /\.wbpro-scroller-item \.retweet\{position:relative/,
+    '缺少 .retweet 的 relative 定位上下文 —— 转发摘要条会以 article 为基准、落错位置');
 
   // 摘要条：绝对定位 + bottom:0（不进布局流 ⇒ 建/更/摘不改卡片高度）+ 可点击（不许 pointer-events:none）
+  // （卡自身与转发块共用同一条属性选择器规则 —— 这就是「同一设计语言」的实现方式）
   const summary = parseRules(css).filter((r) => r.selector.includes('data-spb="stats"'));
-  assert.equal(summary.length, 1, '摘要条规则应恰好一条');
+  assert.equal(summary.length, 1, '摘要条规则应恰好一条（两种摘要条共用）');
   const props = Object.fromEntries(summary[0].decls.map((x) => [x.prop, x.value]));
   assert.match(props.position, /absolute/, '摘要条必须绝对定位 —— 否则它的插入会改卡片高度');
   assert.match(props.bottom, /0/, '摘要条必须贴卡底（footer 空位的位置）');
@@ -360,7 +362,7 @@ test('L1：社交归因条的选择器在真实快照上确实命中（不是空
     + ' —— 若已不存在，需重新评估这条限制');
 });
 
-test('L1：转发块 footer 的中性化规则在真实快照上确实命中（不是空转规则）', { skip: skipVideo }, () => {
+test('L1：转发块 footer 的规则在真实快照上确实命中（不是空转规则）', { skip: skipVideo }, () => {
   // `.retweet` 是语义类（四份快照 13 处全部一致、每个恰好 1 个 footer，§12-B15 ⑥b）。
   // 这条守卫锁两件事：① 规则真的指到了东西；② 每个转发块内恰好 1 个 footer（结构不变量）。
   const SEL = '.wbpro-scroller-item .retweet footer';

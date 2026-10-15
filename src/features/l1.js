@@ -151,15 +151,14 @@ export function l1Css() {
       + ';background:var(--w-card-background) !important;z-index:30 !important'
       + ';text-decoration:none !important'),
 
-    // ⑥b 转发原文的交互按钮行（2026-10-15 用户拍板「一并中性化」）——
-    //     转发卡有**两条**按钮行：卡自身的（⑥ 处理）与转发块内部的（原微博的计数与入口，
-    //     如「9 8 445」）。`.retweet` 是**语义类**（四份快照 13 处全部一致、每个恰好 1 个 footer）；
-    //     卡内限定防误伤。中性化 = 转中性色（图标是字体图标跟 color；数字文本继承），
-    //     零高度影响 —— 与归因条（③b）同一套语言。
-    //     ⚠️ 2026-10-15 真机二轮反馈：只转色在深色主题下**看不出区别**（原行本来就是灰白）
-    //     ⇒ 补 opacity 把整行压暗 —— opacity 不在尺寸黑名单（不改布局），观感差异明确。
-    rule(`${SEL_CARD[0]} .retweet footer`,
-      'color:var(--w-sub) !important;opacity:.55 !important'),
+    // ⑥b 转发原文的交互按钮行 → 与卡自身**同一套设计语言**（2026-10-15 用户拍板，
+    //     着眼点：整个界面最终要改成 L2 的日志/工单形态，现在就统一视觉语言）——
+    //     原行 `visibility:hidden`（空间保留），apply/summary.js 在原位叠转发摘要条
+    //     「原微博 · 7-11 17:30 · 18 转发 · 8 评论 · 156 赞」，点一下进**原微博**详情页。
+    //     （初稿只做 color+opacity 中性化，真机反馈「与原版区别不大」⇒ 升级为换语言。）
+    //     `.retweet` 是**语义类**（四份快照 13 处全部一致、每个恰好 1 个 footer）；卡内限定防误伤。
+    rule(`${SEL_CARD[0]} .retweet footer`, 'visibility:hidden !important'),
+    rule(`${SEL_CARD[0]} .retweet`, 'position:relative !important'),
 
     // ⑤ 外壳：logo 灰化（SVG 内的 fill 是硬编码的微博红，只能用滤镜压）。
     //    ⚠️ logo 是**伪装层**（§7.5-G「SpecBase」身份的一部分），不是内容配色 ——
@@ -169,4 +168,4 @@ export function l1Css() {
 }
 
 /** 规则条数（探针 / 诊断页断言用；改 `l1Css()` 时记得同步） */
-export const L1_RULE_COUNT = 17;
+export const L1_RULE_COUNT = 18;

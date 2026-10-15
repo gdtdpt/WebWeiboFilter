@@ -281,6 +281,42 @@ export function readActionBar(card) {
 }
 
 /**
+ * 读**转发原文**的按钮行（`.retweet footer`，原微博的计数与入口，§12-B15 ⑥b）。
+ *
+ * 与 `readActionBar` 同构，但作用域限定在转发块内：
+ *   · `href` / `timeText` 取自**转发块内**的时间锚（快照实测转发 footer 里没有时间锚、
+ *     真机部分版式有 ⇒ 容错：有就带上原文时间，没有就只显示计数）。
+ * @returns {?{footer:Element, counts:{…}, href:string|null, timeText:string|null}}
+ */
+export function readRetweetActionBar(card) {
+  if (!card || !card.querySelector) return null;
+  const scope = card.querySelector('.retweet');   // 文档序第一个 = 最外层转发块
+  if (!scope) return null;
+  const footer = scope.querySelector('footer');
+  if (!footer) return null;
+
+  let href = null;
+  let timeText = null;
+  const time = scope.querySelector(SEL_TIME_ANCHOR[0]);
+  if (time && isTimeTitle(time.getAttribute && time.getAttribute('title'))) {
+    const h = time.getAttribute('href');
+    if (h) href = absUrl(h);
+    timeText = (time.textContent || '').trim() || null;
+  }
+
+  return {
+    footer,
+    counts: {
+      repost: countFromActionBar(footer, SEL_ACT_RETWEET[0], null),
+      comment: countFromActionBar(footer, SEL_ACT_COMMENT[0], null),
+      like: countFromActionBar(footer, '.woo-like-main', SEL_ACT_LIKE[0]),
+    },
+    href,
+    timeText,
+  };
+}
+
+/**
  * 抽一张卡的信号包，交给 core/ad-detect 判定。
  * @param {Element} card  `.wbpro-scroller-item` 或其内部的 `article`
  * @returns {Object} 与 core/ad-detect `FeedItemSignals` 对齐，外加 id/文本等字段
