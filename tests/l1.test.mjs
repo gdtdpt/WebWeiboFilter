@@ -70,17 +70,14 @@ const SIZE_AFFECTING = [
  * 改尺寸属性的**登记表** —— 每一条都必须「有名有姓有理由」，测试按条复核：
  *   ① 行内叶子图标的 `display:none`：认证角标 `woo-icon*` / 字体图标 `woo-font--*`
  *      —— 不占行高，父容器尺寸另有来源 ⇒ 期望零布局变化（⚠️ 期望 ≠ 已验，真机仍要量）。
- *   ② `article > footer` 的 `display:none`：**A1 互动按钮行**（§12-B15，2026-10-15 用户拍板）
- *      —— 本项目**第一个登记的改高度项**：卡真实变矮 40px，前提是 §12-B12
- *      （首帧注入的 CSS 会被算进虚拟列表尺寸缓存 ⇒ 缓存按矮卡建）；真机复验「不留洞」是唯一防线。
- *   ③ `article` 的 `position:relative`：摘要条的定位上下文 —— relative 只挪坐标原点、
- *      盒子留在原处 ⇒ 不参与高度。
- *   ④ `[data-spb="stats"]`（摘要条）整条放行：它是我方**绝对定位浮层**，脱离文档流
+ *   ② `[data-spb="stats"]`（A1 摘要条）整条放行：它是我方**绝对定位浮层**，脱离文档流
  *      ⇒ 建 / 更新 / 摘除永远不改卡片高度（§12-B15）。
+ *      ℹ️ 2026-10-15 二轮拍板：A1 footer 从 `display:none` 改回 `visibility:hidden`
+ *      （40px 空位保留、摘要条永远落在空位上不遮挡内容）⇒ footer 规则**不再是改高度项**，
+ *      此处已除名 —— visibility 不在 SIZE_AFFECTING，本来就不需要登记。
  */
 const SIZE_EXEMPT = [
   { sel: /woo-icon|woo-font--/, prop: 'display', val: 'none', why: '行内叶子图标（认证角标 / 字体图标）' },
-  { sel: /article > footer$/, prop: 'display', val: 'none', why: 'A1 互动按钮行 —— 登记改高度项（§12-B15）' },
   { sel: /\.wbpro-scroller-item article$/, prop: 'position', val: 'relative', why: '摘要条定位上下文，不占布局' },
   { sel: /\[data-spb="stats"\]/, prop: '*', val: '*', why: '我方绝对定位摘要条 —— 不进布局流（§12-B15）' },
 ];
@@ -123,43 +120,61 @@ test('L1：改尺寸属性必须有 SIZE_EXEMPT 登记 —— 无名有姓才放
   }
 });
 
-test('L1：SIZE_EXEMPT 的 display:none 只许「行内叶子图标」和「A1 footer」—— 不许开后门', () => {
+test('L1：SIZE_EXEMPT 的 display:none 只许「行内叶子图标」—— 不许开后门', () => {
   // 反向守卫：如果哪天登记表被扩成"什么都放行"，这条会红。
+  // ℹ️ A1 footer 曾在此列（display:none 改高度），2026-10-15 二轮拍板改为 visibility:hidden
+  //    （空位摘要条，零高度影响）⇒ 已从登记表除名 —— 这里若再出现 footer 的 display:none 会红。
   const rules = parseRules(l1Css()).filter((r) => r.decls.some(
     (d) => d.prop === 'display' && d.value.replace(/\s*!important$/, '').trim() === 'none'));
 
-  assert.ok(rules.length > 0, 'L1 里应当还有 display:none 的登记项（图标 / A1 footer）');
+  assert.ok(rules.length > 0, 'L1 里应当还有行内图标的 display:none（认证角标 / 字体图标）');
   for (const r of rules) {
-    assert.ok(
-      /woo-icon|woo-font--/.test(r.selector) || /article > footer$/.test(r.selector),
-      `${r.selector}：display:none 只允许用在登记过的目标上（行内叶子图标 / A1 互动按钮行）`);
+    assert.ok(/woo-icon|woo-font--/.test(r.selector),
+      `${r.selector}：display:none 只允许用在行内叶子图标上（woo-icon* / woo-font--*）`);
   }
 });
 
-test('L1：A1 互动按钮行 —— footer 规则必须直接子 + 限定卡内；摘要条必须绝对定位', () => {
+test('L1：A1 互动按钮行 —— 必须 visibility:hidden（空位摘要条），禁止 display:none；转发块 footer 一并中性化', () => {
   const css = l1Css();
 
   // footer 规则恰好一条、直接子、带 SEL_CARD 前缀（页面其它 footer 不能被误伤）
-  const footer = parseRules(css).filter((r) => /article > footer/.test(r.selector));
+  const footer = parseRules(css).filter((r) => /article > footer/.test(r.selector)
+    && !r.selector.includes('.retweet'));
   assert.equal(footer.length, 1, 'footer 规则应恰好一条');
   assert.match(footer[0].selector, /^\.wbpro-scroller-item article > footer$/,
     `${footer[0].selector}：必须「卡内 + article 直接子」—— 裸锚会误伤转发块内部的 footer 与页面其它 footer`);
-  assert.match(footer[0].decls.find((d) => d.prop === 'display').value, /none/,
-    'footer 必须 display:none（A1 的改高量 = 卡片真实变矮 40px）');
+  // 🔴 必须 visibility:hidden（空位保留 40px，摘要条落在空位上不遮挡内容）；
+  //    display:none 是 2026-10-15 上午的旧稿（改高度、浮条随内容遮挡），用户二轮拍板废弃 —— 焊死。
+  const v = footer[0].decls.find((d) => d.prop === 'visibility');
+  const d = footer[0].decls.find((x) => x.prop === 'display');
+  assert.ok(v && /hidden/.test(v.value), 'footer 必须 visibility:hidden（空位摘要条定稿，§12-B15）');
+  assert.ok(!d, 'footer 禁止 display:none（2026-10-15 二轮拍板：遮挡随内容不一致，已废弃）');
+
+  // 转发原文的按钮行：中性化一条、转主题令牌、零尺寸属性
+  const retweet = parseRules(css).filter((r) => /\.retweet footer$/.test(r.selector));
+  assert.equal(retweet.length, 1, '转发块 footer 规则应恰好一条');
+  assert.match(retweet[0].selector, /^\.wbpro-scroller-item \.retweet footer$/,
+    `${retweet[0].selector}：必须卡内限定（.retweet 是通用语义，裸锚有误伤面）`);
+  assert.match(retweet[0].decls.find((x) => x.prop === 'color').value, /var\(--w-sub\)/,
+    '转发块 footer 必须转主题令牌色（禁写死，§12-B9）');
+  for (const dd of retweet[0].decls) {
+    assert.ok(!SIZE_AFFECTING.includes(dd.prop),
+      `转发块 footer 中性化不得使用尺寸属性「${dd.prop}」（零高度影响）`);
+  }
 
   // 摘要条：绝对定位 + bottom:0（不进布局流 ⇒ 建/更/摘不改卡片高度）+ 可点击（不许 pointer-events:none）
   const summary = parseRules(css).filter((r) => r.selector.includes('data-spb="stats"'));
   assert.equal(summary.length, 1, '摘要条规则应恰好一条');
-  const props = Object.fromEntries(summary[0].decls.map((d) => [d.prop, d.value]));
+  const props = Object.fromEntries(summary[0].decls.map((x) => [x.prop, x.value]));
   assert.match(props.position, /absolute/, '摘要条必须绝对定位 —— 否则它的插入会改卡片高度');
-  assert.match(props.bottom, /0/, '摘要条必须贴卡底（footer 腾出的位置）');
+  assert.match(props.bottom, /0/, '摘要条必须贴卡底（footer 空位的位置）');
   assert.ok(!props['pointer-events'], '摘要条是详情页入口，必须可点（不许 pointer-events:none）');
   assert.match(props.color, /var\(--w-sub\)/, '摘要条颜色必须走主题令牌（禁写死，§12-B9）');
-  // 2026-10-15 真机反馈：视频卡上摘要条被播放器压住 ⇒ 必须不透明底色 + 高 z 序
+  // 兜底（空位定稿后正常不重叠，但保证万一重叠也不透字）
   assert.match(props.background, /var\(--w-card-background\)/,
-    '摘要条缺不透明底色 —— 压在视频 / 图片上会不可读（§12-B15）');
+    '摘要条缺不透明底色 —— 万一与内容重叠会不可读（§12-B15）');
   assert.ok(Number.parseInt(props['z-index'], 10) >= 10,
-    '摘要条 z-index 必须压过播放器自建的层叠上下文（真机 1 不够）');
+    '摘要条 z-index 必须压过播放器自建的层叠上下文');
 
   // 定位上下文：article 必须 relative（否则摘要条会飘到更外层的定位祖先上去）
   assert.match(css, /\.wbpro-scroller-item article\{position:relative/,
@@ -340,6 +355,23 @@ test('L1：社交归因条的选择器在真实快照上确实命中（不是空
   assert.ok(sawArrowTotal > sawArrowInRow,
     `实测应存在归因条之外的 angleDown 图标（全页 ${sawArrowTotal} / 行内 ${sawArrowInRow}）`
     + ' —— 若已不存在，需重新评估这条限制');
+});
+
+test('L1：转发块 footer 的中性化规则在真实快照上确实命中（不是空转规则）', { skip: skipVideo }, () => {
+  // `.retweet` 是语义类（四份快照 13 处全部一致、每个恰好 1 个 footer，§12-B15 ⑥b）。
+  // 这条守卫锁两件事：① 规则真的指到了东西；② 每个转发块内恰好 1 个 footer（结构不变量）。
+  const SEL = '.wbpro-scroller-item .retweet footer';
+  let total = 0;
+
+  for (const file of fixtures) {
+    const { document } = parseHTML(readFileSync(join(FIXTURE_DIR, file), 'utf8'));
+    const n = document.querySelectorAll(SEL).length;
+    const blocks = document.querySelectorAll('.wbpro-scroller-item .retweet');
+    assert.equal(n, blocks.length,
+      `${file}: 转发块 ${blocks.length} 个，但 footer 命中 ${n} 个 —— 每块应恰好 1 个`);
+    total += n;
+  }
+  assert.ok(total > 0, '所有夹具都没有转发块 footer ⇒ 这条守卫在空转（夹具可能全是原创卡）');
 });
 
 test('appearanceCss：L2 蕴含 L1；两个都关时一条规则都不注入', () => {

@@ -125,31 +125,38 @@ export function l1Css() {
     // 只走两层，避免把视频控件等深层元素的样式一起杀掉。
     rule(`${SEL_CARD[0]} > *,${SEL_CARD[0]} > * > *`, 'border-radius:0 !important;box-shadow:none !important'),
 
-    // ⑥ A1：互动按钮行 → 缩略为摘要条（2026-10-15 用户拍板方案 ②，§12-B15）
+    // ⑥ A1：互动按钮行 → 空位摘要条（§12-B15；2026-10-15 用户**二轮拍板**定稿）
     //    用户诉求（原话）：「还是希望看到原微博的转发评论列表，但是又不想用 hover
-    //    这种容易被误触的方式」⇒ footer 整行收掉（卡真实矮 40px），由 apply/summary.js
-    //    在原位置叠一条摘要条 <a>（「52 转发 · 3 评论 · 21 赞」），**点一下**直达详情页。
-    //
-    //    ⚠️⚠️ 这是**登记过的改高度项**（`tests/l1.test.mjs` 的 SIZE_EXEMPT 里有名有姓）：
-    //    §12-B12 已验「首帧注入的 CSS 会被算进虚拟列表尺寸缓存」⇒ 缓存按矮卡建 ⇒ 预期无洞，
-    //    但**真机复验「不留洞」仍是唯一防线**（滚动 + 反复上下 + `__spb.off()` 恢复）。
-    //    直接子选择器天然避开转发块内部自己的 footer（§12-B13 ①）。
-    rule(`${SEL_CARD[0]} ${SEL_ACTION_BAR[0]}`, 'display:none !important'),
+    //    这种容易被误触的方式」⇒ 由 apply/summary.js 在 footer 原位置叠一条摘要条
+    //    <a>（「52 转发 · 3 评论 · 21 赞」），**点一下**直达详情页。
+    //    🔴 **二轮修正（同日真机反馈）**：最初 footer `display:none` 收掉 40px（改高度），
+    //    摘要条浮在腾出的空间里 —— 但腾出的空间高度**随卡内容不同**（视频/大图贴底），
+    //    浮条落点不一致、必然遮挡媒体，用户判「不美观」。⇒ 定稿：footer **不收了**，
+    //    改 `visibility:hidden`（40px 空位保留 —— 那里本来就是空的），摘要条永远落在
+    //    空位上，**不遮挡任何内容、观感恒定**；代价是放弃 -40px（A1 退化为零高度影响项）。
+    //    「改高度批次第一枪」由此让位给后续项；真收口重排仍属 L2。
+    rule(`${SEL_CARD[0]} ${SEL_ACTION_BAR[0]}`, 'visibility:hidden !important'),
     //    摘要条的定位上下文：article 转 relative **不占布局、不参与高度**（relative 只挪坐标原点，
     //    盒子留在原处）⇒ 零高度影响。⚠️ 真机要顺带看一眼卡内有没有绝对定位的微博元素
     //    因定位上下文改变而错位（目前已知卡内视频控件锚在自己的 .video-js 上，不受影响）。
     rule(`${SEL_CARD[0]} article`, 'position:relative !important'),
-    //    摘要条本体：绝对定位浮在 footer 腾出的空间里，**不进布局流** ⇒ 它的建立 / 更新 /
+    //    摘要条本体：绝对定位浮在 footer 的空位上，**不进布局流** ⇒ 它的建立 / 更新 /
     //    摘除永远不改卡片高度。整条是 <a>（刻意点击，无 hover —— 用户明确不要 hover）。
-    //    ⚠️ 必须带**不透明底色 + 高 z 序**（2026-10-15 真机反馈：视频卡上摘要条被播放器
-    //    压在下面，半截字看不见）—— 底色取卡片背景令牌，z 序压过播放器自建的层叠上下文；
-    //    视频卡上它盖的只是播放器最底一条的**中间**（左右是微博自己的「观看次数 / 时长」，错开）。
+    //    ⚠️ 不透明底色 + 高 z 序是**兜底**（2026-10-15 真机：视频贴底卡上曾被播放器压住）
+    //    —— 空位定稿后正常情况不与任何内容重叠，但底色保证万一重叠也不透字。
     rule(SUMMARY_SEL[0],
       'position:absolute !important;left:0 !important;right:0 !important;bottom:0 !important'
       + ';display:flex !important;align-items:center !important;justify-content:center !important'
       + ';font-size:13px !important;color:var(--w-sub) !important;opacity:.6 !important'
       + ';background:var(--w-card-background) !important;z-index:30 !important'
       + ';text-decoration:none !important'),
+
+    // ⑥b 转发原文的交互按钮行（2026-10-15 用户拍板「一并中性化」）——
+    //     转发卡有**两条**按钮行：卡自身的（⑥ 处理）与转发块内部的（原微博的计数与入口，
+    //     如「9 8 445」）。`.retweet` 是**语义类**（四份快照 13 处全部一致、每个恰好 1 个 footer）；
+    //     卡内限定防误伤。中性化 = 转中性色（图标是字体图标跟 color；数字文本继承），
+    //     零高度影响 —— 与归因条（③b）同一套语言。
+    rule(`${SEL_CARD[0]} .retweet footer`, 'color:var(--w-sub) !important'),
 
     // ⑤ 外壳：logo 灰化（SVG 内的 fill 是硬编码的微博红，只能用滤镜压）。
     //    ⚠️ logo 是**伪装层**（§7.5-G「SpecBase」身份的一部分），不是内容配色 ——
@@ -159,4 +166,4 @@ export function l1Css() {
 }
 
 /** 规则条数（探针 / 诊断页断言用；改 `l1Css()` 时记得同步） */
-export const L1_RULE_COUNT = 16;
+export const L1_RULE_COUNT = 17;
