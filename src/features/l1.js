@@ -57,42 +57,54 @@ function rule(selector, body) {
 }
 
 /**
+ * 媒体缩略化的默认上限（px）。**审美参数**（用户 2026-10-15「图片还是过大，再小一点」，
+ * 从 140 压到 110；横图 126 / 九宫格 132.6 从此不再免疫，尺寸更统一）——
+ * 可通过 `appearance.mediaMaxH` 覆盖（`__spb.appearance({ mediaMaxH: 96 })` + 刷新即可试值）。
+ */
+export const DEFAULT_MEDIA_MAX_H = 110;
+
+/** 容错：非法值（非数值 / 非正数）回退默认，越界值夹回 [40, 400] */
+function normalizeMaxH(v) {
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_MEDIA_MAX_H;
+  return Math.min(400, Math.max(40, Math.round(n)));
+}
+
+/**
  * 生成 L1 的 CSS 文本。逐组说明「为什么它不改高度」。
  *
  * @param {Object} [cfg] 完整配置；`cfg.appearance.mediaCaps` 门控 ⑦/⑦b 三条媒体尺寸规则
- *   （B17 黑图归因实验，见 config.js 注释；L1 其余规则一律不受影响）：
- *   - `true` / 缺省 = 全量注入（常态）
- *   - `false` = 三条全摘（已实测：黑图消失）
- *   - `'onlyCap'` = 只留 max-height:140（摘 img 规则 + u-col-1 规则）
- *   - `'noRow'`   = 摘 u-col-1 一条（留 max-height + img）
- *   - `'noImg'`   = 摘 img 一条（留 max-height + u-col-1）
- *   - 其他值按全量处理（容错）
+ *   （B17 黑图归因，✅ 已结案 2026-10-15，见 config.js 注释；L1 其余规则一律不受影响）：
+ *   - `true` / 缺省 / `'all'` / `'cover'` / 未知值 = **cover 全接管形态**（默认，真机实锤无黑图）
+ *   - `false` = 三条全摘（归因对照；已实测无黑图）
+ *   - `'partial'` = 旧 partial 形态（height:100%+top:auto）—— 🔴 **B17 黑图凶手**，
+ *     仅留作法证复现档，**永不进默认路径**
+ *   `cfg.appearance.mediaMaxH` = 容器 max-height 上限（默认 {@link DEFAULT_MEDIA_MAX_H}）。
  * @returns {string}
  */
 export function l1Css(cfg) {
-  const mc = cfg && cfg.appearance ? cfg.appearance.mediaCaps : undefined;
-  const mode = mc === false ? 'off'
-    : (mc == null || mc === true || ['onlyCap', 'noRow', 'noImg', 'cover'].indexOf(mc) < 0) ? 'all'
-    : mc;
-  // img 规则的两种形态（B17 二分定论 2026-10-15：'partial' 形态 = 黑图凶手）：
+  const a = cfg && cfg.appearance ? cfg.appearance : {};
+  const mc = a.mediaCaps;
+  const mode = mc === false ? 'off' : mc === 'partial' ? 'partial' : 'all';
+  const capPx = normalizeMaxH(a.mediaMaxH);
+  // img 规则的两种形态（B17 结案 2026-10-15：'partial' 形态 = 黑图凶手，'cover' = 修复）：
   // · 'partial'（height:100%+top:auto）—— 🔴 真机实锤致「空 slot 黑图」（'noRow' 档黑、
-  //   'onlyCap' 档净）。机制猜想：微博 JS 裁切给 img 写「尺寸+负偏移」**配对**内联
-  //   （竖图 height:133%+top:-33%，横图 height:100%+width:180%+left:-34%），部分覆盖
+  //   'onlyCap' 档净，刷新级二分三轮）。机制：微博 JS 裁切给 img 写「尺寸+负偏移」**配对**内联
+  //   （竖图 height:133%+top:-33%，横图 height:100%+width:180%+left:-34%），partial 部分覆盖
   //   这对内联 ⇒ 加载器首帧读到自相矛盾的几何 → 判定异常 → **单向锁存**不挂 img。
-  //   仅保留作归因对照档（'all'/'noRow'），**不进默认路径**。
-  // · 'cover' —— 修复候选：**全几何接管**（width/height 100% + top/left 0 +
+  //   仅存 'partial' 法证档，不进默认路径。
+  // · 'cover' —— 修复（真机实锤干净）：**全几何接管**（width/height 100% + top/left 0 +
   //   object-fit:cover），把配对内联**整体**作废 —— 没有残留偏移可错，也不需要
   //   微博的 JS 裁切（CSS 原生 cover 居中裁切；微博用 JS 方案是为了智能取景，我们不在乎）。
   //   同时天然消掉 34.6px 竖图错位与 84px 单图行空白。
-  const imgMode = (mode === 'all' || mode === 'noRow') ? 'partial'
-    : mode === 'cover' ? 'cover' : null;
+  const imgMode = mode; // 'all' 与 'partial' 都注入 img 规则，只是形态不同
   const keep = {
-    img: imgMode !== null,
-    row: mode === 'all' || mode === 'noImg' || mode === 'cover',
+    img: imgMode !== 'off',
+    row: mode !== 'off',
     cap: mode !== 'off', // 除 false 全摘外，max-height 恒保留
   };
   const IMG_RULE =
-    imgMode === 'cover'
+    imgMode === 'all'
       ? 'width:100% !important;height:100% !important;top:0 !important;left:0 !important'
         + ';object-fit:cover !important'
       : 'height:100% !important;top:auto !important';
@@ -108,8 +120,8 @@ export function l1Css(cfg) {
         //    外层行 `.u-col-1` 带着**同样的内联 height:224px**（夹具四份 10/10：卡内 u-col-1 全部
         //    且仅是单图行，九宫格走 u-col-3/4 且无内联高度）。只压内层 ⇒ 图缩了、行没缩，
         //    卡片下方留 84px 空白（用户截图实锤）。修法 = 行高 `height:auto` 压掉重复的内联高度，
-        //    让行回归**内容高**（已被 ⑦ 压到 ≤140 的图；横图 126 时 auto=126，数值法语义不变）。
-        //    ⚠️ 不能给 u-col-1 也上 max-height:140 —— 万一微博哪天把更高的合法内容放进行里，
+        //    让行回归**内容高**（图已被 ⑦ 压到上限内；数值法语义不变）。
+        //    ⚠️ 不能给 u-col-1 也上 max-height —— 万一微博哪天把更高的合法内容放进行里，
         //    auto 只「去掉重复声明」、不引入新的裁切面，比再压一次 140 更保守。
         //    作用域同轮收窄（评论面板豁免，见 ⑦ 注）。
         rule(`${SEL_CARD[0]} .wbpro-feed-content .u-col-1,${SEL_CARD[0]} .retweet .u-col-1`,
@@ -118,7 +130,7 @@ export function l1Css(cfg) {
     keep.cap
       ? //    容器压高放最后（⑦ 本体；读数依据与收窄说明见 ⑦ 注释块）。
         rule(`${SEL_CARD[0]} .wbpro-feed-content .woo-picture-main,${SEL_CARD[0]} .retweet .woo-picture-main`,
-          'max-height:140px !important')
+          `max-height:${capPx}px !important`)
       : '',
   ].filter(Boolean);
 
@@ -227,12 +239,13 @@ export function l1Css(cfg) {
     rule(`${SEL_CARD[0]} .retweet footer`, 'visibility:hidden !important'),
     rule(`${SEL_CARD[0]} .retweet`, 'position:relative !important'),
 
-    // ⑦ 媒体缩略化（2026-10-15 用户拍板 140px，§12-B16）—— **改高度项，SIZE_EXEMPT 有登记**
+    // ⑦ 媒体缩略化（2026-10-15 用户拍板；上限现由 `mediaMaxH` 控制，默认 110px，§12-B16/B17）
+    //    —— **改高度项，SIZE_EXEMPT 有登记**
     //    probeMedia() 真机读数（11 卡 9 媒体块）：高度全是**显式固定像素**（竖图容器 224px、
     //    横图 126px、九宫格格子 132.6px），img `position:absolute + object-fit:cover` 内建
-    //    ⇒ 手法 = 容器 `max-height` 压过显式 height（标准 CSS 行为）+ img `height:100%` 跟随。
-    //    ⭐ 数值法的妙处：**只有高于阈值的媒体被压** —— 横图 126 / 九宫格 132.6 天然免疫，
-    //    不需要按「单图 / 多图 / 横竖」分类写选择器（那要锚 `_picTall_/_inlineNum3_` 哈希，⛔）。
+    //    ⇒ 手法 = 容器 `max-height` 压过显式 height（标准 CSS 行为）+ img 全几何接管（cover 形态）。
+    //    ⭐ 数值法的妙处：**只有高于阈值的媒体被压** —— 上限 140 时代横图 126 / 九宫格 132.6
+    //    天然免疫；2026-10-15 用户「图片还是过大」压到 110 后横图 / 九宫格一并入笼（尺寸更统一）。
     //    锚 `.woo-picture-main`（**库类**，probeMedia 四快照一致）；图片源全是 orj360 缩略图 ⇒ 不损清晰度。
     //    🔴 **三轮收窄（2026-10-15 真机实锤）**：评论面板（摘要条点开的原生评论区）在**卡内**、
     //    复用同一批组件类 ⇒ 裸的「卡内 .woo-picture-main」会**误伤评论图**（错位 + 黑框，

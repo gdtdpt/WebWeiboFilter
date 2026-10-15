@@ -23,7 +23,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { l1Css, L1_RULE_COUNT } from '../src/features/l1.js';
+import { l1Css, L1_RULE_COUNT, DEFAULT_MEDIA_MAX_H } from '../src/features/l1.js';
 import { appearanceCss } from '../src/features/appearance.js';
 import { composeCss, ensureStyle, FILTER_CSS, STYLE_ID } from '../src/apply/style.js';
 import { FIXTURE_DIR, fixtures } from './_fixture-expect.mjs';
@@ -81,13 +81,18 @@ const SIZE_EXEMPT = [
   { sel: /\.wbpro-scroller-item article$/, prop: 'position', val: 'relative', why: '摘要条定位上下文，不占布局' },
   { sel: /\.wbpro-scroller-item \.retweet$/, prop: 'position', val: 'relative', why: '转发摘要条定位上下文，不占布局' },
   { sel: /\[data-spb="stats"\]/, prop: '*', val: '*', why: '我方绝对定位摘要条 —— 不进布局流（§12-B15）' },
-  { sel: /\.woo-picture-main$/, prop: 'max-height', val: '140px',
-    why: '媒体缩略化 —— 登记改高度项（§12-B16，probeMedia 读数定稿 140px）；'
-      + '2026-10-15 三轮收窄：作用域限定 feed-content/retweet（评论面板豁免，防误伤评论图）' },
-  { sel: /\.woo-picture-main img$/, prop: 'height', val: '100%', why: 'img 跟随缩后的容器，cover 重算（§12-B16）' },
-  { sel: /\.woo-picture-main img$/, prop: 'top', val: 'auto',
-    why: '微博 JS 裁切方案的残留负偏移（top:-33%）必须清零 —— height:100% 压掉 height:133% 后'
-      + ' top 残留会让竖图格底部露空（2026-10-15 真机「有的缩有的不缩」实锤，§12-B16）' },
+  { sel: /\.woo-picture-main$/, prop: 'max-height', val: `${DEFAULT_MEDIA_MAX_H}px`,
+    why: '媒体缩略化 —— 登记改高度项（§12-B16；上限 = mediaMaxH，默认 110，2026-10-15 用户「再小一点」）；'
+      + '三轮收窄：作用域限定 feed-content/retweet（评论面板豁免，防误伤评论图）' },
+  // cover 全接管形态（B17 结案定稿）：配对内联（尺寸+负偏移）必须**整体**作废 ——
+  // partial 形态（只压 height 留 top:auto）= B17 黑图凶手，严禁回潮。
+  { sel: /\.woo-picture-main img$/, prop: 'width', val: '100%',
+    why: 'cover 全接管：横图配对内联的 width:180% 必须作废（§12-B17）' },
+  { sel: /\.woo-picture-main img$/, prop: 'height', val: '100%', why: 'img 跟随缩后的容器，cover 重算（§12-B16/B17）' },
+  { sel: /\.woo-picture-main img$/, prop: 'top', val: '0',
+    why: 'cover 全接管：竖图配对负偏移（top:-33%）整体作废 —— partial 的 top:auto = B17 黑图凶手，已废' },
+  { sel: /\.woo-picture-main img$/, prop: 'left', val: '0',
+    why: 'cover 全接管：横图配对负偏移（left:-34%）整体作废（§12-B17）' },
   { sel: /\.wbpro-scroller-item \.(wbpro-feed-content|retweet) \.u-col-1$/, prop: 'height', val: 'auto',
     why: '单图行容器带着与图相同的内联 height:224（2026-10-15 真机踩坑：只压内层留 84px 空白）'
       + ' —— auto 压掉重复声明、行回归内容高，不引入新裁切面（§12-B16）；'
@@ -138,45 +143,38 @@ test('L1：mediaCaps:false 只摘媒体尺寸规则组（B17 黑图归因开关�
   assert.ok(!sizeProps.includes('max-height'), 'max-height 应随 mediaCaps 摘除');
 });
 
-test('L1：mediaCaps 字符串档位 = 逐条二分（B17 归因第二阶段，§12-B17）', () => {
-  const selOf = (css, key) => parseRules(css).filter(
-    (r) => r.selector.includes(key) || r.decls.some((d) => d.prop.includes(key) || d.value.includes(key)),
-  );
-  // 'onlyCap'：只留 max-height（img 与 u-col-1 都摘）—— 20 条
-  const onlyCap = parseRules(l1Css({ appearance: { mediaCaps: 'onlyCap' } }));
-  assert.equal(onlyCap.length, L1_RULE_COUNT - 2, 'onlyCap = 摘 img + u-col-1 两条');
-  assert.equal(selOf(l1Css({ appearance: { mediaCaps: 'onlyCap' } }), 'max-height').length, 1,
-    'onlyCap 必须保留 max-height:140');
-  assert.equal(selOf(l1Css({ appearance: { mediaCaps: 'onlyCap' } }), 'u-col-1').length, 0,
-    'onlyCap 必须摘掉 u-col-1');
-  // 'noRow'：摘 u-col-1 一条（max-height + img 保留）—— 21 条
-  const noRow = parseRules(l1Css({ appearance: { mediaCaps: 'noRow' } }));
-  assert.equal(noRow.length, L1_RULE_COUNT - 1, 'noRow = 只摘 u-col-1');
-  assert.equal(selOf(l1Css({ appearance: { mediaCaps: 'noRow' } }), 'u-col-1').length, 0);
-  assert.ok(selOf(l1Css({ appearance: { mediaCaps: 'noRow' } }), 'max-height').length === 1
-    && selOf(l1Css({ appearance: { mediaCaps: 'noRow' } }), 'woo-picture-main img').length === 1,
-    'noRow 保留 max-height 与 img 规则');
-  // 'noImg'：摘 img 一条（max-height + u-col-1 保留）—— 21 条
-  const noImg = parseRules(l1Css({ appearance: { mediaCaps: 'noImg' } }));
-  assert.equal(noImg.length, L1_RULE_COUNT - 1, 'noImg = 只摘 img 规则');
-  assert.equal(selOf(l1Css({ appearance: { mediaCaps: 'noImg' } }), 'woo-picture-main img').length, 0,
-    'noImg 必须摘掉 img 规则');
-  assert.equal(selOf(l1Css({ appearance: { mediaCaps: 'noImg' } }), 'u-col-1').length, 1,
-    'noImg 保留 u-col-1');
-  // 未知值容错 = 全量（22 条）
-  assert.equal(parseRules(l1Css({ appearance: { mediaCaps: 'bogus' } })).length, L1_RULE_COUNT,
-    '未知 mediaCaps 值按全量处理');
+test('L1：mediaCaps 档位清理（B17 结案）—— 默认/未知值 = cover 全接管；partial 仅存法证对照', () => {
+  const imgRuleOf = (css) => parseRules(css).find((r) => r.selector.includes('.woo-picture-main img'));
+  // 默认家族（true / 缺省 / 'all' / 'cover' / 未知值容错）= cover 全接管，22 条全量
+  for (const mc of [undefined, true, 'all', 'cover', 'bogus']) {
+    const css = mc === undefined ? l1Css() : l1Css({ appearance: { mediaCaps: mc } });
+    assert.equal(parseRules(css).length, L1_RULE_COUNT, `mediaCaps=${String(mc)} 应全量 ${L1_RULE_COUNT} 条`);
+    const img = imgRuleOf(css);
+    assert.ok(img && img.decls.some((d) => d.prop === 'object-fit'),
+      `mediaCaps=${String(mc)} 的 img 规则必须是 cover 全接管`);
+    assert.ok(img && !img.decls.some((d) => d.value.includes('auto')),
+      `mediaCaps=${String(mc)} 不得残留 auto（partial 形态 = B17 黑图凶手，严禁回潮）`);
+  }
+  // 'partial' 法证对照档：22 条、img = height:100% + top:auto、无 object-fit（B17 复现用，勿用于日常）
+  const partial = parseRules(l1Css({ appearance: { mediaCaps: 'partial' } }));
+  assert.equal(partial.length, L1_RULE_COUNT, 'partial 档也应全量（只是 img 换回凶手形态）');
+  const pimg = imgRuleOf(l1Css({ appearance: { mediaCaps: 'partial' } }));
+  assert.ok(pimg, 'partial 档必须有 img 规则');
+  assert.ok(pimg.decls.some((d) => d.prop === 'top' && d.value.includes('auto')),
+    'partial 档 img 必须 top:auto（凶手形态特征，供法证复现）');
+  assert.ok(!pimg.decls.some((d) => d.prop === 'object-fit'), 'partial 档不得有 object-fit');
 });
 
-test('L1：mediaCaps:\'cover\' = img 规则换全几何接管（B17 修复候选，§12-B17）', () => {
+test('L1：默认路径 = cover 全接管（B17 修复定稿，§12-B17）', () => {
   // 二分定论（2026-10-15）：'partial' 形态（height:100%+top:auto）= 黑图凶手 ——
-  // 机制猜想：微博 JS 裁切的「尺寸+负偏移」是**配对**内联，部分覆盖 ⇒ 加载器首帧
+  // 机制：微博 JS 裁切的「尺寸+负偏移」是**配对**内联，部分覆盖 ⇒ 加载器首帧
   // 读到自相矛盾的几何 → 单向锁存不挂 img。'cover' = 全接管，无残留可错。
-  const rules = parseRules(l1Css({ appearance: { mediaCaps: 'cover' } }));
-  assert.equal(rules.length, L1_RULE_COUNT, 'cover 档三条都在（img 换形态）');
+  // ✅ 用户真机实测（2026-10-15）：'cover' 刷新后无黑图、其他正常 ⇒ 默认路径切 cover。
+  const rules = parseRules(l1Css());
+  assert.equal(rules.length, L1_RULE_COUNT, '默认档三条都在（img 换形态）');
 
   const imgRule = rules.find((r) => r.selector.includes('.woo-picture-main img'));
-  assert.ok(imgRule, 'cover 档必须有 img 规则');
+  assert.ok(imgRule, '默认档必须有 img 规则');
   const val = (p) => { const d = imgRule.decls.find((x) => x.prop === p); return d ? d.value.replace(/ !important$/, '') : null; };
   assert.equal(val('width'), '100%', '全接管必须 width:100%（配对内联的 width 也要作废）');
   assert.equal(val('height'), '100%', '全接管必须 height:100%');
@@ -184,11 +182,25 @@ test('L1：mediaCaps:\'cover\' = img 规则换全几何接管（B17 修复候选
   assert.equal(val('left'), '0', '全接管 left 必须归零（横图配对内联的 left:-34% 也要作废）');
   assert.equal(val('object-fit'), 'cover', '必须 object-fit:cover 接管居中裁切');
   assert.ok(!imgRule.decls.some((d) => d.value.includes('auto')),
-    'cover 档 img 规则不得残留任何 auto（partial 形态的标志）');
+    '默认档 img 规则不得残留任何 auto（partial 形态的标志）');
 
-  // u-col-1 与 max-height 在 cover 档都必须在（消 84px 空白 + 压高）
-  assert.ok(rules.some((r) => r.selector.includes('u-col-1')), 'cover 档保留 u-col-1 height:auto');
-  assert.ok(rules.some((r) => r.decls.some((d) => d.prop === 'max-height')), 'cover 档保留 max-height:140');
+  // u-col-1 与 max-height 在默认档都必须在（消 84px 空白 + 压高）
+  assert.ok(rules.some((r) => r.selector.includes('u-col-1')), '默认档保留 u-col-1 height:auto');
+  assert.ok(rules.some((r) => r.decls.some((d) => d.prop === 'max-height')), '默认档保留 max-height');
+});
+
+test('L1：mediaMaxH 可调（审美参数，2026-10-15 用户「图片还是过大」）—— 合法值生效、非法值回退', () => {
+  assert.match(l1Css({ appearance: { mediaMaxH: 96 } }), /max-height:96px !important/,
+    '合法数值必须直接生效（控制台试值用）');
+  // 非法值（字符串 / 负数 / NaN）一律回退默认，绝不能把「NaNpx」打进 CSS
+  for (const bad of ['x', -20, NaN, null]) {
+    const css = l1Css({ appearance: { mediaMaxH: bad } });
+    assert.match(css, new RegExp(`max-height:${DEFAULT_MEDIA_MAX_H}px !important`),
+      `mediaMaxH=${String(bad)} 应回退默认 ${DEFAULT_MEDIA_MAX_H}px`);
+  }
+  // 越界值夹回 [40, 400]，不回退（用户手滑也不至于炸布局）
+  assert.match(l1Css({ appearance: { mediaMaxH: 9999 } }), /max-height:400px !important/, '上限夹 400');
+  assert.match(l1Css({ appearance: { mediaMaxH: 1 } }), /max-height:40px !important/, '下限夹 40');
 });
 
 test('L1：每条规则都带 !important（这是一套覆盖微博主题的样式）', () => {
@@ -321,13 +333,16 @@ test('L1：媒体缩略化（§12-B16，改高度项）—— 数值法 max-heig
     '容器变体 ① 必须卡内 + feed-content 限定 + 库类锚（_picTall_/_inlineNum3_ 是哈希 ⛔）');
   assert.match(containerSel[1], /^\.wbpro-scroller-item \.retweet \.woo-picture-main$/,
     '容器变体 ② 必须卡内 + retweet 限定');
-  assert.match(container.decls.find((d) => d.prop === 'max-height').value, /^140px/,
-    '容器 max-height 必须是 140px（用户 2026-10-15 拍板）');
+  assert.match(container.decls.find((d) => d.prop === 'max-height').value,
+    new RegExp(`^${DEFAULT_MEDIA_MAX_H}px`),
+    `容器 max-height 必须是默认 ${DEFAULT_MEDIA_MAX_H}px（mediaMaxH 控制，2026-10-15 用户「再小一点」）`);
   assert.match(img.decls.find((d) => d.prop === 'height').value, /^100%/,
     'img 必须 height:100% 跟随容器（否则 cover 仍按原 224px 框裁切）');
-  assert.match(img.decls.find((d) => d.prop === 'top').value, /^auto/,
-    'img 必须 top:auto —— 微博 JS 裁切方案的负偏移（top:-33%）不清零，竖图格底部会露空'
-    + '（2026-10-15 真机「有的缩有的不缩」实锤，§12-B16）');
+  assert.match(img.decls.find((d) => d.prop === 'top').value, /^0/,
+    'img 必须 top:0 —— cover 全接管把配对负偏移整体作废'
+    + '（旧 top:auto = B17 黑图凶手，严禁回潮，§12-B17）');
+  assert.match(img.decls.find((d) => d.prop === 'object-fit').value, /^cover/,
+    'img 必须 object-fit:cover（CSS 原生居中裁切接管微博的 JS 裁切，§12-B17）');
 
   // ⑦b 单图行容器：必须存在、必须 height:auto（不是再压一次 140）、必须同轮收窄的作用域
   const row = parseRules(css).find((r) => /\.wbpro-scroller-item \.(wbpro-feed-content|retweet) \.u-col-1$/.test(r.selector));
@@ -638,11 +653,12 @@ test('L1：单图行规则确实命中真快照，且 u-col-1 在卡内全部是
     '所有夹具里都没有卡内 u-col-1 ⇒ 规则空转（单图行锚点可能已失效，或夹具换了一批）');
 });
 
-test('L1：微博 JS 裁切方案确实存在「负 top 偏移」的竖图格（img top:auto 的机制前提）', { skip: skipVideo }, () => {
+test('L1：微博 JS 裁切方案确实存在「负 top 偏移」的竖图格（img 全接管 cover 的机制前提）', { skip: skipVideo }, () => {
   // 起因（2026-10-15 真机「九宫格有的缩有的不缩」）：微博按图片原始比例给 img 写内联
-  // 「height:133% + top:-33%」做居中裁切 —— 我们的 height:100% 压掉 height 后 top 残留
-  // ⇒ 竖图格底部露空。img 规则因此必须带 top:auto。这条测试焊住机制前提：
-  // 夹具里必须能找到「负 top 偏移」的 img（微博改掉这套方案时这里先红，届时 top:auto 需重评）。
+  // 「height:133% + top:-33%」做居中裁切 —— 旧的 partial 覆盖（height:100%+top:auto）
+  // 会留下自相矛盾的几何，B17 实锤为黑图凶手 ⇒ 现行 cover 全接管把配对内联整体作废。
+  // 这条测试焊住机制前提：夹具里必须能找到「负 top 偏移」的 img
+  //（微博改掉这套方案时这里先红，届时 cover 的必要性需重评）。
   let sawOffset = 0;
   for (const file of fixtures) {
     const { document } = parseHTML(readFileSync(join(FIXTURE_DIR, file), 'utf8'));
