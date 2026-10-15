@@ -1,0 +1,232 @@
+/**
+ * 现场探针：媒体尺寸取样（媒体缩略化前置 · 2026-10-15，Console 用）
+ *
+ * ── 为什么有这个探针 ────────────────────────────────────────────────
+ * 媒体缩略化是「改高度」批次剩余项里收益最大的一项（§12-B12 前提已验：首帧注入的 CSS
+ * 会被算进虚拟列表尺寸缓存）。但**缩多少、用什么属性缩**不能猜：
+ *   ① 单图 / 九宫格 / 视频的实际渲染尺寸分布从未采样；
+ *   ② 九宫格容器类名（_inlineNum3_*）是**构建哈希**（B2 踩过）⇒ 锚点要现场重新确认；
+ *   ③ 高度由什么决定（aspect-ratio？固定高？padding-bottom 占位？）决定缩高手法。
+ * 本探针一次采全页可见卡，输出聚合 + 逐卡明细，回传 JSON 后定稿设计。
+ *
+ * ── 用法 ──────────────────────────────────────────────────────────
+ *   ① 首页信息流滚到**有图 / 有视频**的位置（多滚几屏，让不同类型都出现）
+ *   ② F12 → Console，把本文件全部内容粘进去（挂上 window.probeMedia）
+ *   ③ 跑：`probeMedia()`
+ *   ④ 先看 verdict 与 summary 再复制全部输出（结果走下载 / 剪贴板出口，控制台打印的对象复制不出来）
+ *
+ * ⚠️ 读数自检（§12-B10 纪律）：探针能识别「页面异常态」并拒绝给结论 ——
+ *    槽位矩形全零而 translateY 有值 ⇒ 某祖先被 display:none ⇒ boxesMissing 闸。
+ */
+
+function probeMedia() {
+  var clip = function (s, n) {
+    s = (s == null ? '' : String(s)).replace(/\s+/g, ' ').trim();
+    n = n || 60;
+    return s.length > n ? s.slice(0, n) + '…' : s;
+  };
+  var clsOf = function (e) {
+    var c = e.getAttribute && e.getAttribute('class');
+    return c ? clip(c, 120) : '';
+  };
+  var desc = function (e) {
+    return e.tagName.toLowerCase() + (clsOf(e) ? '.' + clsOf(e).replace(/\s+/g, '.') : '');
+  };
+  /** 向上取 n 层祖先的描述链（判断「哪层可锚」用） */
+  var chainOf = function (node, n) {
+    var out = [], p = node.parentElement, k = n || 4;
+    while (p && k-- > 0) { out.push(desc(p)); p = p.parentElement; }
+    return out;
+  };
+  var r = function (e) {
+    var b = e.getBoundingClientRect();
+    return { w: +b.width.toFixed(1), h: +b.height.toFixed(1), top: +b.top.toFixed(1) };
+  };
+  /** 关键 computed style（高度由什么决定，一眼可查） */
+  var csOf = function (e) {
+    var cs;
+    try { cs = getComputedStyle(e); } catch (_e) { return null; }
+    if (!cs) return null;
+    return {
+      aspectRatio: cs.aspectRatio,
+      height: cs.height,
+      paddingBottom: cs.paddingBottom,
+      objectFit: cs.objectFit,
+      display: cs.display,
+      position: cs.position,
+      overflow: cs.overflow,
+    };
+  };
+
+  var cards = document.querySelectorAll('.vue-recycle-scroller__item-wrapper > .vue-recycle-scroller__item-view');
+  if (!cards.length) {
+    cards = document.querySelectorAll('.wbpro-scroller-item');
+    if (!cards.length) return { error: '页面上找不到信息流卡（要在微博首页信息流里跑）' };
+  }
+
+  var boxesMissing = 0;
+  var items = [];          // 每个媒体块一条记录
+  var cardsOut = [];       // 每卡一条摘要
+  var noMedia = 0;
+
+  for (var i = 0; i < cards.length; i++) {
+    var slot = cards[i];
+    var card = slot.querySelector('.wbpro-scroller-item') || slot;
+    var transform = slot.style && slot.style.transform || '';
+    var box = r(card);
+    // 🔴 异常态闸：矩形全零而 translateY 有值 ⇒ 有祖先被 display:none，读数无效
+    var missing = box.h === 0 && box.top === 0 && /translateY/.test(transform) && !/translateY\(0px\)/.test(transform);
+    if (missing) { boxesMissing++; continue; }
+
+    // 帖 ID（时间链接 /weibo.com/<uid>/<bid>）
+    var postId = null, m, as = card.querySelectorAll('a[href]');
+    for (var k = 0; k < as.length && !postId; k++) {
+      m = /weibo\.com\/\d+\/([A-Za-z0-9]+)/.exec(as[k].getAttribute('href') || '');
+      if (m) postId = m[1];
+    }
+
+    var content = card.querySelector('.wbpro-feed-content') || card.querySelector('article') || card;
+
+    // ── ① 视频（video.js）──
+    var videoEls = content.querySelectorAll('.video-js');
+    var video = null;
+    if (videoEls.length) {
+      var vj = videoEls[0];
+      var poster = vj.querySelector('.vjs-poster img');
+      video = {
+        playerCls: clsOf(vj),
+        rect: r(vj),
+        poster: poster ? {
+          src: clip(poster.getAttribute('src') || '', 90),
+          natural: poster.naturalWidth + 'x' + poster.naturalHeight,
+          cs: csOf(poster),
+        } : null,
+        chain: chainOf(vj, 4),
+      };
+      items.push(Object.assign({ kind: 'video', postId: postId }, video.rect,
+        { detail: video }));
+    }
+
+    // ── ② 图片（排除头像 / 徽章小图 / 图标）──
+    // 头像 = header 内；徽章 = wbpro-tag-img 内；小图标 = 渲染宽 ≤ 48px
+    var mediaImgs = [];
+    var imgs = content.querySelectorAll('img');
+    for (var q = 0; q < imgs.length; q++) {
+      var im = imgs[q];
+      if (im.closest('header')) continue;
+      if (im.closest('[class*="wbpro-tag-img"]')) continue;
+      if (im.closest('.video-js')) continue;
+      var rw = im.getBoundingClientRect().width;
+      if (rw && rw <= 48) continue;
+      mediaImgs.push(im);
+    }
+
+    // 九宫格 / 多图容器：某祖先包含 ≥2 张媒体图
+    var gridContainers = [];
+    for (var g = 0; g < mediaImgs.length; g++) {
+      var p = mediaImgs[g].parentElement, found = null;
+      while (p && p !== content) {
+        var cnt = p.querySelectorAll('img').length;
+        if (cnt >= 2) { found = p; break; }
+        p = p.parentElement;
+      }
+      if (found && gridContainers.indexOf(found) === -1) gridContainers.push(found);
+    }
+    // 已归入 grid 的图片不再按单图计
+    for (var gc = 0; gc < gridContainers.length; gc++) {
+      var gr = gridContainers[gc];
+      var gImgs = gr.querySelectorAll('img');
+      var cols = 1, top0 = null;
+      for (var gi = 0; gi < gImgs.length; gi++) {
+        var t = gImgs[gi].getBoundingClientRect().top;
+        if (top0 === null) top0 = t;
+        else if (Math.abs(t - top0) > 8) cols++;
+      }
+      var rec = {
+        kind: 'grid', postId: postId, rect: r(gr),
+        containerCls: clsOf(gr),
+        imgCount: gImgs.length, rows: cols,
+        firstImg: {
+          cls: clsOf(gImgs[0]), rect: r(gImgs[0]),
+          natural: gImgs[0].naturalWidth + 'x' + gImgs[0].naturalHeight,
+          src: clip(gImgs[0].getAttribute('src') || '', 90),
+          cs: csOf(gImgs[0]),
+        },
+        containerCs: csOf(gr),
+        chain: chainOf(gr, 4),
+      };
+      items.push(rec);
+      for (var rm = 0; rm < mediaImgs.length; rm++) {
+        if (gr.contains(mediaImgs[rm])) { mediaImgs.splice(rm, 1); rm--; }
+      }
+    }
+    // 剩下的按单图计
+    for (var s2 = 0; s2 < mediaImgs.length; s2++) {
+      var si = mediaImgs[s2];
+      items.push({
+        kind: 'img', postId: postId, rect: r(si),
+        imgCls: clsOf(si),
+        natural: si.naturalWidth + 'x' + si.naturalHeight,
+        src: clip(si.getAttribute('src') || '', 90),
+        cs: csOf(si),
+        parentCs: csOf(si.parentElement),
+        chain: chainOf(si, 4),
+      });
+    }
+
+    cardsOut.push({
+      postId: postId,
+      cardH: box.h,
+      hasVideo: Boolean(video),
+      imgCount: mediaImgs.length,
+      gridCount: gridContainers.length,
+    });
+    if (!video && !mediaImgs.length && !gridContainers.length) noMedia++;
+  }
+
+  // ── 聚合 ──
+  var byKind = { video: [], img: [], grid: [] };
+  for (var it = 0; it < items.length; it++) {
+    var o = items[it];
+    byKind[o.kind].push({ postId: o.postId, w: o.rect ? o.rect.w : o.w, h: o.rect ? o.rect.h : o.h });
+  }
+  var hs = function (arr) {
+    var list = arr.map(function (x) { return x.h; }).sort(function (a, b) { return a - b; });
+    return list;
+  };
+
+  var verdict;
+  if (boxesMissing) {
+    verdict = '⛔ 页面异常态：' + boxesMissing + ' 张卡矩形全零而 translateY 有值（某祖先被 display:none）'
+      + ' —— 读数无效，先刷新页面 / 排查 A 类收口再跑（§12-B10）';
+  } else if (!items.length) {
+    verdict = '⚠️ 当前页没有采到任何媒体 —— 滚到有图 / 有视频的位置再跑（不同类型都要出现：单图、多图、视频）';
+  } else {
+    verdict = '✅ 采到 ' + items.length + ' 个媒体块（视频 ' + byKind.video.length
+      + ' / 单图 ' + byKind.img.length + ' / 九宫格 ' + byKind.grid.length
+      + '）—— 把整个输出回传，定缩放值与手法';
+  }
+
+  return {
+    verdict: verdict,
+    summary: {
+      cards: cards.length - boxesMissing,
+      cardsNoMedia: noMedia,
+      byKind: {
+        video: byKind.video.length, img: byKind.img.length, grid: byKind.grid.length,
+      },
+      heights: {
+        video: hs(byKind.video),
+        img: hs(byKind.img),
+        grid: hs(byKind.grid),
+      },
+      boxesMissing: boxesMissing,
+    },
+    items: items,
+    cards: cardsOut,
+    note: 'containerCls 里的哈希类（_xxx_123）不可锚，但要知道高度由哪层决定；'
+      + 'cs.aspectRatio / cs.paddingBottom 是「缩高手法」选型的直接依据',
+  };
+}
+
+try { window.probeMedia = probeMedia; } catch (_e) { /* 控制台总有 window */ }
