@@ -230,3 +230,196 @@ function probeMedia() {
 }
 
 try { window.probeMedia = probeMedia; } catch (_e) { /* 控制台总有 window */ }
+
+/**
+ * v2：九宫格**逐格**取样（2026-10-15 真机反馈「有的缩有的不缩」专项）
+ *
+ * ── 为什么要有 v2 ──────────────────────────────────────────────────
+ * v1 只量到「容器级」，且把竖图 224 的显式 height 归到了 woo-picture-main 头上 ——
+ * 真机验收证明显式 height 在父子两层重复声明（.u-col-1 行容器也有一份），首版只压内层留 84px 空白。
+ * 现在 Nine-grid 又出现「同一套全局 CSS 有的格子缩有的不缩」⇒ 说明格子级还有我们没掌握的结构差异。
+ * v2 的三件事：
+ *   ① **样式体检**：`#spb-style` 在不在、里面有没有新版规则（u-col-1 / max-height:140px）
+ *      —— 先排除「重装后没刷新、旧样式还在跑」这种假故障；
+ *   ② **逐格**采样：每格 img 及向上 4 层祖先的 类名 / **内联 style** / rect / computed
+ *      （height / max-height / aspect-ratio / display / position）——
+ *      「缩没缩」与「内联高度在哪层」的相关性一眼可见；
+ *   ③ **聚合判词**：shrunk（h≤141）/ natural（h>141）各几格 —— 把「有的缩有的不缩」变成数字。
+ * 用法同 v1：粘进 Console → `probeMedia2()` → 整个输出回传。
+ */
+function probeMedia2() {
+  var clip = function (s, n) {
+    s = (s == null ? '' : String(s)).replace(/\s+/g, ' ').trim();
+    n = n || 60;
+    return s.length > n ? s.slice(0, n) + '…' : s;
+  };
+  var clsOf = function (e) {
+    var c = e.getAttribute && e.getAttribute('class');
+    return c ? clip(c, 120) : '';
+  };
+  var inlineOf = function (e) {
+    var s = e.getAttribute && e.getAttribute('style');
+    return s ? clip(s, 140) : '';
+  };
+  var rect = function (e) {
+    var b = e.getBoundingClientRect();
+    return { w: +b.width.toFixed(1), h: +b.height.toFixed(1), top: +b.top.toFixed(1), left: +b.left.toFixed(1) };
+  };
+  var csOf = function (e, keys) {
+    var cs;
+    try { cs = getComputedStyle(e); } catch (_e) { return null; }
+    if (!cs) return null;
+    var out = {};
+    for (var i = 0; i < keys.length; i++) out[keys[i]] = cs[keys[i]];
+    return out;
+  };
+  var CS_KEYS = ['height', 'maxHeight', 'aspectRatio', 'display', 'position', 'objectFit', 'overflow'];
+
+  /** 一层祖先的完整读数 */
+  var level = function (e) {
+    return {
+      desc: e.tagName.toLowerCase() + (clsOf(e) ? '.' + clsOf(e).replace(/\s+/g, '.') : ''),
+      inline: inlineOf(e),
+      rect: rect(e),
+      cs: csOf(e, CS_KEYS),
+    };
+  };
+  /** 从 img 向上 n 层（含 img 自身 = 第 0 层） */
+  var chain = function (img, n) {
+    var out = [], e = img, k = (n || 4) + 1;
+    while (e && k-- > 0) { out.push(level(e)); e = e.parentElement; }
+    return out;
+  };
+
+  // ── ① 样式体检（先排除假故障）────────────────────────────────
+  var styleEl = document.getElementById('spb-style');
+  var styleCheck = {
+    present: Boolean(styleEl),
+    hasMediaRule: styleEl ? styleEl.textContent.indexOf('max-height:140px') !== -1 : false,
+    hasUcol1Rule: styleEl ? styleEl.textContent.indexOf('u-col-1') !== -1 : false,
+  };
+
+  // ── ② 找卡（与 v1 同一套视野 + 异常态闸）──────────────────────
+  var cards = document.querySelectorAll('.vue-recycle-scroller__item-wrapper > .vue-recycle-scroller__item-view');
+  if (!cards.length) {
+    cards = document.querySelectorAll('.wbpro-scroller-item');
+    if (!cards.length) {
+      return { error: '页面上找不到信息流卡（要在微博首页信息流里跑）', styleCheck: styleCheck };
+    }
+  }
+
+  var boxesMissing = 0;
+  var grids = [];
+  var cellStats = { shrunk: 0, natural: 0 };
+
+  for (var i = 0; i < cards.length; i++) {
+    var slot = cards[i];
+    var card = slot.querySelector('.wbpro-scroller-item') || slot;
+    var transform = slot.style && slot.style.transform || '';
+    var box = rect(card);
+    var missing = box.h === 0 && box.top === 0 && /translateY/.test(transform) && !/translateY\(0px\)/.test(transform);
+    if (missing) { boxesMissing++; continue; }
+
+    var postId = null, m, as = card.querySelectorAll('a[href]');
+    for (var k = 0; k < as.length && !postId; k++) {
+      m = /weibo\.com\/\d+\/([A-Za-z0-9]+)/.exec(as[k].getAttribute('href') || '');
+      if (m) postId = m[1];
+    }
+
+    var content = card.querySelector('.wbpro-feed-content') || card.querySelector('article') || card;
+    if (!content) continue;
+
+    // 媒体图（与 v1 同一套排除：头像 / 徽章 / 播放器 / ≤48px 小图）
+    var mediaImgs = [];
+    var imgs = content.querySelectorAll('img');
+    for (var q = 0; q < imgs.length; q++) {
+      var im = imgs[q];
+      if (im.closest('header')) continue;
+      if (im.closest('[class*="wbpro-tag-img"]')) continue;
+      if (im.closest('.video-js')) continue;
+      var rw = im.getBoundingClientRect().width;
+      if (rw && rw <= 48) continue;
+      mediaImgs.push(im);
+    }
+    if (mediaImgs.length < 2) continue;   // v2 只关心多图（九宫格）
+
+    // 多图容器：某祖先包含 ≥2 张媒体图
+    var gr = null;
+    for (var g = 0; g < mediaImgs.length && !gr; g++) {
+      var p = mediaImgs[g].parentElement;
+      while (p && p !== content) {
+        if (p.querySelectorAll('img').length >= 2) { gr = p; break; }
+        p = p.parentElement;
+      }
+    }
+    if (!gr) continue;
+
+    // 按行分组（top 相差 ≤8px 同行）
+    var cells = [];
+    for (var c = 0; c < mediaImgs.length; c++) {
+      if (!gr.contains(mediaImgs[c])) continue;
+      cells.push(mediaImgs[c]);
+    }
+    cells.sort(function (a, b) {
+      var d = a.getBoundingClientRect().top - b.getBoundingClientRect().top;
+      return d !== 0 ? d : a.getBoundingClientRect().left - b.getBoundingClientRect().left;
+    });
+    var rows = [];
+    for (var c2 = 0; c2 < cells.length; c2++) {
+      var top = cells[c2].getBoundingClientRect().top;
+      var row = null;
+      for (var r2 = 0; r2 < rows.length; r2++) {
+        if (Math.abs(rows[r2].top - top) <= 8) { row = rows[r2]; break; }
+      }
+      if (!row) { row = { top: +top.toFixed(1), cells: [] }; rows.push(row); }
+      var detail = {
+        img: level(cells[c2]),
+        chain: chain(cells[c2], 4),   // 0=img, 1=woo-picture-main, 2=item, 3=row, 4=…
+      };
+      // 判「缩没缩」：看 woo-picture-main（第 1 层）的渲染高
+      var mainBox = detail.chain[1] ? detail.chain[1].rect.h : detail.img.rect.h;
+      detail.shrunk = mainBox > 0 && mainBox <= 141;
+      if (detail.shrunk) cellStats.shrunk++; else cellStats.natural++;
+      row.cells.push(detail);
+    }
+
+    grids.push({
+      postId: postId,
+      container: level(gr),
+      imgCount: cells.length,
+      rows: rows,
+      cellHeights: cells.map(function (x) { return +(x.getBoundingClientRect().height).toFixed(1); }).sort(function (a, b) { return a - b; }),
+    });
+  }
+
+  // ── ③ 判词 ──────────────────────────────────────────────────
+  var verdict;
+  if (!styleCheck.present) {
+    verdict = '⛔ 页面上没有 #spb-style —— 脚本没在跑（重装后要刷新页面）';
+  } else if (!styleCheck.hasMediaRule || !styleCheck.hasUcol1Rule) {
+    verdict = '⛔ #spb-style 不是新版（' + JSON.stringify(styleCheck) + '）'
+      + ' —— 重装产物后**刷新页面**再跑，否则读数反映的是旧规则';
+  } else if (boxesMissing) {
+    verdict = '⛔ 页面异常态：' + boxesMissing + ' 张卡矩形全零（§12-B10）—— 先刷新再跑';
+  } else if (!grids.length) {
+    verdict = '⚠️ 当前页没有多图卡 —— 滚到有九宫格的位置再跑（样式体检已过：' + JSON.stringify(styleCheck) + '）';
+  } else if (cellStats.shrunk && cellStats.natural) {
+    verdict = '🔴 复现：同一页里缩了 ' + cellStats.shrunk + ' 格、没缩 ' + cellStats.natural + ' 格'
+      + ' —— 把整个输出回传，重点看 natural 格的 chain 里内联 style / computed maxHeight 差在哪层';
+  } else if (cellStats.natural) {
+    verdict = '⚠️ ' + cellStats.natural + ' 格全部没缩（样式是新版）—— 规则没命中格子层，回传输出';
+  } else {
+    verdict = '✅ ' + cellStats.shrunk + ' 格全部缩到 ≤141px —— 九宫格在这页没问题（若别页还有，滚过去再跑）';
+  }
+
+  return {
+    verdict: verdict,
+    styleCheck: styleCheck,
+    summary: { grids: grids.length, shrunk: cellStats.shrunk, natural: cellStats.natural, boxesMissing: boxesMissing },
+    grids: grids,
+    note: '每格 chain[0]=img、[1]=woo-picture-main、[2]=item、[3]=行容器；'
+      + '对比 shrunk/natural 两类格子的 inline 与 cs.maxHeight，差异层就是根因',
+  };
+}
+
+try { window.probeMedia2 = probeMedia2; } catch (_e) { /* 控制台总有 window */ }
