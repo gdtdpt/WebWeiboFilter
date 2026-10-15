@@ -59,32 +59,51 @@ function rule(selector, body) {
 /**
  * 生成 L1 的 CSS 文本。逐组说明「为什么它不改高度」。
  *
- * @param {Object} [cfg] 完整配置；`cfg.appearance.mediaCaps === false` 时**不注入**
- *   ⑦/⑦b 三条媒体尺寸规则（B17 黑图归因实验开关，见 config.js 注释）——
- *   L1 其余规则（滤镜 / 摘要条 / 右栏等）不受影响。缺省 = 全量注入。
+ * @param {Object} [cfg] 完整配置；`cfg.appearance.mediaCaps` 门控 ⑦/⑦b 三条媒体尺寸规则
+ *   （B17 黑图归因实验，见 config.js 注释；L1 其余规则一律不受影响）：
+ *   - `true` / 缺省 = 全量注入（常态）
+ *   - `false` = 三条全摘（已实测：黑图消失）
+ *   - `'onlyCap'` = 只留 max-height:140（摘 img 规则 + u-col-1 规则）
+ *   - `'noRow'`   = 摘 u-col-1 一条（留 max-height + img）
+ *   - `'noImg'`   = 摘 img 一条（留 max-height + u-col-1）
+ *   - 其他值按全量处理（容错）
  * @returns {string}
  */
 export function l1Css(cfg) {
-  const mediaCapsOff = !!(cfg && cfg.appearance && cfg.appearance.mediaCaps === false);
+  const mc = cfg && cfg.appearance ? cfg.appearance.mediaCaps : undefined;
+  const mode = mc === false ? 'off'
+    : (mc == null || mc === true || ['onlyCap', 'noRow', 'noImg'].indexOf(mc) < 0) ? 'all'
+    : mc;
+  const keep = {
+    img: mode === 'all' || mode === 'noRow',
+    row: mode === 'all' || mode === 'noImg',
+    cap: mode !== 'off', // 除 false 全摘外，max-height 恒保留
+  };
   // ⑦+⑦b 媒体尺寸规则组（mediaCaps 门控；每条的完整设计说明见下方各处注释）
-  const mediaSizing = mediaCapsOff ? [] : [
-    //    作用域与容器规则同轮收窄（评论面板豁免，见 ⑦ 注）。
-    rule(`${SEL_CARD[0]} .wbpro-feed-content .woo-picture-main img,${SEL_CARD[0]} .retweet .woo-picture-main img`,
-      'height:100% !important;top:auto !important'),
-    // ⑦b 单图行容器（2026-10-15 真机验收踩坑修正）：**显式 height 不止 picture-main 一处** ——
-    //    外层行 `.u-col-1` 带着**同样的内联 height:224px**（夹具四份 10/10：卡内 u-col-1 全部
-    //    且仅是单图行，九宫格走 u-col-3/4 且无内联高度）。只压内层 ⇒ 图缩了、行没缩，
-    //    卡片下方留 84px 空白（用户截图实锤）。修法 = 行高 `height:auto` 压掉重复的内联高度，
-    //    让行回归**内容高**（已被 ⑦ 压到 ≤140 的图；横图 126 时 auto=126，数值法语义不变）。
-    //    ⚠️ 不能给 u-col-1 也上 max-height:140 —— 万一微博哪天把更高的合法内容放进行里，
-    //    auto 只「去掉重复声明」、不引入新的裁切面，比再压一次 140 更保守。
-    //    作用域同轮收窄（评论面板豁免，见 ⑦ 注）。
-    rule(`${SEL_CARD[0]} .wbpro-feed-content .u-col-1,${SEL_CARD[0]} .retweet .u-col-1`,
-      'height:auto !important'),
-    //    容器压高放最后（⑦ 本体；读数依据与收窄说明见 ⑦ 注释块）。
-    rule(`${SEL_CARD[0]} .wbpro-feed-content .woo-picture-main,${SEL_CARD[0]} .retweet .woo-picture-main`,
-      'max-height:140px !important'),
-  ];
+  const mediaSizing = [
+    keep.img
+      ? //    作用域与容器规则同轮收窄（评论面板豁免，见 ⑦ 注）。
+        rule(`${SEL_CARD[0]} .wbpro-feed-content .woo-picture-main img,${SEL_CARD[0]} .retweet .woo-picture-main img`,
+          'height:100% !important;top:auto !important')
+      : '',
+    keep.row
+      ? // ⑦b 单图行容器（2026-10-15 真机验收踩坑修正）：**显式 height 不止 picture-main 一处** ——
+        //    外层行 `.u-col-1` 带着**同样的内联 height:224px**（夹具四份 10/10：卡内 u-col-1 全部
+        //    且仅是单图行，九宫格走 u-col-3/4 且无内联高度）。只压内层 ⇒ 图缩了、行没缩，
+        //    卡片下方留 84px 空白（用户截图实锤）。修法 = 行高 `height:auto` 压掉重复的内联高度，
+        //    让行回归**内容高**（已被 ⑦ 压到 ≤140 的图；横图 126 时 auto=126，数值法语义不变）。
+        //    ⚠️ 不能给 u-col-1 也上 max-height:140 —— 万一微博哪天把更高的合法内容放进行里，
+        //    auto 只「去掉重复声明」、不引入新的裁切面，比再压一次 140 更保守。
+        //    作用域同轮收窄（评论面板豁免，见 ⑦ 注）。
+        rule(`${SEL_CARD[0]} .wbpro-feed-content .u-col-1,${SEL_CARD[0]} .retweet .u-col-1`,
+          'height:auto !important')
+      : '',
+    keep.cap
+      ? //    容器压高放最后（⑦ 本体；读数依据与收窄说明见 ⑦ 注释块）。
+        rule(`${SEL_CARD[0]} .wbpro-feed-content .woo-picture-main,${SEL_CARD[0]} .retweet .woo-picture-main`,
+          'max-height:140px !important')
+      : '',
+  ].filter(Boolean);
 
   return [
     // ① 身份信号：头像降饱和（**保持原尺寸与色相**，2026-10-14 用户定调「降彩度不灭色相」）

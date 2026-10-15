@@ -119,6 +119,7 @@ test('L1：mediaCaps:false 只摘媒体尺寸规则组（B17 黑图归因开关�
   // 背景：黑图与媒体缩略化上线**时间相关**（用户：改尺寸前无黑图、开后有）；
   // 现场摘除（spbAB）洗不清「首帧布局干扰懒加载决策」的单向锁存路径 ⇒
   // 提供「刷新级」归因开关：false = 三条尺寸规则不注入，L1 其余一切保留。
+  // ✅ 2026-10-15 用户实测：mediaCaps:false 刷新后无黑图 ⇒ 凶手锁定在三条规则内。
   const off = parseRules(l1Css({ appearance: { mediaCaps: false } }));
 
   assert.equal(off.length, L1_RULE_COUNT - 3, '恰好摘掉三条（容器 max-height / img / u-col-1）');
@@ -135,6 +136,36 @@ test('L1：mediaCaps:false 只摘媒体尺寸规则组（B17 黑图归因开关�
   // 摘掉后不再有任何「改尺寸」规则 ⇒ SIZE_EXEMPT 登记的媒体三项必然缺席
   const sizeProps = off.flatMap((r) => r.decls.map((d) => d.prop));
   assert.ok(!sizeProps.includes('max-height'), 'max-height 应随 mediaCaps 摘除');
+});
+
+test('L1：mediaCaps 字符串档位 = 逐条二分（B17 归因第二阶段，§12-B17）', () => {
+  const selOf = (css, key) => parseRules(css).filter(
+    (r) => r.selector.includes(key) || r.decls.some((d) => d.prop.includes(key) || d.value.includes(key)),
+  );
+  // 'onlyCap'：只留 max-height（img 与 u-col-1 都摘）—— 20 条
+  const onlyCap = parseRules(l1Css({ appearance: { mediaCaps: 'onlyCap' } }));
+  assert.equal(onlyCap.length, L1_RULE_COUNT - 2, 'onlyCap = 摘 img + u-col-1 两条');
+  assert.equal(selOf(l1Css({ appearance: { mediaCaps: 'onlyCap' } }), 'max-height').length, 1,
+    'onlyCap 必须保留 max-height:140');
+  assert.equal(selOf(l1Css({ appearance: { mediaCaps: 'onlyCap' } }), 'u-col-1').length, 0,
+    'onlyCap 必须摘掉 u-col-1');
+  // 'noRow'：摘 u-col-1 一条（max-height + img 保留）—— 21 条
+  const noRow = parseRules(l1Css({ appearance: { mediaCaps: 'noRow' } }));
+  assert.equal(noRow.length, L1_RULE_COUNT - 1, 'noRow = 只摘 u-col-1');
+  assert.equal(selOf(l1Css({ appearance: { mediaCaps: 'noRow' } }), 'u-col-1').length, 0);
+  assert.ok(selOf(l1Css({ appearance: { mediaCaps: 'noRow' } }), 'max-height').length === 1
+    && selOf(l1Css({ appearance: { mediaCaps: 'noRow' } }), 'woo-picture-main img').length === 1,
+    'noRow 保留 max-height 与 img 规则');
+  // 'noImg'：摘 img 一条（max-height + u-col-1 保留）—— 21 条
+  const noImg = parseRules(l1Css({ appearance: { mediaCaps: 'noImg' } }));
+  assert.equal(noImg.length, L1_RULE_COUNT - 1, 'noImg = 只摘 img 规则');
+  assert.equal(selOf(l1Css({ appearance: { mediaCaps: 'noImg' } }), 'woo-picture-main img').length, 0,
+    'noImg 必须摘掉 img 规则');
+  assert.equal(selOf(l1Css({ appearance: { mediaCaps: 'noImg' } }), 'u-col-1').length, 1,
+    'noImg 保留 u-col-1');
+  // 未知值容错 = 全量（22 条）
+  assert.equal(parseRules(l1Css({ appearance: { mediaCaps: 'bogus' } })).length, L1_RULE_COUNT,
+    '未知 mediaCaps 值按全量处理');
 });
 
 test('L1：每条规则都带 !important（这是一套覆盖微博主题的样式）', () => {
