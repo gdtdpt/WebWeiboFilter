@@ -168,6 +168,29 @@ test('L1：mediaCaps 字符串档位 = 逐条二分（B17 归因第二阶段，�
     '未知 mediaCaps 值按全量处理');
 });
 
+test('L1：mediaCaps:\'cover\' = img 规则换全几何接管（B17 修复候选，§12-B17）', () => {
+  // 二分定论（2026-10-15）：'partial' 形态（height:100%+top:auto）= 黑图凶手 ——
+  // 机制猜想：微博 JS 裁切的「尺寸+负偏移」是**配对**内联，部分覆盖 ⇒ 加载器首帧
+  // 读到自相矛盾的几何 → 单向锁存不挂 img。'cover' = 全接管，无残留可错。
+  const rules = parseRules(l1Css({ appearance: { mediaCaps: 'cover' } }));
+  assert.equal(rules.length, L1_RULE_COUNT, 'cover 档三条都在（img 换形态）');
+
+  const imgRule = rules.find((r) => r.selector.includes('.woo-picture-main img'));
+  assert.ok(imgRule, 'cover 档必须有 img 规则');
+  const val = (p) => { const d = imgRule.decls.find((x) => x.prop === p); return d ? d.value.replace(/ !important$/, '') : null; };
+  assert.equal(val('width'), '100%', '全接管必须 width:100%（配对内联的 width 也要作废）');
+  assert.equal(val('height'), '100%', '全接管必须 height:100%');
+  assert.equal(val('top'), '0', '全接管 top 必须归零（不是 auto —— 配对偏移整体作废）');
+  assert.equal(val('left'), '0', '全接管 left 必须归零（横图配对内联的 left:-34% 也要作废）');
+  assert.equal(val('object-fit'), 'cover', '必须 object-fit:cover 接管居中裁切');
+  assert.ok(!imgRule.decls.some((d) => d.value.includes('auto')),
+    'cover 档 img 规则不得残留任何 auto（partial 形态的标志）');
+
+  // u-col-1 与 max-height 在 cover 档都必须在（消 84px 空白 + 压高）
+  assert.ok(rules.some((r) => r.selector.includes('u-col-1')), 'cover 档保留 u-col-1 height:auto');
+  assert.ok(rules.some((r) => r.decls.some((d) => d.prop === 'max-height')), 'cover 档保留 max-height:140');
+});
+
 test('L1：每条规则都带 !important（这是一套覆盖微博主题的样式）', () => {
   for (const r of parseRules(l1Css())) {
     for (const d of r.decls) {

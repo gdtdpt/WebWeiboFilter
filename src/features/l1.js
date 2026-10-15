@@ -72,19 +72,36 @@ function rule(selector, body) {
 export function l1Css(cfg) {
   const mc = cfg && cfg.appearance ? cfg.appearance.mediaCaps : undefined;
   const mode = mc === false ? 'off'
-    : (mc == null || mc === true || ['onlyCap', 'noRow', 'noImg'].indexOf(mc) < 0) ? 'all'
+    : (mc == null || mc === true || ['onlyCap', 'noRow', 'noImg', 'cover'].indexOf(mc) < 0) ? 'all'
     : mc;
+  // img 规则的两种形态（B17 二分定论 2026-10-15：'partial' 形态 = 黑图凶手）：
+  // · 'partial'（height:100%+top:auto）—— 🔴 真机实锤致「空 slot 黑图」（'noRow' 档黑、
+  //   'onlyCap' 档净）。机制猜想：微博 JS 裁切给 img 写「尺寸+负偏移」**配对**内联
+  //   （竖图 height:133%+top:-33%，横图 height:100%+width:180%+left:-34%），部分覆盖
+  //   这对内联 ⇒ 加载器首帧读到自相矛盾的几何 → 判定异常 → **单向锁存**不挂 img。
+  //   仅保留作归因对照档（'all'/'noRow'），**不进默认路径**。
+  // · 'cover' —— 修复候选：**全几何接管**（width/height 100% + top/left 0 +
+  //   object-fit:cover），把配对内联**整体**作废 —— 没有残留偏移可错，也不需要
+  //   微博的 JS 裁切（CSS 原生 cover 居中裁切；微博用 JS 方案是为了智能取景，我们不在乎）。
+  //   同时天然消掉 34.6px 竖图错位与 84px 单图行空白。
+  const imgMode = (mode === 'all' || mode === 'noRow') ? 'partial'
+    : mode === 'cover' ? 'cover' : null;
   const keep = {
-    img: mode === 'all' || mode === 'noRow',
-    row: mode === 'all' || mode === 'noImg',
+    img: imgMode !== null,
+    row: mode === 'all' || mode === 'noImg' || mode === 'cover',
     cap: mode !== 'off', // 除 false 全摘外，max-height 恒保留
   };
+  const IMG_RULE =
+    imgMode === 'cover'
+      ? 'width:100% !important;height:100% !important;top:0 !important;left:0 !important'
+        + ';object-fit:cover !important'
+      : 'height:100% !important;top:auto !important';
   // ⑦+⑦b 媒体尺寸规则组（mediaCaps 门控；每条的完整设计说明见下方各处注释）
   const mediaSizing = [
     keep.img
       ? //    作用域与容器规则同轮收窄（评论面板豁免，见 ⑦ 注）。
         rule(`${SEL_CARD[0]} .wbpro-feed-content .woo-picture-main img,${SEL_CARD[0]} .retweet .woo-picture-main img`,
-          'height:100% !important;top:auto !important')
+          IMG_RULE)
       : '',
     keep.row
       ? // ⑦b 单图行容器（2026-10-15 真机验收踩坑修正）：**显式 height 不止 picture-main 一处** ——
