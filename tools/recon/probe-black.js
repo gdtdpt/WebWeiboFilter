@@ -115,5 +115,74 @@
     return "用法：spbAB('filterOff') / spbAB('capOff') / spbAB('filterOn')";
   };
 
+  // ── v2 追加：fetch-blob 解码 ──────────────────────────────────────────────
+  // canvas 直读被 sinaimg 的无 CORS 头污染（SecurityError）；
+  // 改为重新 fetch 源图 → blob: URL → 本地 img 不污染 → 解码读亮度。
+  // 回答「源图文件本身解码出来是不是黑的」（与页面怎么绘制完全无关）。
+  function lumOf(img) {
+    var c = D.createElement('canvas');
+    c.width = 16; c.height = 16;
+    var ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0, 16, 16);
+    var d = ctx.getImageData(0, 0, 16, 16).data;
+    var r = 0, g = 0, b = 0, n = d.length / 4;
+    for (var i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+    r = Math.round(r / n); g = Math.round(g / n); b = Math.round(b / n);
+    return { avg: [r, g, b], lum: Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b) };
+  }
+
+  async function fetchDecode(url) {
+    try {
+      var resp = await fetch(url, { credentials: 'include' });
+      if (!resp.ok) return { http: resp.status, err: 'HTTP ' + resp.status };
+      var blob = await resp.blob();
+      var objURL = URL.createObjectURL(blob);
+      var img = new Image();
+      img.src = objURL;
+      try { await img.decode(); } finally { /* revoke 延后 */ }
+      var l = lumOf(img);
+      var out = {
+        bytes: blob.size, type: blob.type,
+        natural: img.naturalWidth + 'x' + img.naturalHeight,
+        avg: l.avg, lum: l.lum,
+        verdict: l.lum < 24 ? '源图本身黑' : l.lum < 60 ? '源图偏暗' : '源图正常',
+      };
+      URL.revokeObjectURL(objURL);
+      return out;
+    } catch (e) {
+      return { err: String(e).slice(0, 120) };
+    }
+  }
+
+  // 单张：spbDecode("图片地址")；全量：spbDecodeAll() 重下并解码当前视口内所有信息流图
+  W.spbDecode = function (url) {
+    if (!url) return '用法：右键黑图 → 复制图片地址 → spbDecode("粘贴")';
+    return fetchDecode(url);
+  };
+
+  W.spbDecodeAll = async function () {
+    var out = { script: 'specbase-black-decode-v2', ts: Date.now(), items: [] };
+    $all('.wbpro-feed-content .woo-picture-img, .retweet .woo-picture-img').forEach(function (img) {
+      var r = img.getBoundingClientRect();
+      if (!(r.top < vh() && r.bottom > 0 && r.width > 0)) return;
+      var src = img.currentSrc || img.src || '';
+      if (/^data:/.test(src)) { out.items.push({ isPlaceholder: true, rect: { w: Math.round(r.width), h: Math.round(r.height) } }); return; }
+      var card = img.closest('.wbpro-scroller-item');
+      var ta = card && card.querySelector('a[title^="20"]');
+      out.items.push({
+        postId: ta ? (ta.getAttribute('href') || '').split('?')[0].split('/').pop() : null,
+        src: src.slice(0, 90),
+        rect: { w: Math.round(r.width), h: Math.round(r.height), top: Math.round(r.top) },
+      });
+    });
+    for (var i = 0; i < out.items.length; i++) {
+      var it = out.items[i];
+      if (it.src) it.decode = await fetchDecode(it.src);
+    }
+    out.count = out.items.length;
+    return out;
+  };
+
   console.log('[spb-black] 就绪。黑图在屏上时：① spbAB("filterOff") 看 A/B；② copy(JSON.stringify(await probeBlack(), null, 2))');
+  console.log('[spb-black] v2：copy(JSON.stringify(await spbDecodeAll(), null, 2)) 重下视口内全部图并解码读亮度（分辨「源图黑」vs「绘制黑」）；单张用 spbDecode("图片地址")');
 })();
