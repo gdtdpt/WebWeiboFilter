@@ -48,50 +48,56 @@ function probeL2() {
   }
   var LAYOUT_KEYS = ['display', 'position', 'order', 'flex', 'flexDirection', 'width', 'marginLeft', 'marginRight', 'zIndex'];
 
-  /* ── ① 外壳三列布局（v2：nav 锚在顶栏，v1 找错了层）────────────────
-   * v1 实测（2026-10-16）：a[href="/"][aria-label] 是**顶栏 logo**（_top_1ubn9_14，
-   * 1297×60），不是左栏；真正的左右分栏层 = 从滚动容器向上找最近的
-   * 「display:flex + flexDirection:row」祖先（_content_1ubn9_18，1122px）。
-   * v2 直接对它枚举直接子：主列（含滚动容器）/ 右栏（含 side-main）/ 左栏（其余者），
-   * 逐列量 rect / position（sticky 风险）/ order / flex，并采文本片段确认身份。 */
+  /* ── ① 外壳三列布局（v3：枚举沿途全部 flex row）────────────────
+   * v2 实测：信息流在 main._wrap_1l406_3（932px = _full_ 642 主列 + _side_ 282 右栏）；
+   * 左栏候选 0 个 ⇒ 分类列表在更外层（v1 的 _content_1ubn9_18，1122px）。
+   * ⚠️ v2 意外发现：L1 ⑧ 隐藏 .wbpro-side-main 后 **_side_ 列壳仍占 282px+8px**
+   * （display:none 只藏内容不塌壳）—— 主列没变宽，右栏位置现成空着。
+   * v3 从滚动容器向上把**所有** flex row 祖先连同直接子一次采齐。 */
   function shellLayout() {
     var scroller = document.querySelector('.vue-recycle-scroller');
-    var nav = document.querySelector('a[href="/"][aria-label]');
     if (!scroller) return { verdict: '⛔ 找不到时间线容器', scrollerFound: false };
 
-    var row = null, hops = 0, el = scroller.parentElement;
-    while (el && el !== document.documentElement) {
+    var rows = [];
+    var el = scroller.parentElement;
+    while (el && el !== document.documentElement && rows.length < 4) {
       var st0 = getComputedStyle(el);
-      if (st0.display === 'flex' && st0.flexDirection === 'row') { row = el; break; }
-      hops++;
+      if (st0.display === 'flex' && st0.flexDirection === 'row') {
+        var rowInfo = { el: desc(el), rect: rectOf(el), styles: stylesOf(el, LAYOUT_KEYS), columns: [] };
+        var cols = el.children || [];
+        for (var c = 0; c < cols.length; c++) {
+          var col = cols[c];
+          var st = stylesOf(col, LAYOUT_KEYS);
+          st.containsScroller = col.contains(scroller);
+          st.containsSideMain = Boolean(col.querySelector('.wbpro-side-main'));
+          st.role = st.containsScroller ? 'main(信息流)' : st.containsSideMain ? 'right(右栏)' : 'OTHER（左栏候选）';
+          st.rect = rectOf(col);
+          st.textSnippet = clip(col.textContent, 40);
+          rowInfo.columns.push({ el: desc(col), styles: st });
+        }
+        rows.push(rowInfo);
+      }
       el = el.parentElement;
     }
-    if (!row) return { verdict: '⛔ 滚动容器的祖先里没有 flex row —— 分栏层结构变了，回传人工判' };
 
-    var out = {
-      rowEl: desc(row),
-      hopsFromScroller: hops,
-      rowStyles: stylesOf(row, LAYOUT_KEYS),
-      rowContainsNav: row.contains(nav),
-      columns: [],
-    };
-    var cols = row.children || [];
-    for (var c = 0; c < cols.length; c++) {
-      var col = cols[c];
-      var st = stylesOf(col, LAYOUT_KEYS);
-      st.containsScroller = col.contains(scroller);
-      st.containsSideMain = Boolean(col.querySelector('.wbpro-side-main'));
-      st.role = st.containsScroller ? 'main(信息流)' : st.containsSideMain ? 'right(右栏)' : 'LEFT?（左栏候选）';
-      st.rect = rectOf(col);
-      st.textSnippet = clip(col.textContent, 40);
-      out.columns.push({ el: desc(col), styles: st });
+    var otherCols = 0, sideShell = null;
+    for (var r = 0; r < rows.length; r++) {
+      for (var k = 0; k < rows[r].columns.length; k++) {
+        var colSt = rows[r].columns[k].styles;
+        if (colSt.role.indexOf('OTHER') === 0) otherCols++;
+        if (colSt.containsSideMain && !sideShell) {
+          sideShell = { w: colSt.rect.w, note: '右栏列壳实测宽度 —— display:none 只藏了内容，壳还在占位' };
+        }
+      }
     }
-    var main = out.columns.some(function (x) { return x.styles.containsScroller; });
-    var lefts = out.columns.filter(function (x) { return x.styles.role.indexOf('LEFT') === 0; });
-    out.verdict = !main ? '⚠️ 分栏层直接子里没有主列（还有包裹层）—— 回传人工判'
-      : lefts.length === 1 ? '✅ 三列构成齐了 —— 重点看左栏候选列的 position（sticky 会坏事）与各列 order/flex/rect'
-      : '⚠️ 左栏候选列有 ' + lefts.length + ' 个（预期 1 个）—— 回传读数人工判';
-    return out;
+    return {
+      rows: rows,
+      otherColumnCount: otherCols,
+      sideShell: sideShell,
+      verdict: otherCols >= 1
+        ? '✅ 采到 ' + rows.length + ' 层 flex row、' + otherCols + ' 个左栏候选 —— 回传；重点看左栏候选的 textSnippet（确认是分类列表）、position（sticky 风险）与所在层的 order/flex'
+        : '⚠️ 沿途没采到左栏候选 —— 分类列表可能在 flex row 之外（fixed 定位？），回传读数人工判',
+    };
   }
 
   /* ── ② 时间锚几何 ───────────────────────────────────────────── */
@@ -222,9 +228,9 @@ function probeL2() {
     scanned: scanned,
     theme: theme,
     video: video,
-    note: 'v2：布局层 = 从滚动容器向上找最近的 flex row（v1 实测 nav 锚在顶栏，别再按 nav 找）。'
-      + 'timeAnchors.parents 首层是 _info_ 行（有 _tagList_ 兄弟 ⇒ 挂点选 article，以卡为坐标系）；'
-      + 'siblings 是时间脱流后原位的残留物（只剩来源条）',
+    note: 'v3：layout.rows = 沿途全部 flex row 祖先及其直接子（嵌套两层：外层 左栏|main，内层 主列|右栏）。'
+      + 'sideShell 记录右栏列壳的实测占位（display:none 不塌壳）；'
+      + 'timeAnchors 挂点选 article（_info_ 行有 _tagList_ 兄弟）；siblings 是时间脱流后原位的残留物',
   };
 }
 
