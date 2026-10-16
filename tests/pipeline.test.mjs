@@ -161,13 +161,21 @@ test('样式注入：ensureStyle 幂等，removeStyle 能清干净', { skip }, (
   assert.ok(el.textContent.includes('visibility:hidden'), 'B 类样式缺失');
   assert.ok(el.textContent.includes('display:none'), 'A 类样式缺失');
 
-  // B 类空位占位提示（2026-10-15 方案 A）：必须挂在槽位的 ::after 上、
-  // 用「visibility 置回 visible」而不是动 display —— 后者会改布局，违反保高度（§12-B2）
+  // B 类压缩细条（§12-B19，2026-10-16 用户提议）：槽位压到一行文字高 + overflow 裁切
+  assert.ok(el.textContent.includes('[data-spb="hidden"]{'), 'B 类压条规则缺失');
+  const strip = el.textContent.split('\n').find((l) => l.startsWith('[data-spb="hidden"]{')) || '';
+  assert.ok(strip.includes('max-height:22px'), '压条必须 22px（一行文字高）');
+  assert.ok(strip.includes('overflow:hidden'), '压条必须裁切内容');
+  assert.ok(strip.includes('visibility:hidden'), '压条必须保留 visibility 兜底');
+
+  // B 类细条里的那行字（2026-10-15 方案 A 的 ::after 沿用）：挂在槽位的 ::after 上、
+  // 用「visibility 置回 visible」而不是动 display —— 后者会改布局
   assert.ok(el.textContent.includes('[data-spb="hidden"]::after'), '占位提示规则缺失');
   const ph = el.textContent.split('\n').find((l) => l.includes('::after')) || '';
   assert.ok(ph.includes('visibility:visible'), '占位提示必须把 visibility 置回 visible（卡才藏得住、提示才出得来）');
   assert.ok(!ph.includes('display:none'), '占位提示不得用 display:none（那会把槽位整个收掉、改布局）');
   assert.ok(ph.includes('pointer-events:none'), '占位提示不得拦截交互');
+  assert.ok(ph.includes('var(--w-dividing-line)'), '细条底缘分割线必须走主题令牌（颜色禁写死）');
 
   assert.equal(removeStyle(document), true);
   assert.equal(document.getElementById(STYLE_ID), null);

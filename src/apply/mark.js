@@ -18,7 +18,7 @@
 
 import { MARK_ATTR, MARK_HIDDEN, MARK_PAGE_AD } from './style.js';
 
-/** B 类：信息流内的卡 —— 保高度隐藏（§12-B2 定论：不能删除） */
+/** B 类：信息流内的卡 —— 压缩为一行细条（§12-B19；旧「保高度隐藏」已被推翻） */
 export function markSlot(slotEl, hide) {
   if (!slotEl || !slotEl.setAttribute) return false;
   const has = slotEl.hasAttribute(MARK_ATTR) && slotEl.getAttribute(MARK_ATTR) === MARK_HIDDEN;

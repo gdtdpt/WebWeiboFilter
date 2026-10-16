@@ -6,16 +6,21 @@
  *
  * ── 为什么只有一个属性 + 一条 CSS ──────────────────────────────────
  * 所有压制都通过**一个自定义属性**`data-spb` 的两个取值来表达：
- *   [data-spb="hidden"] → visibility: hidden   （B 类：信息流内的卡 —— 保高度，§12-B2）
+ *   [data-spb="hidden"] → 压缩为一行细条（B 类：信息流内的卡，§12-B19）
  *   [data-spb="ad"]     → display: none        （A 类：页面级 banner —— 流式布局，可安全收掉）
  * 好处：① 撤销 = 删属性，不残留内联样式；② 不碰微博自己写的内联 style
  *      （虚拟列表会往槽位上写 `transform`，若我们直接改 `style` 容易互相打架）。
  *
- * ── B 类空位的占位提示（2026-10-15 用户拍板方案 A）─────────────────
- * 广告 / 关键词卡隐藏后留下一块等高空白，观感上像「页面坏了」。
- * `visibility` 是少数**可被后代重新置回 visible** 的继承属性（`display:none` 不行），
- * 所以占位可以做成**槽位的 `::after`**：卡整卡隐藏，空位中央叠一条中性小字。
- * 好处：零 JS 改动、零新增 DOM 属性（低调纪律不破）、撤销仍是删一个属性。
+ * ── B 类：从「保高空块」到「一行细条」（2026-10-16 用户提议，§12-B19）──
+ * 旧形态（2026-10-15 方案 A）：`visibility:hidden` 保原高度，空位中央叠「已过滤」
+ * —— 广告卡 800px 高就空 800px，观感像「页面坏了」（用户原话「看上去像空了一块」）。
+ * 新形态：**槽位压到一行文字高**（22px）+ overflow 裁切。依据：
+ *   · vue-recycle-scroller 对每个槽位挂 ResizeObserver（B15 实证：运行中高度变化
+ *     会被重测——评论展开 329→548 无洞），压缩后后续卡**预期自动上移补位**；
+ *   · 若不感知，行为无害退化：洞从「800px 空块」变「22px 细线」（仍远好于现状）。
+ *   ⇒ 两种结果都可接受，无破坏面；真机复验「补位 / 无跳 / 复用还原」。
+ * `visibility` 保留：内容已被 overflow 裁掉，visibility 兜底盖住一切逃逸绘制
+ * （且它是少数可被 ::after 置回 visible 的继承属性——细条里的那行字靠它点亮）。
  *
  * ⚠️ 属性名刻意取短且不自述（不用 `data-specbase-filtered` 这种一看就知道装了什么的写法）：
  *    低调是项目核心目标，DOM 里不该留下自我介绍的痕迹。
@@ -24,7 +29,7 @@
 /** 唯一的压制属性 */
 export const MARK_ATTR = 'data-spb';
 
-/** 取值：B 类卡（信息流内）—— 保高度隐藏 */
+/** 取值：B 类卡（信息流内）—— 压缩为一行细条（§12-B19） */
 export const MARK_HIDDEN = 'hidden';
 
 /** 取值：A 类 banner（流外）—— 真正收掉 */
@@ -33,15 +38,25 @@ export const MARK_PAGE_AD = 'ad';
 /** 样式表元素 id（便于撤销与幂等检查） */
 export const STYLE_ID = 'spb-style';
 
+/** B 类细条高度 = 一行文字高（⑧ 正文行盒 14×1.6≈22.4 ⇒ 取 22） */
+export const HIDDEN_STRIP_H = 22;
+
 /**
  * 过滤用的规则（与外观档位无关，**永远注入**）。
  * 这套选择器只依赖我们自己写的属性，微博改版也不会让它失效。
  */
 export const FILTER_CSS = [
-  `[${MARK_ATTR}="${MARK_HIDDEN}"]{visibility:hidden !important}`,
+  // B 类压条（§12-B19）：max-height 压槽位（卡内容被 overflow 裁掉），
+  // visibility 兜底盖住逃逸绘制。压缩是否触发 scroller 补位见文件头说明。
+  `[${MARK_ATTR}="${MARK_HIDDEN}"]{`
+    + `visibility:hidden !important;`
+    + `max-height:${HIDDEN_STRIP_H}px !important;`
+    + 'overflow:hidden !important'
+    + '}',
   `[${MARK_ATTR}="${MARK_PAGE_AD}"]{display:none !important}`,
-  // B 类空位占位（方案 A）：::after 是槽位的后代 ⇒ 能把 visibility 重新置回 visible。
-  // 绝对定位 + pointer-events:none ⇒ 不改布局、不接交互；颜色用主题变量（禁写死，见 §7.5）。
+  // B 类细条里的那行字：::after 是槽位的后代 ⇒ 能把 visibility 重新置回 visible。
+  // absolute + inset:0 在 22px 细条内居中；底缘一条分割线色（主题令牌，禁写死）
+  // 让细条读起来像「一行被压掉的记录」而不是缺口。
   `[${MARK_ATTR}="${MARK_HIDDEN}"]::after{`
     + 'content:"已过滤";'
     + 'visibility:visible !important;'
@@ -54,6 +69,7 @@ export const FILTER_CSS = [
     + 'letter-spacing:.08em;'
     + 'color:var(--w-sub);'
     + 'opacity:.55;'
+    + `box-shadow:0 1px 0 var(--w-dividing-line);`
     + 'pointer-events:none'
     + '}',
 ].join('\n') + '\n';
