@@ -20,6 +20,7 @@ import { loadConfig, saveConfig } from './config.js';
 import { applyL0 } from './features/l0.js';
 import { appearanceCss } from './features/appearance.js';
 import { ensureStyle, composeCss, FILTER_CSS, removeStyle } from './apply/style.js';
+import { morePicsDebug } from './apply/morepics.js';
 import { createScheduler } from './scheduler.js';
 import { readCardSignals } from './adapters/weibo-home.js';
 import { decide, ACTION } from './core/decision.js';
@@ -154,6 +155,8 @@ if (page) {
       rescan: () => (scheduler ? scheduler.rescan() : null),
       stats: () => (scheduler ? scheduler.stats() : null),
       recent: () => (scheduler ? scheduler.recent() : []),
+      /** 「+N」全展示的取数管道状态（§12-B18 定位用）：缓存/在途/冷却中/沙箱有没有 fetch */
+      morePicsDebug: () => morePicsDebug(),
       /** 关掉过滤：清掉全部标记、停止观测、**撤掉注入的样式表** —— 用来肉眼确认「可逆」 */
       off: () => {
         // ⚠️ 2026-10-15 真机反馈修正：L1 落地改高度项（媒体缩略化）后，只清标记不够 ——

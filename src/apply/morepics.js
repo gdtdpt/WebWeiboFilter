@@ -127,6 +127,20 @@ export function resetMorePicsCache() {
   cache.clear(); inflight.clear(); failedAt.clear();
 }
 
+/** 取数管道的当前状态（诊断把手 `__spb.morePicsDebug()` 用；只读） */
+export function morePicsDebug() {
+  const now = Date.now();
+  return {
+    cached: [...cache.keys()],
+    inflight: [...inflight.keys()],
+    cooling: [...failedAt.entries()]
+      .filter(([, t]) => now - t < FAIL_COOLDOWN_MS)
+      .map(([bid, t]) => ({ bid, retryInMs: FAIL_COOLDOWN_MS - (now - t) })),
+    cacheMax: CACHE_MAX,
+    fetchAvailable: typeof fetch === 'function',
+  };
+}
+
 /**
  * 取一张微博的全量图片列表（带缓存 / 在途去重 / 失败冷却）。
  * 永不 reject（失败返回 null）⇒ 调用方不需要 catch。
@@ -145,7 +159,11 @@ export function getMorePics(bid, fetcher) {
   if (fail && Date.now() - fail < FAIL_COOLDOWN_MS) return Promise.resolve(null);
 
   const p = (fetcher || defaultFetcher)(DETAIL_URL + encodeURIComponent(bid))
-    .then((r) => (r && typeof r.json === 'function' ? r.json() : null))
+    .then((r) => {
+      // 取数失败的可见出口：无声失败会让「功能没生效」变成悬案（2026-10-16 真机教训）
+      if (!r || !r.ok) console.warn('[spb] morePics: 详情接口响应异常', bid, r && r.status);
+      return r && typeof r.json === 'function' ? r.json() : null;
+    })
     .then((j) => {
       const pics = parsePicInfos(j);
       if (pics) {
@@ -153,11 +171,14 @@ export function getMorePics(bid, fetcher) {
         if (cache.size > CACHE_MAX) cache.delete(firstKey(cache));
       } else {
         failedAt.set(bid, Date.now());
+        console.warn('[spb] morePics: 详情响应解析不出图片列表', bid,
+          j && typeof j === 'object' ? Object.keys(j).slice(0, 12) : j);
       }
       return pics || null;
     })
-    .catch(() => {
+    .catch((e) => {
       failedAt.set(bid, Date.now());
+      console.warn('[spb] morePics: 取数失败（60s 冷却后重试）', bid, String(e));
       return null;
     });
   inflight.set(bid, p);
