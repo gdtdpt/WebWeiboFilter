@@ -1484,8 +1484,31 @@ partial 只压一半 ⇒ 加载器首帧读到**自相矛盾的几何** → 判�
 ② 信息流加宽 = 收 `_side_` 壳 + 三层放开定宽（用户拍板「吃掉空档、窗口缩窄跟随变窄」）；
 ③ 时间成列 = absolute + 宽 48px 靠空格自然折两行（免 JS）；④ 行化 = article 透明；
 ⑤ L2 排版 13/1.5（config null = 跟随档位）；⑥ 头像三变体默认 β（§7.5.5 落地实况）。
-⚠️ 真机复验清单：**滚动不留洞**（改高度项）· `.grayTheme` 全页唯一性 · 窗口缩窄时信息流是否跟随变窄
-（若 `_content_` 定宽 1122 则到微博 simple 断点前不变，届时再补宽度覆盖）· γ/β 观感三选一 · `__spb.off()` 恢复。
+
+**M2 首轮真机验收三症状 → probeL2 v4（ruleAudit 规则命中审计）定位三根因（2026-10-16，已修复）**：
+
+1. 🔴 **`:has()` 禁止嵌套**（CSS Selectors 4 规范，Chrome 强制）：v1 的
+   `div:has(> div:has(> main...))` 是**非法选择器 ⇒ 整条规则被浏览器丢弃**，order 从未生效。
+   ruleAudit 实测 `querySelectorAll` 抛异常（-1）即证据。**修法 = 两个并列 `:has()`**
+   `div.woo-box-flex:has(> .grayTheme):has(main.woo-box-flex)`（直接子有 .grayTheme +
+   后代有 main.woo-box-flex，全页唯一）。⚠️ 静态检查（linkedom/单测）拦不住这种错误 ——
+   测试里加了禁嵌套断言；ruleAudit 的「逐条选择器命中数」是这类问题的通用探针手法。
+2. **`_content_` 分栏层是 fit-content 收缩盒**（实测 753 = 左栏 190 + 信息流 563，margin 272×2
+   自动居中，总宽恒 = 可视宽）：内层全放开 `width:auto` 后整条链失去宽度基准，收缩到内容
+   固有宽 ⇒ 信息流**反而变窄**（563px）。修法 = 给 `_content_` 本身 `width:100%`
+   （同锚双 `:has()`），flex 链才有自由空间可分配。
+3. **时间锚的定位上下文不是 article**，是衬距边缘的 header/feed_body（微博自身 relative；
+   实测 left:14 落在卡左缘 +105 = 90 衬距 + 15，top 15 却与 article 顶吻合 ⇒ 上下文在
+   衬距边缘、顶 = article 顶）。修法 = left 写**补偿负值** `14 - 90 = -76px`（γ 头像同）。
+   ⚠️ v3「父链全 static」只看了三层（_info_/_content_wrap_/_main_），header 以上没查 —— 教训：
+   **absolute 落点必须实测 computed 的实际 rect，不能只看父链前几层**。
+
+另：`avatarVariant` 存储里是旧默认 `'alpha'`（字段曾有占位默认、用户从未显式选择）⇒ 新默认 β
+被 deepMerge 压住、mask 规则从未发射 —— 需 `__spb.appearance({ avatarVariant: 'beta' })` 一次性纠正。
+
+⚠️ 真机复验清单（v2 修复后）：**滚动不留洞**（改高度项）· 左栏贴最右 · 信息流加宽吃满
+（约 = 可视宽 - 190）· 窗口缩窄跟随 · 时间两行落在卡左缘 +14 · β 渐隐 · γ 观感 ·
+转发卡 · 长文展开卡 · `__spb.off()` 恢复 · **首页与分组页（mygroups）都要看**。
 
 
 ---

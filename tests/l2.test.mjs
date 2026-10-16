@@ -47,9 +47,16 @@ const SIZE_AFFECTING = [
  */
 const L2_SIZE_EXEMPT = [
   {
-    sel: /^div:has\(> div:has\(> main\.woo-box-flex\)\) > \.grayTheme$/,
+    sel: /^div\.woo-box-flex:has\(> \.grayTheme\):has\(main\.woo-box-flex\) > \.grayTheme$/,
     props: ['order'],
-    why: '三列重排：左栏移最右 —— order 只改 flex 排列次序，列宽不变 ⇒ 期望零高度影响',
+    why: '三列重排：左栏移最右 —— order 只改 flex 排列次序，列宽不变 ⇒ 期望零高度影响'
+      + '（⚠️ 选择器禁止嵌套 :has() —— 两个并列 :has()，2026-10-16 真机根因 ①）',
+  },
+  {
+    sel: /^div\.woo-box-flex:has\(> \.grayTheme\):has\(main\.woo-box-flex\)$/,
+    props: ['width', 'max-width'],
+    why: '_content_ 分栏层 width:100%（fit-content 收缩盒的宽度基准，真机根因 ②）⇒ 信息流列宽'
+      + '变化 ⇒ 卡宽/卡高变化 —— 改高度项，首帧兜底',
   },
   {
     sel: /^main\.woo-box-flex > div:has\(\.wbpro-side-main\)$/,
@@ -124,6 +131,15 @@ test('布局三规则：左栏 order:2 / 右壳 display:none / 主列 flex:1', (
   const order = rules.find((r) => /\.grayTheme/.test(r.selector));
   assert.ok(order, '缺三列重排规则');
   assert.equal(order.decls.find((d) => d.prop === 'order').value, '2 !important');
+  // 🔴 选择器禁嵌套 :has()（规范禁令，Chrome 丢整条规则 —— 2026-10-16 真机根因 ①）
+  assert.doesNotMatch(order.selector, /:has\([^)]*:has\(/, '出现嵌套 :has()');
+  assert.equal(order.selector,
+    'div.woo-box-flex:has(> .grayTheme):has(main.woo-box-flex) > .grayTheme');
+
+  // _content_ 宽度基准（真机根因 ②：fit-content 收缩盒）
+  const content = rules.find((r) => r.selector === 'div.woo-box-flex:has(> .grayTheme):has(main.woo-box-flex)');
+  assert.ok(content, '缺 _content_ 宽度基准规则');
+  assert.equal(content.decls.find((d) => d.prop === 'width').value, '100% !important');
 
   const shell = rules.find((r) => r.selector === 'main.woo-box-flex > div:has(.wbpro-side-main)');
   assert.ok(shell, '缺右栏壳收口规则');
@@ -143,6 +159,9 @@ test('时间列：absolute + 两行宽 48 + mono + 主题色', () => {
   assert.ok(time, '缺时间成列规则');
   const get = (p) => (time.decls.find((d) => d.prop === p) || {}).value;
   assert.match(get('position'), /absolute/);
+  // left = 目标 14 - 衬距 90 = -76（定位上下文在衬距边缘 —— 2026-10-16 真机根因 ③）
+  assert.equal(get('left'), '-76px !important');
+  assert.equal(get('top'), '14px !important');
   assert.equal(get('width'), '48px !important');
   assert.match(get('font-family'), /monospace/);
   assert.equal(get('color'), 'var(--w-sub) !important');
@@ -178,6 +197,8 @@ test('头像三变体矩阵：beta 默认 mask 渐隐 / gamma 入时间列 / alp
   const gamma = parseRules(l2Css({ appearance: { avatarVariant: 'gamma' } }));
   const gammaRule = gamma.find((r) => /header \.woo-avatar-main$/.test(r.selector));
   assert.ok(gammaRule, 'gamma 应挪头像盒');
+  assert.equal(gammaRule.decls.find((d) => d.prop === 'left').value, '-76px !important',
+    'γ 头像 left 走衬距补偿负值（根因 ③）');
   assert.equal(gammaRule.decls.find((d) => d.prop === 'width').value, '22px !important');
   assert.ok(!gamma.some((r) => r.selector === '.wbpro-scroller-item img.woo-avatar-img'),
     'gamma 不应再有 mask 规则');

@@ -23,10 +23,24 @@
  * 外壳（顶栏 / 左栏 / 分栏层）没有语义锚点，可用锚只有：
  *   · `main` 标签（语义）+ `woo-box-flex`（库类）—— 分栏层 main 的唯一定位方式；
  *   · `.grayTheme`（左栏列上的主题类，probeL2 v3 实测；⚠️ 全页唯一性待真机复验，
- *     因此规则用 `:has(> main.woo-box-flex)` 的直接子关系**收窄作用域**，不裸锚）；
+ *     因此规则用 `:has(> .grayTheme):has(main.woo-box-flex)` 的双条件**收窄作用域**，不裸锚）；
  *   · `.vue-recycle-scroller` / `.wbpro-side-main`（库类）；
  *   · `:has()` 已在 L1 归因条（③b）用过，linkedom 语义已验一致。
  * ⛔ 禁构建哈希（_wrap_1l406_3 / _full_1l406_7 / _side_1ubn9_37 一律不锚）。
+ *
+ * ── 2026-10-16 真机三症状的根因（probeL2 v4 ruleAudit 定位，§12-M1 追记）─────
+ * ① 🔴 **`:has()` 禁止嵌套**（CSS Selectors 4 规范，Chrome 强制）：v1 写的
+ *    `div:has(> div:has(> main...))` 是非法选择器 ⇒ **整条规则被浏览器丢弃**，
+ *    order 从未生效（ruleAudit 实测 querySelectorAll 抛异常 = -1）。修法 = 两个**并列**的
+ *    `:has()`（合法）：`div.woo-box-flex:has(> .grayTheme):has(main.woo-box-flex)`。
+ * ② `_content_` 分栏层是 **fit-content 收缩盒**（实测 753 = 左栏 190 + 信息流 563，
+ *    margin 272×2 自动居中，总量恒 = 可视宽）：内层全放开 `width:auto` 后链条失去
+ *    宽度基准 ⇒ 整体收缩到内容固有宽（信息流反而变窄）。修法 = 给 _content_ 本身
+ *    `width:100%`，让 flex 链有自由空间可分配。
+ * ③ 时间锚的**定位上下文不是 article**，是衬距边缘的 header/feed_body（微博自身
+ *    relative，实测 left:14 落在卡左缘 +105 = 90 衬距 + 15）：absolute 的 left 以
+ *    **衬距边缘**为原点 ⇒ 实际写 `left = 目标 - TIME_COL_PAD`（负值补偿）。
+ *    top 不受影响（该上下文的顶 = article 顶，article 无 padding-top）。
  */
 
 import {
@@ -57,6 +71,12 @@ const TIME_COL_W = 48;
 const GAMMA_AVATAR_TOP = 56;
 /** article 内边距：给时间列腾出的宽度（时间列 48 + 左右呼吸 ≈ 90） */
 const TIME_COL_PAD = 90;
+/**
+ * 时间列 / γ 头像的 absolute left **实际写入值** = 目标偏移 - 衬距。
+ * 定位上下文是衬距边缘的 header/feed_body（微博自身 relative，见文件头根因 ③），
+ * 不是 article 的边框盒 ⇒ 要落到「卡左缘 +14」必须写 14 - 90 = -76px。
+ */
+const TIME_COL_CSS_LEFT = TIME_COL_LEFT - TIME_COL_PAD;
 
 /**
  * 生成 L2 增量的 CSS 文本（在 L1 之后拼接，同特异性靠后胜出）。
@@ -80,11 +100,21 @@ export function l2Css(cfg) {
 
   // ① 页面三列重排：左栏分类列表移到最右（用户 2026-10-16 拍板「主列为第一列」）。
   //    父层 _content_ 本来就是 flex row ⇒ 一条 order 就够，列宽一像素不变（零高度影响）。
-  //    作用域收窄：锚「直接子里有 main.woo-box-flex 的那层分栏容器」的直接子 .grayTheme，
-  //    防止页面上别处的 .grayTheme 落进别的 flex 容器被误排序（唯一性真机复验仍是防线）。
+  //    ⚠️ 选择器**禁止嵌套 :has()**（规范禁令，Chrome 丢弃整条规则 —— 见文件头根因 ①），
+  //    收窄作用域用两个**并列** :has()：直接子有 .grayTheme（排除只包含 main 的外层列容器）
+  //    + 后代有 main.woo-box-flex（全页唯一，audit 实测 =1；排除弹层里其它的 .grayTheme）。
   //    fixed 浮钮不参与 flex 布局，order 对它无效，无需排除。
   const layout = [
-    rule('div:has(> div:has(> main.woo-box-flex)) > .grayTheme', 'order:2 !important'),
+    rule('div.woo-box-flex:has(> .grayTheme):has(main.woo-box-flex) > .grayTheme',
+      'order:2 !important'),
+
+    // ①b 信息流加宽的**宽度基准**（2026-10-16 真机修复，根因 ②）：_content_ 分栏层是
+  //    fit-content 收缩盒（实测 753 = 190 + 563，margin 自动居中）——内层放开 width:auto
+  //    只会让整条链收缩到内容固有宽。给它 width:100% 吃满外层行，flex 链才有自由空间
+  //    可分配（包裹层 flex:1 ⇒ main ⇒ _full_ 逐层传导）；max-width:none 是防微博自身
+  //    上限的保险。🔴 列宽变化 ⇒ 卡宽变化 ⇒ 换行数变化 ⇒ **改卡高** —— 首帧注入兜底。
+    rule('div.woo-box-flex:has(> .grayTheme):has(main.woo-box-flex)',
+      'width:100% !important;max-width:none !important'),
 
     // ② 信息流加宽吃掉右栏空档（用户 2026-10-16 拍板；「正文行长没问题」）：
     //    先收掉 _side_ 空壳 —— L1 ⑧ 的 display:none 只藏了 .wbpro-side-main 内容，
@@ -111,14 +141,16 @@ export function l2Css(cfg) {
     rule(`${SEL_CARD[0]} article`,
       `padding-left:${TIME_COL_PAD}px !important;background:transparent !important`),
 
-    // ④ 时间独立成列：时间锚 absolute 挂到 article 坐标系（M1 实测父链全 static，
-    //    article 已是 relative）。等宽字体 + 宽 48px 靠空格自然折成上下两行（§7.5-A）。
+    // ④ 时间独立成列：时间锚 absolute 挂 article 坐标系。⚠️ 实测定位上下文是**衬距边缘**
+    //    的 header/feed_body（微博自身 relative，根因 ③）——left 必须写补偿负值
+    //    （TIME_COL_CSS_LEFT = 14 - 90），top 不受影响（上下文顶 = article 顶）。
+    //    等宽字体 + 宽 48px 靠空格自然折成上下两行（§7.5-A）。
     //    选择器限定 `article > div > header`（卡 header 是 feed_body 的直接子）——
     //    转发块内部的时间锚在 .retweet 更深层，不会被这条捞走、原地不动。
     //    absolute 脱流后 header 原位只剩「来自 xx」来源条（probeL2 实测，无塌陷）；
     //    时间自身盒子的 font-size/width 只影响自己（脱流），不改卡高。
     rule(`${SEL_CARD[0]} article > div > header ${SEL_TIME_ANCHOR[0]}`,
-      `position:absolute !important;left:${TIME_COL_LEFT}px !important;top:${TIME_COL_TOP}px !important`
+      `position:absolute !important;left:${TIME_COL_CSS_LEFT}px !important;top:${TIME_COL_TOP}px !important`
       + `;width:${TIME_COL_W}px !important;white-space:normal !important`
       + ';font-family:ui-monospace,Consolas,monospace !important'
       + ';font-size:12px !important;line-height:1.4 !important'
@@ -136,20 +168,20 @@ export function l2Css(cfg) {
   //    · α：无额外规则（L1 ① 的降饱和 + 降透明就是 α 形态）。
   //    · β：**不脱流** —— header 高度、卡高都不变；mask 渐隐是纯绘制效果。
   //      mask 色写 black 关键字：遮罩只取 alpha 通道、与主题色无关（l2 守卫放行 black 于 mask）。
-  //    · γ：整盒（.woo-avatar-main，内联 52×52 那层）absolute 挪进时间列下方、缩到 22px；
-  //      选择器限定卡 header 内 ⇒ 转发块的小头像原地不动。🔴 脱流后 header 高度塌缩
-  //      （原 52px 由头像撑着）⇒ **改高度项**，首帧兜底 + SIZE_EXEMPT 登记；
-  //      定位上下文 = article 的前提是 header/a 无 relative（真机复验项）。
-  let avatar = '';
-  if (variant === 'beta') {
-    const mask = 'linear-gradient(135deg, black 20%, transparent 85%)';
-    avatar = rule(`${SEL_CARD[0]} ${SEL_AVATAR[0]}`,
-      `-webkit-mask-image:${mask} !important;mask-image:${mask} !important`);
-  } else if (variant === 'gamma') {
-    avatar = rule(`${SEL_CARD[0]} article > div > header .woo-avatar-main`,
-      `position:absolute !important;left:${TIME_COL_LEFT}px !important;top:${GAMMA_AVATAR_TOP}px !important`
-        + ';width:22px !important;height:22px !important');
-  }
+    //    · γ：整盒（.woo-avatar-main，内联 52×52 那层）absolute 挪进时间列下方、缩到 22px；
+    //      left 同时间锚走衬距补偿负值（根因 ③）；选择器限定卡 header 内 ⇒ 转发块的小头像
+    //      原地不动。🔴 脱流后 header 高度塌缩（原 52px 由头像撑着）⇒ **改高度项**，
+    //      首帧兜底 + SIZE_EXEMPT 登记；top 以该上下文顶（= article 顶）为基准。
+    let avatar = '';
+    if (variant === 'beta') {
+      const mask = 'linear-gradient(135deg, black 20%, transparent 85%)';
+      avatar = rule(`${SEL_CARD[0]} ${SEL_AVATAR[0]}`,
+        `-webkit-mask-image:${mask} !important;mask-image:${mask} !important`);
+    } else if (variant === 'gamma') {
+      avatar = rule(`${SEL_CARD[0]} article > div > header .woo-avatar-main`,
+        `position:absolute !important;left:${TIME_COL_CSS_LEFT}px !important;top:${GAMMA_AVATAR_TOP}px !important`
+          + ';width:22px !important;height:22px !important');
+    }
 
   return layout.concat(avatar ? [avatar] : []).join('\n') + '\n';
 }
