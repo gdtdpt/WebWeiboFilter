@@ -1258,7 +1258,9 @@ article
   | `.u-col-1/3/4 > *{max-width:90px}` | **行子格压宽（⑦c）**：probeMedia3 实测 13/13 flow（block + inline-block，无固定列数 grid/nowrap）⇒ 压窄后自动换行挤进更多列；子格宽是百分比（maxWidth:none）直接封顶；`._item_` 是哈希类 ⛔ 只能用 u-col-N 直接子表达 |
   | `.u-col-1/3/4 > *` 所在行的 picture-main img | img 全几何接管（B17 cover 定稿），任意形状自洽 |
 
-  **⑦c 压宽的读数依据（probeMedia3，2026-10-15 用户「一行容纳更多图」）**：行容器无内联宽度（u-col-3 撑满 409.75px / u-col-4 撑满 546px），子格间距 = 容器负 margin + 子格 padding 4px（无缝隙）⇒ 90 方格下 u-col-3 容器装 **4 列**、u-col-4 装 **5 列**；72 时分别 5 列 / 7 列（九宫格 9 图降为 2 行）。宽度上限 = `appearance.mediaMaxW`（**null = 跟随 mediaMaxH 方格**，默认；控制台可试值）。夹具守卫：卡内 u-col-N 只有 1/3/4（`l1.test.mjs`，微博加新列数先红）。**改宽 = 行数可能变 = 卡高变**，走首帧机制（B12），真机验洞纪律照旧。
+  **⑦c 压宽的读数依据（probeMedia3，2026-10-15 用户「一行容纳更多图」）**：行容器无内联宽度（u-col-3 撑满 409.75px / u-col-4 撑满 546px），子格间距 = 容器负 margin + 子格 padding 4px（无缝隙）⇒ 90 方格下 u-col-3 容器装 **4 列**、u-col-4 装 **5 列**；72 时分别 5 列 / 7 列（九宫格 9 图降为 2 行）。单图行宽度上限 = `appearance.mediaMaxW`（**null = 跟随 mediaMaxH 方格**，默认；控制台可试值）。
+
+  **⑦c 二轮（2026-10-16 真机反馈「有一些卡片还是 4 个一行」）**：那是 u-col-3 容器 —— 定宽 409.75，90 方格（占位 94）数学上只能装 4 列（5×94=470 装不下）。用户拍板**只压多图网格、单图保持 90 方格** ⇒ 新增**网格专属规则** `u-col-3/4 > * 与行内 picture-main{max-width:76px}`（`appearance.mediaMaxWGrid`，默认 76：u-col-3 装 5 列 5×80=400 ≤ 409.75，u-col-4 升 6 列；控制台可试值）。排在前两条 base 规则之后（与子格规则同特异性靠后者胜、对 picture-main 特异性更高），L1_RULE_COUNT 23→24。夹具守卫照旧。**改宽 = 行数可能变 = 卡高变**，走首帧机制（B12），真机验洞纪律照旧。
 
   - 锚 `.woo-picture-main` / `.u-col-1` 都是**库类**（`u-col-N` 栅格族；`_picTall_/_singleImg_/_inlineNum3_/_row_` 全是哈希 ⛔）。
   - 图片源全是 orj360（360 宽缩略图）⇒ 缩显示尺寸不损清晰度。

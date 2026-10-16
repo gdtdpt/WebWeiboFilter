@@ -23,7 +23,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { l1Css, L1_RULE_COUNT, DEFAULT_MEDIA_MAX_H } from '../src/features/l1.js';
+import { l1Css, L1_RULE_COUNT, DEFAULT_MEDIA_MAX_H, DEFAULT_MEDIA_GRID_W } from '../src/features/l1.js';
 import { appearanceCss } from '../src/features/appearance.js';
 import { composeCss, ensureStyle, FILTER_CSS, STYLE_ID } from '../src/apply/style.js';
 import { FIXTURE_DIR, fixtures } from './_fixture-expect.mjs';
@@ -94,6 +94,13 @@ const SIZE_EXEMPT = [
     why: '⑦c 行子格压宽（probeMedia3 实测 13/13 flow：block + inline-block 无固定列数）'
       + ' ⇒ 压窄后自动换行挤进更多列；子格宽是百分比算的（maxWidth:none），max-width 直接封顶；'
       + '._item_ 是哈希类 ⛔ 只能用 u-col-N 直接子表达' },
+  // ⑦c 二轮（2026-10-16「有一些卡片还是 4 个一行」）：多图网格专属压宽，单图不跟（用户拍板）
+  { sel: /\.u-col-[34] > \*$/, prop: 'max-width', val: `${DEFAULT_MEDIA_GRID_W}px`,
+    why: '⑦c 二轮网格专属压宽：u-col-3 容器定宽 409.75，90 方格只能装 4 列（5×94=470 装不下）'
+      + ' ⇒ 网格 76（5×80=400 ≤ 409.75，u-col-4 容器 546 升 6 列）；只作用 u-col-3/4，单图行保持 90 方格' },
+  { sel: /\.u-col-[34] \.woo-picture-main$/, prop: 'max-width', val: `${DEFAULT_MEDIA_GRID_W}px`,
+    why: '⑦c 二轮网格专属压宽（picture-main 层）：宽度显式值三层重复声明，'
+      + 'u-col-3/4 行内的 picture-main 必须与子格同压 76，漏层 = 宽度版 84px 空白（§12-B16 同源坑）' },
   // cover 全接管形态（B17 结案定稿）：配对内联（尺寸+负偏移）必须**整体**作废 ——
   // partial 形态（只压 height 留 top:auto）= B17 黑图凶手，严禁回潮。
   { sel: /\.woo-picture-main img$/, prop: 'width', val: '100%',
@@ -137,7 +144,8 @@ test('L1：mediaCaps:false 只摘媒体尺寸规则组（B17 黑图归因开关�
   // ✅ 2026-10-15 用户实测：mediaCaps:false 刷新后无黑图 ⇒ 凶手锁定在三条规则内。
   const off = parseRules(l1Css({ appearance: { mediaCaps: false } }));
 
-  assert.equal(off.length, L1_RULE_COUNT - 4, '恰好摘掉四条（img / u-col-1 行 / 行子格 / picture-main）');
+  assert.equal(off.length, L1_RULE_COUNT - 5,
+    '恰好摘掉五条（img / u-col-1 行 / 行子格 / 网格专属压宽 / picture-main）');
   for (const r of off) {
     assert.ok(!/woo-picture-main/.test(r.selector),
       `mediaCaps:false 下不得出现 woo-picture-main 尺寸规则：${r.selector}`);
@@ -237,6 +245,29 @@ test('L1：mediaMaxW 可调（⑦c 压宽）—— 缺省跟随 mediaMaxH（方�
   assert.match(l1Css({ appearance: { mediaMaxW: 9999 } }), /max-width:400px !important/, '宽度上限夹 400');
 });
 
+test('L1：mediaMaxWGrid 网格专属宽度（⑦c 二轮）—— 默认 76、单图不受影响、非法回退', () => {
+  // 背景：u-col-3 容器定宽 409.75，90 方格只能装 4 列 ⇒ 用户「有一些卡片还是 4 个一行」
+  const rules = parseRules(l1Css());
+  const gridItem = rules.find((r) => /\.u-col-[34] > \*/.test(r.selector) && !r.selector.includes('.u-col-1'));
+  assert.ok(gridItem, '缺网格专属压宽规则');
+  assert.match(gridItem.decls.find((d) => d.prop === 'max-width').value,
+    new RegExp(`^${DEFAULT_MEDIA_GRID_W}px !important`), `网格默认必须 ${DEFAULT_MEDIA_GRID_W}px`);
+
+  // 单图行三处（行容器 / 子格 / picture-main）保持跟随 mediaMaxH（90），不跟网格值走
+  const rowRule = rules.find((r) => /\.wbpro-scroller-item \.(wbpro-feed-content|retweet) \.u-col-1$/.test(r.selector));
+  assert.match(rowRule.decls.find((d) => d.prop === 'max-width').value,
+    new RegExp(`^${DEFAULT_MEDIA_MAX_H}px !important`), '单图行必须保持 90 方格（用户拍板不跟着变窄）');
+
+  // 显式值独立生效；非法回退 76；越界夹 [40, 400]
+  assert.match(l1Css({ appearance: { mediaMaxWGrid: 72 } }), /max-width:72px !important/, '显式网格宽必须生效');
+  for (const bad of ['x', -5, NaN]) {
+    const css = l1Css({ appearance: { mediaMaxWGrid: bad } });
+    assert.match(css, new RegExp(`max-width:${DEFAULT_MEDIA_GRID_W}px !important`),
+      `mediaMaxWGrid=${String(bad)} 应回退默认 ${DEFAULT_MEDIA_GRID_W}px`);
+  }
+  assert.match(l1Css({ appearance: { mediaMaxWGrid: 9999 } }), /max-width:400px !important/, '网格宽夹 400');
+});
+
 test('L1：媒体压宽 ⑦c —— 三层都压（行 u-col-1 / 行子格 u-col-N > * / picture-main），子格选择器 6 变体', () => {
   // probeMedia3 读数（2026-10-15，13 行全 flow）：子格宽在三层重复出现 ——
   // 单图 u-col-1 内联 width:168（行）+ class 168（子格）+ 内联 168（picture-main）；
@@ -252,21 +283,35 @@ test('L1：媒体压宽 ⑦c —— 三层都压（行 u-col-1 / 行子格 u-col
   assert.match(rowProps['max-width'], new RegExp(`^${DEFAULT_MEDIA_MAX_H}px`),
     'u-col-1 必须 max-width（内联 width:168 的宽度版防线）');
 
-  // ② 行子格：恰好一条、6 变体（u-col-1/3/4 × feed-content/retweet）、只压直接子
+  // ② 行子格：两条 —— base（u-col-1/3/4 全列、6 变体）+ 网格专属（u-col-3/4、8 变体，⑦c 二轮）
   const itemRules = rules.filter((r) => /\.u-col-[134] > \*/.test(r.selector));
-  assert.equal(itemRules.length, 1, '行子格压宽规则应恰好一条');
-  const variants = itemRules[0].selector.split(',');
-  assert.equal(variants.length, 6, '子格规则 = u-col-1/3/4 × 两作用域 = 6 变体');
+  assert.equal(itemRules.length, 2, '子格压宽应有两条：base（含单图）+ 网格专属（⑦c 二轮）');
+  const baseItem = itemRules.find((r) => r.selector.includes('.u-col-1 > *'));
+  const gridItem = itemRules.find((r) => !r.selector.includes('.u-col-1 > *'));
+  assert.ok(baseItem && gridItem, 'base 与网格专属各恰好一条');
+  const variants = baseItem.selector.split(',');
+  assert.equal(variants.length, 6, 'base 子格规则 = u-col-1/3/4 × 两作用域 = 6 变体');
   for (const v of variants) {
     assert.match(v, /^\.wbpro-scroller-item (\.(wbpro-feed-content|retweet)) \.u-col-[134] > \*$/,
       `${v}：必须卡内 + 内容区作用域 + u-col-N 直接子（._item_ 是哈希 ⛔）`);
   }
-  assert.ok(itemRules[0].selector.includes('.u-col-1 > *')
-    && itemRules[0].selector.includes('.u-col-3 > *')
-    && itemRules[0].selector.includes('.u-col-4 > *'), '三种列数都要覆盖');
+  assert.ok(baseItem.selector.includes('.u-col-1 > *')
+    && baseItem.selector.includes('.u-col-3 > *')
+    && baseItem.selector.includes('.u-col-4 > *'), '三种列数都要覆盖');
+  // ②b 网格专属（⑦c 二轮 2026-10-16）：只锚 u-col-3/4、8 变体、值为 DEFAULT_MEDIA_GRID_W
+  assert.equal(gridItem.selector.split(',').length, 8,
+    '网格专属 = u-col-3/4 × 子格/picture-main × 两作用域 = 8 变体');
+  assert.ok(!gridItem.selector.includes('.u-col-1'), '网格专属不得命中单图行（用户拍板：单图保持方格）');
+  assert.match(gridItem.decls.find((d) => d.prop === 'max-width').value,
+    new RegExp(`^${DEFAULT_MEDIA_GRID_W}px`),
+    `网格子格必须压到 ${DEFAULT_MEDIA_GRID_W}px（u-col-3 容器 409.75 装 5 列的前提）`);
+  assert.ok(gridItem.selector.includes('.u-col-3 .woo-picture-main')
+    && gridItem.selector.includes('.u-col-4 .woo-picture-main'),
+    '网格内的 picture-main 也要压到网格宽（三层重复声明，漏层 = 宽度版 84px 空白）');
 
-  // ③ picture-main：max-height 与 max-width 同条规则
-  const picRule = rules.find((r) => r.selector.includes('.woo-picture-main') && !r.selector.includes(' img'));
+  // ③ picture-main：max-height 与 max-width 同条规则（⚠️ 排除网格专属那条 —— 它也含 woo-picture-main）
+  const picRule = rules.find((r) => r.selector.includes('.woo-picture-main')
+    && !r.selector.includes(' img') && !/\.u-col-[34] \.woo-picture-main/.test(r.selector));
   assert.ok(picRule, '缺 picture-main 容器规则');
   const picProps = Object.fromEntries(picRule.decls.map((d) => [d.prop, d.value]));
   assert.match(picProps['max-height'], new RegExp(`^${DEFAULT_MEDIA_MAX_H}px`));
@@ -383,7 +428,9 @@ test('L1：媒体缩略化（§12-B16，改高度项）—— 数值法 max-heig
   //    作用域会误伤评论图（错位 + 黑框，用户截图）⇒ 作用域必须限定 feed-content/retweet
   //    （夹具 61/61 + 10/10：卡内媒体类全部在这两个区域之内，收窄 = 信息流行为零变化）。
   const css = l1Css();
-  const rules = parseRules(css).filter((r) => r.selector.includes('woo-picture-main'));
+  // ⚠️ 网格专属压宽规则（⑦c 二轮）的选择器也含 woo-picture-main，须排除
+  const rules = parseRules(css).filter((r) => r.selector.includes('woo-picture-main')
+    && !/\.u-col-[34] \.woo-picture-main/.test(r.selector));
 
   assert.equal(rules.length, 2, '媒体缩略化应恰好两条（容器 + img）');
   const container = rules.find((r) => !r.selector.includes(' img'));

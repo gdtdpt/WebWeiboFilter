@@ -63,6 +63,19 @@ function rule(selector, body) {
  */
 export const DEFAULT_MEDIA_MAX_H = 90;
 
+/**
+ * **多图网格专属**宽度上限（px，⑦c 二轮 2026-10-16）。
+ *
+ * 为什么单独立一项：九宫格行容器有两种**定宽** —— u-col-3（409.75px，装 9 图）与
+ * u-col-4（546px）。90 方格下 u-col-4 装 5 列（546÷94=5.8）而 **u-col-3 只装 4 列**
+ * （409.75÷94=4.36，第 5 格差 60px）⇒ 用户真机反馈「有一些卡片还是 4 个一行」。
+ * 格子 ≤78px 时 u-col-3 才装得下 5 列（5×80=400 ≤ 409.75）⇒ 默认 76。
+ * **只作用于 u-col-3/u-col-4 行**（多图网格）；单图行（u-col-1）保持 mediaMaxW
+ * 跟随高度的 90 方格 —— 用户拍板「单图不跟着变窄」（2026-10-16）。
+ * 控制台 `__spb.appearance({ mediaMaxWGrid: 72 })` + 刷新可试值。
+ */
+export const DEFAULT_MEDIA_GRID_W = 76;
+
 /** 容错：非法值（非数值 / 非正数）回退默认，越界值夹回 [40, 400] */
 function normalizeMaxH(v) {
   const n = typeof v === 'number' ? v : Number(v);
@@ -100,6 +113,10 @@ export function l1Css(cfg) {
   const mode = mc === false ? 'off' : mc === 'partial' ? 'partial' : 'all';
   const capPx = normalizeMaxH(a.mediaMaxH);
   const capW = normalizeMaxW(a.mediaMaxW, capPx);
+  // 多图网格（u-col-3/u-col-4）专属宽度上限 —— u-col-3 容器 409.75 在 90 方格只能装 4 列，
+  // 用户 2026-10-16 反馈「有一些卡片还是 4 个一行」⇒ 网格默认 76（5×80=400 ≤ 409.75）。
+  // 单图行（u-col-1）不受影响，保持 capW（默认跟随高度 = 90 方格）。
+  const capWGrid = normalizeMaxW(a.mediaMaxWGrid, DEFAULT_MEDIA_GRID_W);
   // img 规则的两种形态（B17 结案 2026-10-15：'partial' 形态 = 黑图凶手，'cover' = 修复）：
   // · 'partial'（height:100%+top:auto）—— 🔴 真机实锤致「空 slot 黑图」（'noRow' 档黑、
   //   'onlyCap' 档净，刷新级二分三轮）。机制：微博 JS 裁切给 img 写「尺寸+负偏移」**配对**内联
@@ -151,6 +168,16 @@ export function l1Css(cfg) {
         //    ⛔ 行容器 u-col-3/4 **不动**（无内联宽度，撑满内容区是「多列」的前提）。
         rule(`${SEL_CARD[0]} .wbpro-feed-content .u-col-1 > *,${SEL_CARD[0]} .wbpro-feed-content .u-col-3 > *,${SEL_CARD[0]} .wbpro-feed-content .u-col-4 > *,${SEL_CARD[0]} .retweet .u-col-1 > *,${SEL_CARD[0]} .retweet .u-col-3 > *,${SEL_CARD[0]} .retweet .u-col-4 > *`,
           `max-width:${capW}px !important`)
+      : '',
+    keep.row
+      ? // ⑦c 二轮（2026-10-16 真机反馈「有一些卡片还是 4 个一行」）：**多图网格专属压宽**。
+        //    u-col-3 容器定宽 409.75，90 方格（占位 94）只能装 4 列 —— 5×94=470 装不下；
+        //    格子 ≤78 才装得下 5 列 ⇒ 网格默认 76（u-col-4 容器 546 则升到 6 列）。
+        //    **单图行不受影响**（用户拍板）：这条只锚 u-col-3/u-col-4，u-col-1 走上面的 capW。
+        //    排在 ⑦c/⑦ 两条 base 规则之后 —— 与子格规则同特异性、靠后者胜；对 picture-main
+        //    则多一个类（特异性更高），都能稳压过 base 的 capW。
+        rule(`${SEL_CARD[0]} .wbpro-feed-content .u-col-3 > *,${SEL_CARD[0]} .wbpro-feed-content .u-col-4 > *,${SEL_CARD[0]} .wbpro-feed-content .u-col-3 .woo-picture-main,${SEL_CARD[0]} .wbpro-feed-content .u-col-4 .woo-picture-main,${SEL_CARD[0]} .retweet .u-col-3 > *,${SEL_CARD[0]} .retweet .u-col-4 > *,${SEL_CARD[0]} .retweet .u-col-3 .woo-picture-main,${SEL_CARD[0]} .retweet .u-col-4 .woo-picture-main`,
+          `max-width:${capWGrid}px !important`)
       : '',
     keep.cap
       ? //    容器压高 + 压宽放最后（⑦ 本体 + ⑦c；读数依据与收窄说明见 ⑦ 注释块）。
@@ -304,4 +331,4 @@ export function l1Css(cfg) {
 }
 
 /** 规则条数（探针 / 诊断页断言用；改 `l1Css()` 时记得同步） */
-export const L1_RULE_COUNT = 23;
+export const L1_RULE_COUNT = 24;
