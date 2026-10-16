@@ -224,22 +224,39 @@ export function l1Css(cfg) {
           `max-height:${capPx}px !important;max-width:${capW}px !important`)
       : '',
     keep.cap
-      ? // ⑦d 视频缩略化（M4，2026-10-16 用户确认；probeVideo 读数定稿）：
+      ? // ⑦d 视频缩略化（M4，2026-10-16 用户确认；probeVideo + probeVideoShrink 两轮读数定稿）：
         //    · 几何真相：播放器恒 **16:9 宽度驱动**（893×502 / 542×305，微博按容器宽调
         //      video.js 的 player 尺寸 = 动态 dimensions 样式表，**不带 important**）
-        //      ⇒ max-width/max-height !important 稳压，**不碰任何哈希祖先层**。
+        //      ⇒ max-width/max-height !important 稳压。
         //    · B17 配对内联：**无**（probeVideo：poster/tech 内联全空、fill player +
         //      object-fit:contain）⇒ 只压 .video-js 盒子，内部全部跟随；
         //      160×90 恰 16:9 ⇒ contain 无黑边无裁切。
+        //    · 🔴 **祖先不跟随**（probeVideoShrink 现场收缩实验实锤：注入 max-* 后
+        //      _placeholder_/_videoBox_/_row_ 仍钉在 893×502——它们的高度是微博侧
+        //      按容器宽**独立**算的，流内内容只有 h=0 的空 div + absolute 的 _feedVideo_
+        //      ⇒ 只压播放器必留 ~412px 大洞，图片侧「84px 空白」放大版）。
+        //      修法 = :has() **深度链**把流内祖先一并压高：video-js 往上依次是
+        //      _feedVideo_(absolute 脱流，不管) → 空div(h=0，不管) → _placeholder_(深3) →
+        //      空div(深4) → _videoBox_(深5) → _row_(深6)。哈希类 ⛔ 不能锚，深度链表达
+        //      （⚠️ 禁嵌套 :has()，链里只有一层 :has ✓；微博加/减包裹层时深度漂移 ⇒
+        //      规则失效留洞，复验时重跑 probeVideoShrink 即知）。
         //    · 状态限定 .vjs-paused：probeVideo 实锤**未播放就带**（首屏生效）；
-        //      起播 video.js 换 vjs-playing ⇒ 规则失效、自动还原全尺寸。
+        //      起播 video.js 换 vjs-playing ⇒ 全部规则失效、自动还原全尺寸。
         //      🔴 播放瞬间卡高 +412px 是图片侧没有的「运行中高度突变」，真机必验不留洞；
         //      若洞 → 降级「播放也锁小框」（去掉 .vjs-paused 限定即得，设计已留）。
+        //      :not(.vjs-fullscreen) 同 ③ 降饱和规则——全屏是主动观看，几何不许动。
         //    · 作用域与图片侧同构：feed-content / retweet（评论面板豁免；转发的原微博
         //      也可以是视频 —— probeVideo 样本 1 即在 retweet 内）；卡内限定 ⇒ 卡外
         //      mini-player 天然豁免。控制条 user-inactive 时本就 display:none，不用处理。
-        rule(`${SEL_CARD[0]} .wbpro-feed-content .video-js.vjs-paused,${SEL_CARD[0]} .retweet .video-js.vjs-paused`,
+        rule(`${SEL_CARD[0]} .wbpro-feed-content .video-js.vjs-paused:not(.vjs-fullscreen),${SEL_CARD[0]} .retweet .video-js.vjs-paused:not(.vjs-fullscreen)`,
           `max-width:${capWVideo}px !important;max-height:${capHVideo}px !important`)
+      : '',
+    keep.cap
+      ? // ⑦d+ 祖先塌缩（probeVideoShrink 🔴 实锤必须）：深度 3~6 的流内祖先层逐层 max-height
+        //    封顶（只压高不压宽——893 宽的 90 高空带无害，压宽反而多一层变量）。
+        //    每个深度一条臂，_feedVideo_（absolute）/ h=0 空div 不需要。
+        rule(`${SEL_CARD[0]} .wbpro-feed-content div:has(> div > div > .video-js.vjs-paused:not(.vjs-fullscreen)),${SEL_CARD[0]} .wbpro-feed-content div:has(> div > div > div > .video-js.vjs-paused:not(.vjs-fullscreen)),${SEL_CARD[0]} .wbpro-feed-content div:has(> div > div > div > div > .video-js.vjs-paused:not(.vjs-fullscreen)),${SEL_CARD[0]} .wbpro-feed-content div:has(> div > div > div > div > div > .video-js.vjs-paused:not(.vjs-fullscreen)),${SEL_CARD[0]} .retweet div:has(> div > div > .video-js.vjs-paused:not(.vjs-fullscreen)),${SEL_CARD[0]} .retweet div:has(> div > div > div > .video-js.vjs-paused:not(.vjs-fullscreen)),${SEL_CARD[0]} .retweet div:has(> div > div > div > div > .video-js.vjs-paused:not(.vjs-fullscreen)),${SEL_CARD[0]} .retweet div:has(> div > div > div > div > div > .video-js.vjs-paused:not(.vjs-fullscreen))`,
+          `max-height:${capHVideo}px !important`)
       : '',
   ].filter(Boolean);
 
@@ -396,4 +413,4 @@ export function l1Css(cfg) {
 }
 
 /** 规则条数（探针 / 诊断页断言用；改 `l1Css()` 时记得同步） */
-export const L1_RULE_COUNT = 26;
+export const L1_RULE_COUNT = 27;

@@ -125,11 +125,16 @@ const SIZE_EXEMPT = [
   { sel: /\.wbpro-feed-(ogText|reText)$/, prop: 'line-height', val: `${DEFAULT_TEXT_LINE_HEIGHT}`,
     why: '⑧ 正文行距统一 1.6（og 原生 24/15=1.6、re 24/14=1.71 ⇒ 行盒 22.4px）—— 同上改高度项' },
   // ⑦d 视频缩略化（M4，2026-10-16 用户确认；probeVideo 读数定稿）
-  { sel: /\.video-js\.vjs-paused$/, prop: 'max-height', val: `${DEFAULT_MEDIA_MAX_H}px`,
+  { sel: /\.video-js\.vjs-paused:not\(\.vjs-fullscreen\)\)$/, prop: 'max-height', val: `${DEFAULT_MEDIA_MAX_H}px`,
+    why: '⑦d+ 祖先塌缩（probeVideoShrink 现场实验 🔴 实锤：_placeholder_/_videoBox_/_row_ 的'
+      + '高度是微博侧按容器宽独立计算的，不随播放器塌缩 ⇒ 只压一层留 ~412px 大洞）。'
+      + '哈希类⛔不能锚 ⇒ :has() 深度链（深 3~6 流内层；_feedVideo_ absolute 脱流不用管）；'
+      + '改高度项，首帧兜底 + 真机复验「不留洞」+ 微博改包裹层数时重跑实验' },
+  { sel: /\.video-js\.vjs-paused:not\(\.vjs-fullscreen\)$/, prop: 'max-height', val: `${DEFAULT_MEDIA_MAX_H}px`,
     why: '⑦d 视频压高：播放器恒 16:9 宽度驱动（probeVideo 实锤 893×502，来源 = video.js 动态'
-      + ' dimensions 样式表、不带 important）⇒ max-height 稳压，不碰哈希祖先层；.vjs-paused 限定'
+      + ' dimensions 样式表、不带 important）⇒ max-height 稳压；.vjs-paused 限定'
       + ' ⇒ 起播自动还原（🔴 运行中高度突变，真机必验不留洞）；改高度项，首帧兜底' },
-  { sel: /\.video-js\.vjs-paused$/, prop: 'max-width', val: '160px',
+  { sel: /\.video-js\.vjs-paused:not\(\.vjs-fullscreen\)$/, prop: 'max-width', val: '160px',
     why: '⑦d 视频压宽：宽 = 16:9 × videoMaxH(90) = 160 ⇒ contain 无黑边无裁切；'
       + 'poster/tech 内联全空（无 B17 配对内联）fill player 自动跟随；作用域 feed-content/retweet'
       + '（评论面板豁免）、卡内限定豁免 mini-player' },
@@ -160,8 +165,8 @@ test('L1：mediaCaps:false 只摘媒体尺寸规则组（B17 黑图归因开关�
   // ✅ 2026-10-15 用户实测：mediaCaps:false 刷新后无黑图 ⇒ 凶手锁定在三条规则内。
   const off = parseRules(l1Css({ appearance: { mediaCaps: false } }));
 
-  assert.equal(off.length, L1_RULE_COUNT - 6,
-    '恰好摘掉六条（img / u-col-1 行 / 行子格 / 网格专属压宽 / picture-main / 视频）');
+  assert.equal(off.length, L1_RULE_COUNT - 7,
+    '恰好摘掉七条（img / u-col-1 行 / 行子格 / 网格专属压宽 / picture-main / 视频盒 / 视频祖先链）');
   for (const r of off) {
     assert.ok(!/woo-picture-main/.test(r.selector),
       `mediaCaps:false 下不得出现 woo-picture-main 尺寸规则：${r.selector}`);
@@ -264,7 +269,7 @@ test('L1：mediaMaxW 可调（⑦c 压宽）—— 缺省跟随 mediaMaxH（方�
   assert.match(l1Css({ appearance: { mediaMaxW: 9999 } }), /max-width:400px !important/, '宽度上限夹 400');
 });
 
-test('L1：⑦d 视频缩略化（M4）—— 16:9 小框 / 跟随 mediaMaxH / 状态限定 / 作用域', () => {
+test('L1：⑦d 视频缩略化（M4）—— 16:9 小框 / 祖先塌缩深度链 / 跟随 mediaMaxH / 作用域', () => {
   const rules = parseRules(l1Css());
   // ⚠️ find 条件必须带 max-* 声明 —— ③ 的降饱和规则同样含 .video-js.vjs-paused
   const isVideoSizing = (r) => r.selector.includes('.video-js.vjs-paused')
@@ -273,8 +278,10 @@ test('L1：⑦d 视频缩略化（M4）—— 16:9 小框 / 跟随 mediaMaxH / �
   assert.ok(v, '缺视频缩略化规则');
 
   // 作用域与图片侧同构：feed-content / retweet（评论面板豁免）+ 卡前缀（mini-player 天然豁免）
-  assert.match(v.selector, /\.wbpro-scroller-item \.wbpro-feed-content \.video-js\.vjs-paused/);
-  assert.match(v.selector, /\.wbpro-scroller-item \.retweet \.video-js\.vjs-paused/);
+  assert.match(v.selector,
+    /\.wbpro-scroller-item \.wbpro-feed-content \.video-js\.vjs-paused:not\(\.vjs-fullscreen\)/);
+  assert.match(v.selector,
+    /\.wbpro-scroller-item \.retweet \.video-js\.vjs-paused:not\(\.vjs-fullscreen\)/);
   assert.ok(!/mini-player/.test(v.selector), '不许碰卡外 mini-player');
   // 状态限定：选择器里的 .video-js 必须都带 .vjs-paused（起播 vjs-playing 规则失效、自动还原）
   assert.doesNotMatch(v.selector, /\.video-js(?!\.vjs-paused)/);
@@ -284,6 +291,22 @@ test('L1：⑦d 视频缩略化（M4）—— 16:9 小框 / 跟随 mediaMaxH / �
   assert.equal(get('max-height'), `${DEFAULT_MEDIA_MAX_H}px !important`);
   assert.equal(get('max-width'), `${Math.round((DEFAULT_MEDIA_MAX_H * 16) / 9)}px !important`,
     '宽必须按 16:9 换算（contain 无黑边无裁切）');
+
+  // ⑦d+ 祖先塌缩（probeVideoShrink 🔴 实锤祖先不跟随）：深度 3~6 全覆盖、两个作用域、
+  // 单层 :has（禁嵌套）、只压 max-height 不压宽
+  const anc = rules.filter((r) => r.selector.includes(':has(> div > div > .video-js'));
+  assert.equal(anc.length, 1, '祖先塌缩应恰好一条规则');
+  for (const d of [3, 4, 5, 6]) {
+    // 深度 d = d-1 个中间 div + .video-js（如深度 3 = > div > div > .video-js）
+    const chain = '> ' + Array(d - 1).fill('div').join(' > ') + ' > .video-js.vjs-paused:not(.vjs-fullscreen)';
+    assert.ok(anc[0].selector.includes(`:has(${chain})`), `祖先链缺深度 ${d} 的臂`);
+  }
+  assert.equal((anc[0].selector.match(/\.wbpro-feed-content /g) || []).length, 4,
+    'feed-content 应有四个深度臂');
+  assert.equal((anc[0].selector.match(/\.retweet /g) || []).length, 4, 'retweet 应有四个深度臂');
+  assert.ok(!anc[0].decls.some((d) => d.prop === 'max-width'),
+    '祖先只压高不压宽（893 宽的 90 高空带无害，压宽多一层变量）');
+  assert.doesNotMatch(anc[0].selector, /:has\([^)]*:has\(/, '禁嵌套 :has()（Chrome 丢整条规则）');
 
   // 跟随：mediaMaxH 变了 videoMaxH（null）必须跟
   const follow = parseRules(l1Css({ appearance: { mediaMaxH: 96 } })).find(isVideoSizing);
