@@ -96,6 +96,12 @@ export const DEFAULT_CONFIG = {
      * 控制台 `__spb.appearance({ avatarBgSize: 96 })` + 刷新试值。
      */
     avatarBgSize: 120,
+    /**
+     * β 水印不透明度（2026-10-16 真机反馈「水印太亮压过时间文字」后补上，
+     * 取规范表 §7.5.5 的 0.15~0.25 中值）。非法值回退 0.2，越界夹回 [0.05, 0.8]。
+     * 控制台 `__spb.appearance({ avatarBgOpacity: 0.12 })` + 刷新试值。
+     */
+    avatarBgOpacity: 0.2,
     /** 缩略图高度预设：40 | 60 | 80（§7.5.3，默认 60） */
     thumbHeight: 60,
     /** 悬停恢复彩色（§7.5.3，默认关） */

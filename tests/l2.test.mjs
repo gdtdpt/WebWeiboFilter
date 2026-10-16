@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import {
   l2Css, L2_TEXT_FONT_SIZE, L2_TEXT_LINE_HEIGHT, AVATAR_VARIANTS,
   normalizeAvatarBgSize, AVATAR_BG_SIZE_DEFAULT,
+  normalizeAvatarBgOpacity,
 } from '../src/features/l2.js';
 import { l1Css } from '../src/features/l1.js';
 import { appearanceCss } from '../src/features/appearance.js';
@@ -57,9 +58,10 @@ const L2_SIZE_EXEMPT = [
   },
   {
     sel: /^div\.woo-box-flex:has\(> \.grayTheme\):has\(main\.woo-box-flex\)$/,
-    props: ['width', 'max-width'],
-    why: '_content_ 分栏层 width:100%（fit-content 收缩盒的宽度基准，真机根因 ②）⇒ 信息流列宽'
-      + '变化 ⇒ 卡宽/卡高变化 —— 改高度项，首帧兜底',
+    props: ['width', 'max-width', 'column-gap'],
+    why: '_content_ 分栏层 width:100%（fit-content 收缩盒的宽度基准，真机根因 ②）'
+      + '+ column-gap 两列间距（2026-10-16 用户反馈）⇒ 信息流列宽变化 ⇒ 卡宽/卡高变化'
+      + ' —— 改高度项，首帧兜底',
   },
   {
     sel: /^main\.woo-box-flex > div:has\(\.wbpro-side-main\)$/,
@@ -68,8 +70,9 @@ const L2_SIZE_EXEMPT = [
   },
   {
     sel: /^div:has\(> main\.woo-box-flex\)$/,
-    props: ['flex', 'width', 'max-width'],
-    why: '信息流加宽：包裹层放开定宽吃自由空间 ⇒ 列宽变化 ⇒ 卡宽/卡高变化 —— 改高度项，首帧兜底',
+    props: ['flex', 'width', 'max-width', 'margin-left'],
+    why: '信息流加宽：包裹层放开定宽吃自由空间 + margin-left 左缘呼吸（2026-10-16 用户反馈）'
+      + '⇒ 列宽变化 ⇒ 卡宽/卡高变化 —— 改高度项，首帧兜底',
   },
   {
     sel: /^main\.woo-box-flex$/,
@@ -146,10 +149,11 @@ test('布局三规则：左栏 order:2 / 右壳 display:none / 主列 flex:1', (
   assert.equal(order.selector,
     'div.woo-box-flex:has(> .grayTheme):has(main.woo-box-flex) > .grayTheme');
 
-  // _content_ 宽度基准（真机根因 ②：fit-content 收缩盒）
+  // _content_ 宽度基准（真机根因 ②：fit-content 收缩盒）+ 两列间距（2026-10-16 用户反馈）
   const content = rules.find((r) => r.selector === 'div.woo-box-flex:has(> .grayTheme):has(main.woo-box-flex)');
   assert.ok(content, '缺 _content_ 宽度基准规则');
   assert.equal(content.decls.find((d) => d.prop === 'width').value, '100% !important');
+  assert.equal(content.decls.find((d) => d.prop === 'column-gap').value, '24px !important');
 
   const shell = rules.find((r) => r.selector === 'main.woo-box-flex > div:has(.wbpro-side-main)');
   assert.ok(shell, '缺右栏壳收口规则');
@@ -161,6 +165,9 @@ test('布局三规则：左栏 order:2 / 右壳 display:none / 主列 flex:1', (
   // 包裹层与 main 的放开规则
   assert.ok(rules.some((r) => r.selector === 'div:has(> main.woo-box-flex)'), '缺包裹层放开规则');
   assert.ok(rules.some((r) => r.selector === 'main.woo-box-flex'), '缺 main 放开规则');
+  // 信息流左缘呼吸（2026-10-16 用户反馈「左边像右边一样给些 margin」）
+  const wrap = rules.find((r) => r.selector === 'div:has(> main.woo-box-flex)');
+  assert.equal(wrap.decls.find((d) => d.prop === 'margin-left').value, '24px !important');
 });
 
 test('时间列：absolute + 两行宽 48 + mono + 主题色', () => {
@@ -216,6 +223,8 @@ test('头像三变体矩阵：beta 默认整行背景水印 / gamma 入时间列
   assert.equal(before.decls.find((d) => d.prop === 'width').value, '120px !important');
   assert.equal(before.decls.find((d) => d.prop === 'height').value, '120px !important',
     '正方形 cover ⇒ 正常比例不变形');
+  assert.equal(before.decls.find((d) => d.prop === 'opacity').value, '0.2 !important',
+    '水印必须压暗（2026-10-16 用户反馈：太亮压过时间文字；规范表 0.15~0.25 中值）');
 
   // β 还应把原头像元素藏起来（visibility 保留占位 ⇒ 卡高零变化）
   const hideEl = beta.find((r) => /header \.woo-avatar-main$/.test(r.selector));
@@ -262,6 +271,16 @@ test('β 水印尺寸把手：默认 120 / 显式值生效 / 非法回退 / 越�
   const sized = parseRules(l2Css({ appearance: { avatarBgSize: 96 } }))
     .find((r) => r.selector === '.wbpro-scroller-item article::before');
   assert.equal(sized.decls.find((d) => d.prop === 'width').value, '96px !important');
+
+  // 不透明度把手（2026-10-16 用户反馈「水印太亮」）
+  assert.equal(normalizeAvatarBgOpacity(undefined), 0.2);
+  assert.equal(normalizeAvatarBgOpacity('x'), 0.2);
+  assert.equal(normalizeAvatarBgOpacity(0.12), 0.12);
+  assert.equal(normalizeAvatarBgOpacity(0.01), 0.05, '低于下限夹回 0.05');
+  assert.equal(normalizeAvatarBgOpacity(2), 0.8, '高于上限夹回 0.8');
+  const dim = parseRules(l2Css({ appearance: { avatarBgOpacity: 0.12 } }))
+    .find((r) => r.selector === '.wbpro-scroller-item article::before');
+  assert.equal(dim.decls.find((d) => d.prop === 'opacity').value, '0.12 !important');
 });
 
 test('appearanceCss 档位语义：L2 蕴含 L1 且拼在其后（同特异性 L2 胜）', () => {

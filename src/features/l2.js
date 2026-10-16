@@ -74,6 +74,21 @@ export function normalizeAvatarBgSize(v) {
 }
 
 /**
+ * β 水印的不透明度（2026-10-16 用户真机反馈「不要这么亮，不然时间看不到了」；
+ * 规范表 §7.5.5 的 β 本来就带 opacity 0.15~0.25，这轮补上）。
+ */
+export const AVATAR_BG_OPACITY_DEFAULT = 0.2;
+const AVATAR_BG_OPACITY_MIN = 0.05;
+const AVATAR_BG_OPACITY_MAX = 0.8;
+
+/** β 水印不透明度归一：非法回退默认，越界夹回 */
+export function normalizeAvatarBgOpacity(v) {
+  const n = Number(v);
+  if (!isFinite(n)) return AVATAR_BG_OPACITY_DEFAULT;
+  return Math.min(AVATAR_BG_OPACITY_MAX, Math.max(AVATAR_BG_OPACITY_MIN, n));
+}
+
+/**
  * 时间列的几何参数。左 14 / 顶 14 / 宽 48：
  * 宽 48px 下 12px 等宽字体的「10-16」（5 字符 ≈36px）装得下、整体（10 字符 ≈72px）装不下
  * ⇒ 在时间文本自带的空格处**自然折行**成「10-16 / 08:50」上下两行 —— 纯 CSS，免 JS 改写。
@@ -93,6 +108,16 @@ const TIME_COL_PAD = 90;
 const TIME_COL_CSS_LEFT = TIME_COL_LEFT - TIME_COL_PAD;
 
 /**
+ * 重排后的版面呼吸参数（2026-10-16 用户真机反馈：加宽吃满后信息流左缘贴死视口、
+ * 与移到最右的分类列之间也没有空隙）：
+ *   · LAYOUT_MARGIN_LEFT —— 信息流列（含发布器）的左 margin（对照右栏留白）；
+ *   · LAYOUT_GAP —— 信息流列与分类列（order:2）之间的列间距。
+ * 都吃掉信息流可用宽 ⇒ 卡宽/卡高变化 = 改高度项，首帧注入兜底 + SIZE_EXEMPT 登记。
+ */
+const LAYOUT_MARGIN_LEFT = 24;
+const LAYOUT_GAP = 24;
+
+/**
  * 生成 L2 增量的 CSS 文本（在 L1 之后拼接，同特异性靠后胜出）。
  *
  * @param {Object} [cfg] 完整配置；消费的把手：
@@ -101,6 +126,7 @@ const TIME_COL_CSS_LEFT = TIME_COL_LEFT - TIME_COL_PAD;
  *   - `cfg.appearance.avatarVariant`：'alpha' | 'beta' | 'gamma'（非法值回退 'beta'，
  *     2026-10-16 用户二次定稿默认 β「头像图片作整行背景、左上向右下渐隐」）。
  *   - `cfg.appearance.avatarBgSize`：β 水印边长（px，默认 120，夹 [64, 320]）。
+ *   - `cfg.appearance.avatarBgOpacity`：β 水印不透明度（默认 0.2，夹 [0.05, 0.8]）。
  * @returns {string}
  */
 export function l2Css(cfg) {
@@ -129,7 +155,7 @@ export function l2Css(cfg) {
   //    可分配（包裹层 flex:1 ⇒ main ⇒ _full_ 逐层传导）；max-width:none 是防微博自身
   //    上限的保险。🔴 列宽变化 ⇒ 卡宽变化 ⇒ 换行数变化 ⇒ **改卡高** —— 首帧注入兜底。
     rule('div.woo-box-flex:has(> .grayTheme):has(main.woo-box-flex)',
-      'width:100% !important;max-width:none !important'),
+      `width:100% !important;max-width:none !important;column-gap:${LAYOUT_GAP}px !important`),
 
     // ② 信息流加宽吃掉右栏空档（用户 2026-10-16 拍板；「正文行长没问题」）：
     //    先收掉 _side_ 空壳 —— L1 ⑧ 的 display:none 只藏了 .wbpro-side-main 内容，
@@ -143,7 +169,8 @@ export function l2Css(cfg) {
     //    （用户要求；_content_ 若是定宽 1122 则收窄到微博自身 simple 断点前不变，真机复验）。
     //    🔴 列宽变化 ⇒ 卡宽变化 ⇒ 换行数变化 ⇒ **改卡高** —— 首帧注入兜底，SIZE_EXEMPT 登记。
     rule('div:has(> main.woo-box-flex)',
-      'flex:1 1 auto !important;width:auto !important;max-width:none !important'),
+      `flex:1 1 auto !important;width:auto !important;max-width:none !important`
+        + `;margin-left:${LAYOUT_MARGIN_LEFT}px !important`),
     rule('main.woo-box-flex', 'width:auto !important'),
     rule('main.woo-box-flex > div:has(.vue-recycle-scroller)',
       'flex:1 1 auto !important;width:auto !important;max-width:none !important'),
@@ -202,7 +229,10 @@ export function l2Css(cfg) {
   let avatar = '';
   if (variant === 'beta') {
     const size = normalizeAvatarBgSize(a.avatarBgSize);
-    const mask = 'linear-gradient(135deg, black 15%, transparent 80%)';
+    const opacity = normalizeAvatarBgOpacity(a.avatarBgOpacity);
+    // mask 渐隐曲线 = §7.5.5 规范表原设：左上 5% 处就开始衰减、72% 处全透明
+    // （2026-10-16 用户反馈水印太亮压过时间文字后，从 20%/85% 收紧到规范值）。
+    const mask = 'linear-gradient(135deg, black 5%, transparent 72%)';
     avatar = [
       rule(`${SEL_CARD[0]} article > div > header .woo-avatar-main`,
         'visibility:hidden !important'),
@@ -210,6 +240,7 @@ export function l2Css(cfg) {
       rule(`${SEL_CARD[0]} article::before`,
         'content:"" !important;position:absolute !important;left:0 !important;top:0 !important'
         + `;width:${size}px !important;height:${size}px !important`
+        + `;opacity:${opacity} !important`
         + ';background-image:var(--spb-avatar-bg) !important'
         + ';background-size:cover !important;background-position:center !important'
         + ';background-repeat:no-repeat !important'
