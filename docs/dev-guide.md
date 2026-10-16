@@ -57,6 +57,7 @@ WeiboFilter/
 │       ├── probe-morepics.js        「+N」截断格与超量图片取证（Console）：probeMorePics / 2（内容级深搜）/ probeDetailApi（§12-B18）
 │       ├── probe-video.js           视频缩略化取证（Console）：probeVideo —— 定高手法 / B17 配对内联 / 播放态还原 / 控制条几何（M4 前置，跑两遍：未播放 + 播放后暂停）
 │       ├── probe-brand.js           「微博」品牌字样取证（Console）：probeBrand —— 文本节点 / 属性文本 / logo 结构 / 搜索框 placeholder，按 chrome（候选）/ inCard（用户内容禁改）/ hidden 分流（低调模式 M3 前置）
+│       ├── probe-topbar.js          顶栏取样（Console）：probeTopbar —— 分类条整条隐藏的落点 / 顶栏可点元素清单与计算色 / 头像真身 / 未读徽章（顶栏降显著前置）
 │       └── find-ad-slots.mjs        离线「广告位定位」：真 DOM + 祖先链 + 稳定签名（parse5）
 └── tests/
     ├── fixtures/           DOM 快照夹具（⚠️ 含真实内容，已 gitignore）
