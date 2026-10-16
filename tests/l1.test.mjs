@@ -713,13 +713,18 @@ test('L1：转发块 footer 的规则在真实快照上确实命中（不是空�
   assert.ok(total > 0, '所有夹具都没有转发块 footer ⇒ 这条守卫在空转（夹具可能全是原创卡）');
 });
 
-test('appearanceCss：L2 蕴含 L1；两个都关时一条规则都不注入', () => {
+test('appearanceCss：L2 蕴含 L1（L1 规则全在 + L2 增量）；两个都关时一条规则都不注入', () => {
   const l1 = appearanceCss({ appearance: { l1: true, l2: false } });
   const l2 = appearanceCss({ appearance: { l1: false, l2: true } });
   const off = appearanceCss({ appearance: { l1: false, l2: false } });
 
   assert.ok(l1.length > 0);
-  assert.equal(l2, l1, 'L2 必须蕴含 L1（§7.5.2）');
+  // ⚠️ L2 曾是 L1 的别名（输出相等）；M2 起 L2 = L1 全量 + 重排增量（l2.test.mjs 细测），
+  //    这里只锁蕴含语义：L1 的**每一条**规则文本都必须出现在 L2 输出里。
+  for (const line of l1.trim().split('\n').filter(Boolean)) {
+    assert.ok(l2.includes(line), `L2 必须蕴含 L1 规则：${line.slice(0, 80)}`);
+  }
+  assert.ok(l2.length > l1.length, 'L2 还应有增量规则');
   assert.equal(off, '');
   assert.equal(appearanceCss(null), '');
   assert.equal(appearanceCss({}), '');

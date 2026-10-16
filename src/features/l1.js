@@ -107,15 +107,16 @@ function normalizeMaxW(v, fallback) {
   return Math.min(400, Math.max(40, Math.round(n)));
 }
 
-/** 字号容错：非法回退默认，越界夹回 [12, 20]（整数 px） */
-function normalizeFontSize(v) {
+/** 字号容错：非法回退默认，越界夹回 [12, 20]（整数 px）。
+ *  导出给 L2 复用（同一把手、同一容错，l2.js 只换缺省值 13）。 */
+export function normalizeFontSize(v) {
   const n = typeof v === 'number' ? v : Number(v);
   if (!Number.isFinite(n) || n <= 0) return DEFAULT_TEXT_FONT_SIZE;
   return Math.min(20, Math.max(12, Math.round(n)));
 }
 
-/** 行距容错：非法回退默认，越界夹回 [1.2, 2.2]（无单位比值，继承友好） */
-function normalizeLineHeight(v) {
+/** 行距容错：非法回退默认，越界夹回 [1.2, 2.2]（无单位比值，继承友好；导出理由同上） */
+export function normalizeLineHeight(v) {
   const n = typeof v === 'number' ? v : Number(v);
   if (!Number.isFinite(n) || n <= 0) return DEFAULT_TEXT_LINE_HEIGHT;
   return Math.round(Math.min(2.2, Math.max(1.2, n)) * 100) / 100;

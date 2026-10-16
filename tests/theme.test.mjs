@@ -116,7 +116,8 @@ test('theme：随外观档一起注入，且两个档位都关时不注入', () 
   assert.ok(on.includes(THEME_SELECTOR + '{'), 'L1 开启时应带上去橙红');
 
   const l2 = appearanceCss({ appearance: { l2: true } });
-  assert.equal(l2, on, 'L2 蕴含 L1 ⇒ 也应带上去橙红（§7.5.2）');
+  assert.ok(l2.includes(THEME_SELECTOR + '{'), 'L2 蕴含 L1 ⇒ 也应带上去橙红（§7.5.2）');
+  assert.ok(l2.length > on.length, 'L2 = L1 全量 + 重排增量');
 
   assert.equal(appearanceCss({ appearance: { l1: false, l2: false } }), '');
   assert.equal(appearanceCss(null), '');

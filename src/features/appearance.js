@@ -10,6 +10,7 @@
  */
 
 import { l1Css } from './l1.js';
+import { l2Css } from './l2.js';
 import { themeCss } from './theme.js';
 import { composeCss } from '../apply/style.js';
 
@@ -29,7 +30,9 @@ export function appearanceCss(cfg) {
     // cfg 透传：l1 内的媒体尺寸规则组受 `appearance.mediaCaps` 门控（B17 黑图归因开关）
     parts.push(l1Css(cfg));
   }
-  // L2 的重排规则、以及第二批「改高度」的规则以后接在这里（同样首帧注入）
+  // L2 的重排规则接在这里 —— ⚠️ 必须拼在 l1Css **之后**：
+  // 同特异性规则靠后胜出（L2 ⑤ 的 13px/1.5 要压过 L1 ⑧ 的 14px/1.6）。
+  if (a.l2) parts.push(l2Css(cfg));
 
   return composeCss(...parts);
 }

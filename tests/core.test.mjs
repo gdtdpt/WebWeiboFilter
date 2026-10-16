@@ -16,7 +16,8 @@ test('非 GM 环境（Node）下 loadConfig 回落到默认值', () => {
   assert.equal(hasGM(), false);
   const c = loadConfig();
   assert.equal(c.appearance.l0, true);
-  assert.equal(c.appearance.avatarVariant, 'alpha');
+  assert.equal(c.appearance.avatarVariant, 'beta'); // 2026-10-16 用户拍板：默认 β 渐隐
+  assert.equal(c.appearance.textFontSize, null); // null = 跟随档位（L1 14 / L2 13）
   assert.equal(c.appearance.thumbHeight, 60);
   assert.deepEqual(c.filter.keywords, []);
   assert.deepEqual(c.filter.detect, DEFAULT_CONFIG.filter.detect);
