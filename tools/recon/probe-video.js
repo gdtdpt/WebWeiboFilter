@@ -163,3 +163,106 @@ function probeVideo() {
 }
 
 try { window.probeVideo = probeVideo; } catch (_e) { /* 控制台总有 window */ }
+
+/**
+ * probeVideoShrink —— **现场收缩实验**（v2，回答「只压 .video-js 一层够不够」）
+ *
+ * 背景：静态读数判不了祖先层（_placeholder_ / _videoBox_ / _row_）的高度是
+ * 「跟随 .video-js」还是「微博 JS 按容器宽独立计算」——若是后者，只压播放器
+ * 会留下 ~412px 的大洞（图片侧「84px 空白」同款坑放大版）。
+ * 纸面判不了 ⇒ 现场实验直接回答：临时注入 max-width/max-height（与预案同款），
+ * 量收缩后的**全链矩形**，再移除复原、量一遍确认无残留。
+ *
+ * ⚠️ 为什么现场实验在这里有效：这只动 CSS 级联的几何，不碰懒加载首帧判定
+ * （B17 的锁存路径是「加载器读首帧几何做决策」，本实验不触发图片/视频加载）。
+ * 注入是临时的、跑完即删。
+ *
+ * 用法：probeVideoShrink() → 整个输出回传。看三处：
+ *   ① playerRect 收缩后是否 160×90（max-* 是否压得过动态 dimensions）；
+ *   ② 各祖先层 rect 是否**跟着塌到 90**（跟 = 只压一层够；不跟 = 洞，需 :has 链补压）；
+ *   ③ 移除后各层是否复原到 502（无残留）。
+ */
+function probeVideoShrink() {
+  var desc = function (el) {
+    if (!el || !el.tagName) return String(el);
+    return el.tagName.toLowerCase() +
+      '.' + String(el.getAttribute('class') || '').replace(/\s+/g, '.').slice(0, 60) +
+      (el.id ? '#' + el.id : '');
+  };
+  var rectOf = function (el) {
+    var b = el.getBoundingClientRect();
+    return { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height) };
+  };
+
+  var vj = document.querySelector('.wbpro-scroller-item .video-js');
+  if (!vj) return { verdict: '⛔ 当前页没有卡内视频 —— 滚到带视频的 feed 再跑' };
+
+  var card = vj.closest('.wbpro-scroller-item');
+  var KEY_SELS = ['.video-js', '._feedVideo_', '._placeholder_', '._videoBox_', '._row_',
+    '.wbpro-feed-content', '.retweet', 'article'];
+
+  function snapshot(tag) {
+    var card2 = vj.closest('.wbpro-scroller-item') || card;
+    var out = { tag: tag, cardRect: rectOf(card2), player: rectOf(vj), chain: [] };
+    var el = vj;
+    while (el && el !== card2) {
+      var cls = el.getAttribute('class') || '';
+      var key = KEY_SELS.filter(function (k) {
+        var name = k.slice(1);
+        return cls.indexOf(name) !== -1 || el.tagName.toLowerCase() === name;
+      })[0] || '';
+      if (key || out.chain.length < 4) {
+        out.chain.push({ el: desc(el), key: key, rect: rectOf(el) });
+      }
+      el = el.parentElement;
+    }
+    return out;
+  }
+
+  var before = snapshot('before（原态）');
+
+  // 临时注入（与 l1.js ⑦d 预案同款声明）
+  var st = document.createElement('style');
+  st.id = 'spb-probe-shrink';
+  st.textContent = '.wbpro-scroller-item .video-js{max-width:160px !important;max-height:90px !important}';
+  (document.head || document.documentElement).appendChild(st);
+
+  var during = null;
+  try {
+    // gBCR 自带同步重排 —— 注入后立刻量即是新布局，无需等帧
+    // （⚠️ 不能用 rAF + 忙等：忙等占住主线程，rAF 永远不触发，快照会取在移除之后）
+    during = snapshot('during（注入 160×90）');
+  } finally {
+    if (st.parentNode) st.parentNode.removeChild(st);
+  }
+
+  var after = snapshot('after（已移除，应复原）');
+
+  // 判读
+  var pH = during ? during.player.h : 0;
+  var ancestors = during ? during.chain.filter(function (c) {
+    return c.key && c.key !== '.video-js';
+  }) : [];
+  var followed = ancestors.filter(function (c) { return c.rect.h <= 100; }).length;
+  var notFollowed = ancestors.filter(function (c) { return c.rect.h > 100; })
+    .map(function (c) { return c.el + ' h=' + c.rect.h; });
+
+  var verdict;
+  if (!during) verdict = '⚠️ 注入快照没采到 —— 重跑一次';
+  else if (pH > 200) verdict = '⛔ max-* 没压住播放器（动态 dimensions 比 important 更晚写入？）—— 回传读数';
+  else if (!notFollowed.length) verdict = '✅ 祖先全跟随（' + followed + '/' + ancestors.length
+    + ' 层塌到 ≤100px）⇒ 只压 .video-js 一层够，方案成立';
+  else verdict = '🔴 祖先不跟随：' + notFollowed.join(' , ')
+    + ' ⇒ 只压一层会留洞，方案需补 :has 链压祖先 —— 回传读数';
+
+  return {
+    verdict: verdict,
+    before: before,
+    during: during,
+    after: after,
+    restored: after.player.h === before.player.h && after.cardRect.h === before.cardRect.h,
+    note: 'restored=false = 注入有残留（不应发生，回传）；ancestorChain 只看带 key 的层',
+  };
+}
+
+try { window.probeVideoShrink = probeVideoShrink; } catch (_e) { /* 控制台总有 window */ }

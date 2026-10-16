@@ -124,6 +124,15 @@ const SIZE_EXEMPT = [
     why: '⑧ 正文字号统一 14px（og 原生 15 / re 原生 14）—— 改高度项，首帧注入 + 真机复验不留洞' },
   { sel: /\.wbpro-feed-(ogText|reText)$/, prop: 'line-height', val: `${DEFAULT_TEXT_LINE_HEIGHT}`,
     why: '⑧ 正文行距统一 1.6（og 原生 24/15=1.6、re 24/14=1.71 ⇒ 行盒 22.4px）—— 同上改高度项' },
+  // ⑦d 视频缩略化（M4，2026-10-16 用户确认；probeVideo 读数定稿）
+  { sel: /\.video-js\.vjs-paused$/, prop: 'max-height', val: `${DEFAULT_MEDIA_MAX_H}px`,
+    why: '⑦d 视频压高：播放器恒 16:9 宽度驱动（probeVideo 实锤 893×502，来源 = video.js 动态'
+      + ' dimensions 样式表、不带 important）⇒ max-height 稳压，不碰哈希祖先层；.vjs-paused 限定'
+      + ' ⇒ 起播自动还原（🔴 运行中高度突变，真机必验不留洞）；改高度项，首帧兜底' },
+  { sel: /\.video-js\.vjs-paused$/, prop: 'max-width', val: '160px',
+    why: '⑦d 视频压宽：宽 = 16:9 × videoMaxH(90) = 160 ⇒ contain 无黑边无裁切；'
+      + 'poster/tech 内联全空（无 B17 配对内联）fill player 自动跟随；作用域 feed-content/retweet'
+      + '（评论面板豁免）、卡内限定豁免 mini-player' },
 ];
 
 function sizeExemptFor(rule, decl) {
@@ -151,8 +160,8 @@ test('L1：mediaCaps:false 只摘媒体尺寸规则组（B17 黑图归因开关�
   // ✅ 2026-10-15 用户实测：mediaCaps:false 刷新后无黑图 ⇒ 凶手锁定在三条规则内。
   const off = parseRules(l1Css({ appearance: { mediaCaps: false } }));
 
-  assert.equal(off.length, L1_RULE_COUNT - 5,
-    '恰好摘掉五条（img / u-col-1 行 / 行子格 / 网格专属压宽 / picture-main）');
+  assert.equal(off.length, L1_RULE_COUNT - 6,
+    '恰好摘掉六条（img / u-col-1 行 / 行子格 / 网格专属压宽 / picture-main / 视频）');
   for (const r of off) {
     assert.ok(!/woo-picture-main/.test(r.selector),
       `mediaCaps:false 下不得出现 woo-picture-main 尺寸规则：${r.selector}`);
@@ -160,6 +169,9 @@ test('L1：mediaCaps:false 只摘媒体尺寸规则组（B17 黑图归因开关�
       `mediaCaps:false 下不得出现 u-col-1 尺寸规则：${r.selector}`);
     assert.ok(!/u-col-[34] > \*/.test(r.selector),
       `mediaCaps:false 下不得出现行子格压宽规则：${r.selector}`);
+    assert.ok(!off.some((r) => r.selector.includes('.video-js.vjs-paused')
+      && r.decls.some((d) => d.prop === 'max-width')),
+      `mediaCaps:false 下不得出现视频缩略化规则`);
   }
   // 滤镜（②）刻意保留：saturate(.4)+opacity:.85 只降显著度、不可能造出「全黑」，
   // 且它是 L1 基线（「降彩度不灭色相」2026-10-14 用户定调）—— 归因时别把它混进来。
@@ -250,6 +262,45 @@ test('L1：mediaMaxW 可调（⑦c 压宽）—— 缺省跟随 mediaMaxH（方�
   }
   // 越界夹回 [40, 400]
   assert.match(l1Css({ appearance: { mediaMaxW: 9999 } }), /max-width:400px !important/, '宽度上限夹 400');
+});
+
+test('L1：⑦d 视频缩略化（M4）—— 16:9 小框 / 跟随 mediaMaxH / 状态限定 / 作用域', () => {
+  const rules = parseRules(l1Css());
+  // ⚠️ find 条件必须带 max-* 声明 —— ③ 的降饱和规则同样含 .video-js.vjs-paused
+  const isVideoSizing = (r) => r.selector.includes('.video-js.vjs-paused')
+    && r.decls.some((d) => d.prop === 'max-height');
+  const v = rules.find(isVideoSizing);
+  assert.ok(v, '缺视频缩略化规则');
+
+  // 作用域与图片侧同构：feed-content / retweet（评论面板豁免）+ 卡前缀（mini-player 天然豁免）
+  assert.match(v.selector, /\.wbpro-scroller-item \.wbpro-feed-content \.video-js\.vjs-paused/);
+  assert.match(v.selector, /\.wbpro-scroller-item \.retweet \.video-js\.vjs-paused/);
+  assert.ok(!/mini-player/.test(v.selector), '不许碰卡外 mini-player');
+  // 状态限定：选择器里的 .video-js 必须都带 .vjs-paused（起播 vjs-playing 规则失效、自动还原）
+  assert.doesNotMatch(v.selector, /\.video-js(?!\.vjs-paused)/);
+
+  // 默认：高 90（跟 mediaMaxH）、宽 = 16:9 换算 160（probeVideo 实锤恒 16:9）
+  const get = (p) => (v.decls.find((d) => d.prop === p) || {}).value;
+  assert.equal(get('max-height'), `${DEFAULT_MEDIA_MAX_H}px !important`);
+  assert.equal(get('max-width'), `${Math.round((DEFAULT_MEDIA_MAX_H * 16) / 9)}px !important`,
+    '宽必须按 16:9 换算（contain 无黑边无裁切）');
+
+  // 跟随：mediaMaxH 变了 videoMaxH（null）必须跟
+  const follow = parseRules(l1Css({ appearance: { mediaMaxH: 96 } })).find(isVideoSizing);
+  assert.equal(follow.decls.find((d) => d.prop === 'max-height').value, '96px !important');
+  assert.equal(follow.decls.find((d) => d.prop === 'max-width').value,
+    `${Math.round((96 * 16) / 9)}px !important`);
+
+  // 显式 videoMaxH 独立生效；非法值回退跟随值（绝不把 NaN 打进 CSS）
+  const own = parseRules(l1Css({ appearance: { videoMaxH: 72 } })).find(isVideoSizing);
+  assert.equal(own.decls.find((d) => d.prop === 'max-height').value, '72px !important');
+  assert.equal(own.decls.find((d) => d.prop === 'max-width').value, '128px !important');
+  for (const bad of ['x', -5, NaN]) {
+    const fb = parseRules(l1Css({ appearance: { videoMaxH: bad } })).find(isVideoSizing);
+    assert.equal(fb.decls.find((d) => d.prop === 'max-height').value,
+      `${DEFAULT_MEDIA_MAX_H}px !important`,
+      `videoMaxH=${String(bad)} 应回退跟随 mediaMaxH`);
+  }
 });
 
 test('L1：mediaMaxWGrid 网格专属宽度（⑦c 二轮）—— 默认 76、单图不受影响、非法回退', () => {

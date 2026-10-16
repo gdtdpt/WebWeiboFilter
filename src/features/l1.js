@@ -29,8 +29,8 @@
  *
  * ⚠️ **已知未做**（都缺确定锚点或属改高度，见 §7.5 与 PROJECT.md §13-M2）：
  *    隐藏右栏（实测窄窗口下**微博自己就收起了**：内容宽 < `--main-width` 1122px ⇒ simple 布局，§12-B9 ⑥；
- *      要落地得先在更宽的窗口复采锚点）· 底部推荐（实测首页不存在）、
- *    媒体缩略化（视频封面同样是"降饱和已做、缩略化待做"）。
+ *      要落地得先在更宽的窗口复采锚点）、底部推荐（实测首页不存在）。
+ *    （媒体缩略化图片侧 ⑦ / 视频侧 ⑦d 均已落地，2026-10-16。）
  * ⚠️ 已**不**在"待隐藏"名单里：**社交归因条**（「xx 赞过 / xx 关注了」）——
  *    2026-10-14 用户定调「**保留信息、只做中性化**」（§7.5-E），见下面 ③b。
  * ✅ 互动按钮行（A1）已落地为「缩略为摘要条」（⑥，改高度项，§12-B15）。
@@ -173,6 +173,10 @@ export function l1Css(cfg) {
         + ';object-fit:cover !important'
       : 'height:100% !important;top:auto !important';
   // ⑦+⑦b 媒体尺寸规则组（mediaCaps 门控；每条的完整设计说明见下方各处注释）
+  // ⑦d 视频缩略化（M4，2026-10-16 用户确认）：videoMaxH 缺省（null）= **跟随 mediaMaxH**；
+  //     宽 = 16:9 换算（probeVideo 实锤播放器恒 16:9 宽度驱动：893×502 / 542×305）。
+  const capHVideo = normalizeMaxW(a.videoMaxH, capPx);
+  const capWVideo = Math.round((capHVideo * 16) / 9);
   const mediaSizing = [
     keep.img
       ? //    作用域与容器规则同轮收窄（评论面板豁免，见 ⑦ 注）。
@@ -218,6 +222,24 @@ export function l1Css(cfg) {
         //    max-width 压过 picture-main 的内联 width（单图 168 / 多图格 136.578，父子两层声明）。
         rule(`${SEL_CARD[0]} .wbpro-feed-content .woo-picture-main,${SEL_CARD[0]} .retweet .woo-picture-main`,
           `max-height:${capPx}px !important;max-width:${capW}px !important`)
+      : '',
+    keep.cap
+      ? // ⑦d 视频缩略化（M4，2026-10-16 用户确认；probeVideo 读数定稿）：
+        //    · 几何真相：播放器恒 **16:9 宽度驱动**（893×502 / 542×305，微博按容器宽调
+        //      video.js 的 player 尺寸 = 动态 dimensions 样式表，**不带 important**）
+        //      ⇒ max-width/max-height !important 稳压，**不碰任何哈希祖先层**。
+        //    · B17 配对内联：**无**（probeVideo：poster/tech 内联全空、fill player +
+        //      object-fit:contain）⇒ 只压 .video-js 盒子，内部全部跟随；
+        //      160×90 恰 16:9 ⇒ contain 无黑边无裁切。
+        //    · 状态限定 .vjs-paused：probeVideo 实锤**未播放就带**（首屏生效）；
+        //      起播 video.js 换 vjs-playing ⇒ 规则失效、自动还原全尺寸。
+        //      🔴 播放瞬间卡高 +412px 是图片侧没有的「运行中高度突变」，真机必验不留洞；
+        //      若洞 → 降级「播放也锁小框」（去掉 .vjs-paused 限定即得，设计已留）。
+        //    · 作用域与图片侧同构：feed-content / retweet（评论面板豁免；转发的原微博
+        //      也可以是视频 —— probeVideo 样本 1 即在 retweet 内）；卡内限定 ⇒ 卡外
+        //      mini-player 天然豁免。控制条 user-inactive 时本就 display:none，不用处理。
+        rule(`${SEL_CARD[0]} .wbpro-feed-content .video-js.vjs-paused,${SEL_CARD[0]} .retweet .video-js.vjs-paused`,
+          `max-width:${capWVideo}px !important;max-height:${capHVideo}px !important`)
       : '',
   ].filter(Boolean);
 
@@ -348,7 +370,7 @@ export function l1Css(cfg) {
     //    用户截图）。夹具四份 61/61：卡内 woo-picture-main **全部**在 `.wbpro-feed-content`
     //    或 `.retweet` 之内 ⇒ 收窄到这两个区域，信息流行为零变化、评论面板天然豁免
     //    （面板是 feed-content 的兄弟区域；probeComments() 首轮读数再钉死面板位置）。
-    //    ⚠️ 真机复验「不留洞」是唯一防线（改高度项纪律）；**视频不动**（vjs 内部布局，二期单独评估）。
+    //    ⚠️ 真机复验「不留洞」是唯一防线（改高度项纪律）；视频见 ⑦d（M4 已落地）。
     //    ⚠️ 这三条规则**受 `mediaCaps` 门控**（见函数头）—— B17 黑图归因：用户观察
     //    「改尺寸前无黑图、媒体缩略化上线后有」是强时间相关性，三条规则里哪条（或组合）
     //    干扰了微博懒加载的首帧决策（假设：布局变化 → 加载器判定异常 → **单向锁存**不挂 img），
@@ -374,4 +396,4 @@ export function l1Css(cfg) {
 }
 
 /** 规则条数（探针 / 诊断页断言用；改 `l1Css()` 时记得同步） */
-export const L1_RULE_COUNT = 25;
+export const L1_RULE_COUNT = 26;
