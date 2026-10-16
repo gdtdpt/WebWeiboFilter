@@ -23,7 +23,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { l1Css, L1_RULE_COUNT, DEFAULT_MEDIA_MAX_H, DEFAULT_MEDIA_GRID_W } from '../src/features/l1.js';
+import { l1Css, L1_RULE_COUNT, DEFAULT_MEDIA_MAX_H, DEFAULT_MEDIA_GRID_W,
+  DEFAULT_TEXT_FONT_SIZE, DEFAULT_TEXT_LINE_HEIGHT } from '../src/features/l1.js';
 import { appearanceCss } from '../src/features/appearance.js';
 import { composeCss, ensureStyle, FILTER_CSS, STYLE_ID } from '../src/apply/style.js';
 import { FIXTURE_DIR, fixtures } from './_fixture-expect.mjs';
@@ -117,6 +118,12 @@ const SIZE_EXEMPT = [
   { sel: /^\.wbpro-side-main$/, prop: 'display', val: 'none',
     why: '右栏整体隐藏（2026-10-15 用户定调）—— 虚拟列表之外的流式容器，display:none 不留洞'
       + '（A 类逻辑 §7.5.0）；B9 旧结论「无需落地」被宽窗口使用场景推翻（§12-B16 ⑧）' },
+  // ⑧ 字号行距（2026-10-16 probeTypo 15 卡读数定案，§7.5-C L1 规范值）：改高度项，
+  // 走首帧注入机制（§12-B12 闸门已开：注入 CSS 会被算进虚拟列表预计算尺寸）
+  { sel: /\.wbpro-feed-(ogText|reText)$/, prop: 'font-size', val: `${DEFAULT_TEXT_FONT_SIZE}px`,
+    why: '⑧ 正文字号统一 14px（og 原生 15 / re 原生 14）—— 改高度项，首帧注入 + 真机复验不留洞' },
+  { sel: /\.wbpro-feed-(ogText|reText)$/, prop: 'line-height', val: `${DEFAULT_TEXT_LINE_HEIGHT}`,
+    why: '⑧ 正文行距统一 1.6（og 原生 24/15=1.6、re 24/14=1.71 ⇒ 行盒 22.4px）—— 同上改高度项' },
 ];
 
 function sizeExemptFor(rule, decl) {
@@ -266,6 +273,40 @@ test('L1：mediaMaxWGrid 网格专属宽度（⑦c 二轮）—— 默认 76、�
       `mediaMaxWGrid=${String(bad)} 应回退默认 ${DEFAULT_MEDIA_GRID_W}px`);
   }
   assert.match(l1Css({ appearance: { mediaMaxWGrid: 9999 } }), /max-width:400px !important/, '网格宽夹 400');
+});
+
+test('L1：字号行距 ⑧ —— 默认 14/1.6、只锚 og/re 两容器、非法回退越界夹取', () => {
+  // probeTypo 15 卡读数定案（2026-10-16）：og 15px/24px、re 14px/24px ⇒ 统一 14px + 1.6
+  const rules = parseRules(l1Css());
+  // ⚠️ find 必须带卡前缀 —— ③ 的颜色规则（TEXT_SEL）也含 ogText/reText 片段，会抢先命中
+  const typo = rules.find((r) => /\.wbpro-scroller-item \.wbpro-feed-(ogText|reText)/.test(r.selector));
+  assert.ok(typo, '缺正文排版规则');
+  // 选择器恰好两个变体（og / re，都带卡前缀）—— 不许顺带锚到截断容器 / 评论区
+  const sels = typo.selector.split(',');
+  assert.equal(sels.length, 2, 'og/re 两变体，不多不少');
+  for (const s of sels) {
+    assert.match(s, /^\.wbpro-scroller-item \.wbpro-feed-(ogText|reText)$/, `变体形状：${s}`);
+  }
+  const props = Object.fromEntries(typo.decls.map((d) => [d.prop, d.value]));
+  assert.match(props['font-size'], new RegExp(`^${DEFAULT_TEXT_FONT_SIZE}px !important`), '默认字号 14');
+  assert.match(props['line-height'], new RegExp(`^${DEFAULT_TEXT_LINE_HEIGHT} !important`), '默认行距 1.6');
+
+  // 显式值生效；非法回退默认；越界夹取（字号 [12,20] 整数、行距 [1.2,2.2] 两位小数）
+  const over = l1Css({ appearance: { textFontSize: 13, textLineHeight: 1.8 } });
+  assert.match(over, /font-size:13px !important/, '显式字号生效');
+  assert.match(over, /line-height:1.8 !important/, '显式行距生效');
+  for (const bad of ['x', -3, NaN]) {
+    const css = l1Css({ appearance: { textFontSize: bad, textLineHeight: bad } });
+    assert.match(css, new RegExp(`font-size:${DEFAULT_TEXT_FONT_SIZE}px !important`),
+      `textFontSize=${String(bad)} 应回退默认`);
+    assert.match(css, new RegExp(`line-height:${DEFAULT_TEXT_LINE_HEIGHT} !important`),
+      `textLineHeight=${String(bad)} 应回退默认`);
+  }
+  assert.match(l1Css({ appearance: { textFontSize: 99 } }), /font-size:20px !important/, '字号夹 20');
+  assert.match(l1Css({ appearance: { textFontSize: 5 } }), /font-size:12px !important/, '字号夹 12');
+  assert.match(l1Css({ appearance: { textFontSize: 13.6 } }), /font-size:14px !important/, '字号取整');
+  assert.match(l1Css({ appearance: { textLineHeight: 3 } }), /line-height:2.2 !important/, '行距夹 2.2');
+  assert.match(l1Css({ appearance: { textLineHeight: 0.5 } }), /line-height:1.2 !important/, '行距夹 1.2');
 });
 
 test('L1：媒体压宽 ⑦c —— 三层都压（行 u-col-1 / 行子格 u-col-N > * / picture-main），子格选择器 6 变体', () => {

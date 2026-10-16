@@ -76,6 +76,19 @@ export const DEFAULT_MEDIA_MAX_H = 90;
  */
 export const DEFAULT_MEDIA_GRID_W = 76;
 
+/**
+ * 正文排版默认值（⑧ 字号行距，2026-10-16 probeTypo 15 卡读数定案，§7.5-C L1 规范值）。
+ *
+ * 读数：原创正文（og）原生 15px/行盒 24px（比值 1.6）；转发原文（re）原生 14px/24px（比值 1.71）。
+ * 目标 = **og 15→14 与 re 统一字号** + **行距统一 1.6**（og 24→22.4、re 保持 24 附近）。
+ * 两项都**改卡高** ⇒ 走首帧注入机制（§12-B12 闸门已开）+ SIZE_EXEMPT 登记。
+ * 读数同时定案两项**免做**：段间距无 CSS 杠杆（微博正文段落是 `<br>` 分隔，margin/padding 全 0）、
+ * 文字色已是主题令牌 `var(--w-main)`（rgb(191,191,191)，③ 已覆盖）。
+ * 控制台 `__spb.appearance({ textFontSize: 13 })` + 刷新可试值。
+ */
+export const DEFAULT_TEXT_FONT_SIZE = 14;
+export const DEFAULT_TEXT_LINE_HEIGHT = 1.6;
+
 /** 容错：非法值（非数值 / 非正数）回退默认，越界值夹回 [40, 400] */
 function normalizeMaxH(v) {
   const n = typeof v === 'number' ? v : Number(v);
@@ -94,6 +107,20 @@ function normalizeMaxW(v, fallback) {
   return Math.min(400, Math.max(40, Math.round(n)));
 }
 
+/** 字号容错：非法回退默认，越界夹回 [12, 20]（整数 px） */
+function normalizeFontSize(v) {
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_TEXT_FONT_SIZE;
+  return Math.min(20, Math.max(12, Math.round(n)));
+}
+
+/** 行距容错：非法回退默认，越界夹回 [1.2, 2.2]（无单位比值，继承友好） */
+function normalizeLineHeight(v) {
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_TEXT_LINE_HEIGHT;
+  return Math.round(Math.min(2.2, Math.max(1.2, n)) * 100) / 100;
+}
+
 /**
  * 生成 L1 的 CSS 文本。逐组说明「为什么它不改高度」。
  *
@@ -104,7 +131,10 @@ function normalizeMaxW(v, fallback) {
  *   - `'partial'` = 旧 partial 形态（height:100%+top:auto）—— 🔴 **B17 黑图凶手**，
  *     仅留作法证复现档，**永不进默认路径**
  *   `cfg.appearance.mediaMaxH` = 容器 max-height 上限（默认 {@link DEFAULT_MEDIA_MAX_H}）；
- *   `cfg.appearance.mediaMaxW` = 宽度上限（null = 跟随 mediaMaxH，正方格；⑦c，probeMedia3 13/13 flow）。
+ *   `cfg.appearance.mediaMaxW` = 宽度上限（null = 跟随 mediaMaxH，正方格；⑦c，probeMedia3 13/13 flow）；
+ *   `cfg.appearance.mediaMaxWGrid` = 多图网格专属宽度上限（默认 {@link DEFAULT_MEDIA_GRID_W}，⑦c 二轮）；
+ *   `cfg.appearance.textFontSize` = 正文字号 px（默认 {@link DEFAULT_TEXT_FONT_SIZE}，⑧ 改高度项）；
+ *   `cfg.appearance.textLineHeight` = 正文行距比值（默认 {@link DEFAULT_TEXT_LINE_HEIGHT}，⑧）。
  * @returns {string}
  */
 export function l1Css(cfg) {
@@ -117,6 +147,9 @@ export function l1Css(cfg) {
   // 用户 2026-10-16 反馈「有一些卡片还是 4 个一行」⇒ 网格默认 76（5×80=400 ≤ 409.75）。
   // 单图行（u-col-1）不受影响，保持 capW（默认跟随高度 = 90 方格）。
   const capWGrid = normalizeMaxW(a.mediaMaxWGrid, DEFAULT_MEDIA_GRID_W);
+  // ⑧ 正文排版（改高度项，§12-B12 闸门已开）：og 与 re 统一字号 + 行距 1.6。
+  const fontSize = normalizeFontSize(a.textFontSize);
+  const lineHeight = normalizeLineHeight(a.textLineHeight);
   // img 规则的两种形态（B17 结案 2026-10-15：'partial' 形态 = 黑图凶手，'cover' = 修复）：
   // · 'partial'（height:100%+top:auto）—— 🔴 真机实锤致「空 slot 黑图」（'noRow' 档黑、
   //   'onlyCap' 档净，刷新级二分三轮）。机制：微博 JS 裁切给 img 写「尺寸+负偏移」**配对**内联
@@ -225,6 +258,15 @@ export function l1Css(cfg) {
     rule(TEXT_LINK_SEL,
       'color:var(--w-sub) !important;text-decoration:none !important;background:none !important'),
 
+    // ③a 正文排版：字号 + 行距（⑧，2026-10-16 probeTypo 15 卡读数定案，§7.5-C L1 规范值）
+    //    og 原生 15px/24px、re 原生 14px/24px ⇒ 统一 14px + 行距 1.6（行盒 22.4px）。
+    //    🔴 **改高度项**（字号行距变化 = 卡高变化）—— 走首帧注入机制（§12-B12 闸门已开：
+    //    document-start 注入的 CSS 会被算进虚拟列表预计算尺寸），SIZE_EXEMPT 有登记；
+    //    真机复验「不留洞」是唯一防线。只锚 og/re 两容器（probeTypo 锚的库类），
+    //    截断容器 SEL_TEXTCUT 是 og 的内层，字号继承自然跟随，无需单列。
+    rule(`${SEL_CARD[0]} ${SEL_OG_TEXT[0]},${SEL_CARD[0]} ${SEL_RE_TEXT[0]}`,
+      `font-size:${fontSize}px !important;line-height:${lineHeight} !important`),
+
     // ③b 社交归因条（「xx 赞过」/「xx 关注了」）—— **刻意保留、只做中性化**（2026-10-14 用户定调，§7.5-E）
     //     它回答「**这条我没关注的人发的微博，为什么出现在这里**」⇒ 有信息价值，**不进隐藏名单**。
     //     做法与正文链接同构（去蓝、去下划线、转中性色）—— 它本质就是「几个链接 + 一句文案」。
@@ -331,4 +373,4 @@ export function l1Css(cfg) {
 }
 
 /** 规则条数（探针 / 诊断页断言用；改 `l1Css()` 时记得同步） */
-export const L1_RULE_COUNT = 24;
+export const L1_RULE_COUNT = 25;
