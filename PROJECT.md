@@ -1262,6 +1262,8 @@ article
 
   **⑦c 二轮（2026-10-16 真机反馈「有一些卡片还是 4 个一行」）**：那是 u-col-3 容器 —— 定宽 409.75，90 方格（占位 94）数学上只能装 4 列（5×94=470 装不下）。用户拍板**只压多图网格、单图保持 90 方格** ⇒ 新增**网格专属规则** `u-col-3/4 > * 与行内 picture-main{max-width:76px}`（`appearance.mediaMaxWGrid`，默认 76：u-col-3 装 5 列 5×80=400 ≤ 409.75，u-col-4 升 6 列；控制台可试值）。排在前两条 base 规则之后（与子格规则同特异性靠后者胜、对 picture-main 特异性更高），L1_RULE_COUNT 23→24。夹具守卫照旧。**改宽 = 行数可能变 = 卡高变**，走首帧机制（B12），真机验洞纪律照旧。
 
+  **🔴 ⑦c 与 B18 的交叉踩坑（2026-10-16）**：B18 注入容器是 `u-col-N` 的**直接子**，恰好命中自己的 `u-col-N > *{max-width:76px}` ⇒ 容器被勒成 76px、格子一张一行**竖排**（用户截图「图片变成竖排了」）。修法 = 容器内联 `max-width:none !important`（内联 !important 按级联压过一切样式表 !important，不用往每条媒体规则加排除选择器）。**教训：往别人家注入的元素，先过一遍自家 CSS 会命中它什么。**
+
   - 锚 `.woo-picture-main` / `.u-col-1` 都是**库类**（`u-col-N` 栅格族；`_picTall_/_singleImg_/_inlineNum3_/_row_` 全是哈希 ⛔）。
   - 图片源全是 orj360（360 宽缩略图）⇒ 缩显示尺寸不损清晰度。
   - 点击仍进微博原生大图查看器（只改显示尺寸，不碰链接结构）。
@@ -1333,7 +1335,7 @@ partial 只压一半 ⇒ 加载器首帧读到**自相矛盾的几何** → 判�
 - 附：10-13 快照有 1928 处 `__yawf_`（当日 YAWF 在跑），其后均无 ⇒ 已停用排除。
 - 工具遗产：`probe-black.js` = probeBlack / spbAB / spbDecodeAll / **spbDeep($0)（元素解剖，现象定性头号功臣）** / spbWatch。
 
-#### B18 专节 · 「+N」截断格全量展示（🟡 已落地待真机验收 · 2026-10-15 晚）
+#### B18 专节 · 「+N」截断格全量展示（🟡 首例真机通过 + 二轮返工待复验 · 2026-10-15 晚 → 10-16 晨）
 
 **需求**：用户看到 17 图微博（9 格 + 第 9 格暗罩「+8」），问「>9 图能否全部展示」。
 
@@ -1342,14 +1344,18 @@ partial 只压一半 ⇒ 加载器首帧读到**自相矛盾的几何** → 判�
 2. v2（内容级深搜 sinaimg 数组 + 顶层键清单）：`__vueParentComponent` / `__vue__` **全空**（keys=[]）⇒ 生产构建不暴露 Vue 实例，页面数据路堵死。
 3. `probeDetailApi(bid)`：`/ajax/statuses/show?id=<bid>`（微博网页版自用的同源 GET）✅ `pic_num:17` + `pic_ids`（顺序 id 数组，**不带域名**）+ `pic_infos`（id → 尺寸对象映射：thumbnail=wap180 / bmiddle=wap360 / large=orj960 / largest…）。⚠️ 探针的「sinaimg 数组」判据撞不上它（pic_infos 是映射非数组、pic_ids 不带域名）——**判据要按数据形状设计，不是按想象**。
 
-**实现**（`src/apply/morepics.js` + scheduler ⑤，197 测试全绿）：
-- **数据**：视口 ±300px 内的「+N」卡才取数（回收位槽位防误发）；按 bid 缓存（上限 60）+ 在途去重 + 失败 60s 冷却（防频控）；`getMorePics` 永不 reject。
+**实现**（`src/apply/morepics.js` + scheduler ⑤，200 测试全绿）：
+- **数据**：视口 ±300px 内的「+N」卡才取数（回收位槽位防误发）；按 bid 缓存（上限 60）+ 在途去重 + 失败 60s 冷却（防频控）；`getMorePics` 永不 reject；失败三路 console.warn（2026-10-16 悬案定位教训：无声失败没法排查）+ `__spb.morePicsDebug()` 诊断把手（cached/inflight/cooling/fetchAvailable）。
 - **渲染 = 🔴 高度中性**：量原网格 rect（W×H），`morePicsLayout(total, W, H)` 枚举 2..12 列、按 |log(宽/高)| 取最方解（17 图 409.75×282 → 5×4 78×67），容器**显式锁高 = 原 H**、overflow:hidden ⇒ 卡高一像素不变，不碰虚拟列表 translateY 缓存（§12-B2 红线）。
-- **注入**：`data-spb="moregrid"` 容器 append 到行尾，原 9 格内联追加 `display:none`（保留原 padding 内联）；格子 = `<a target="_blank">`（点开 `large` 原图）+ img object-fit:cover；幂等（有标记零写入）；Vue 滚动回收清掉后下一轮重贴（fetch 走缓存）。
+- **🔴 容器对自家压宽 CSS 免疫**（2026-10-16 真机实锤，用户截图「图片变成竖排了」）：注入容器是 `u-col-N` 直接子，被自己的 `u-col-N > *{max-width:76px}`（⑦c 二轮）命中 ⇒ 容器勒成 76px、格子竖排。修法 = 容器内联 `max-width:none !important`（内联 !important 压过一切样式表 !important）。**教训：往别人家注入的元素，先过一遍自家 CSS 会命中它什么。**
+- **点击 = 代理回原生画廊**（2026-10-16 用户反馈「新标签开原图不是画廊」）：前 9 格 onclick → 程序化 click 对应隐藏原生格（display:none 挡真手不挡程序化 click，§12-B15 同款）→ 微博原生画廊；第 10 张起落到第 9 格（画廊可后翻）。href 留作中键/降级。点击目标是格内的 `woo-picture` 元素（监听器无论挂它还是祖先格都会触发）。
+- **注入**：`data-spb="moregrid"` 容器 append 到行尾，原 9 格内联追加 `display:none`（保留原 padding 内联）；幂等（有标记零写入）；Vue 滚动回收清掉后下一轮重贴（fetch 走缓存）。
 - **可逆**：关档逐卡还原（unhide 原格 + 摘容器）；停管线 `removeMoreGrids()` 整页还原；⚠️ findMoreGrids 统计原格时**必须排除我方容器**（注入后行里 9+1，否则关档路径找不到网格——测试踩过）。
-- **v1 范围**：只做卡自身 `.wbpro-feed-content` 的纯图片网格（恰 9 格 + 末格「+N」+ woo-picture）；**转发块刻意不做**（转发原文 bid 与卡 id 不同，取数 id 未核实，宁可不动）。
+- **范围（10-16 二轮扩围）**：卡自身（feed-content，bid = `readCardId`）**与转发块（.retweet）**都做 —— 转发块的图属于原微博，bid 取**转发块自己的时间链接**（2026-10-16 用户截图确认其存在；取不到就放弃该网格，绝不拿转发者的 id 去请求）。
 
-**待真机验收**：17 图卡全图出现且卡高不变（上下滚动不留洞/不重叠）、点格开原图、滚走滚回不重发请求、`__spb.appearance({ morePics:false })` 可关、`__spb.off()` 可还原。
+**真机轨迹**：10-16 晨首例悬案（+3 卡未展开）→ morePicsDebug 定位 = 取数成功、注入晚于截图 ⇒ **首例通过**；随后用户报两问题（竖排勒死 + 画廊点击）+ 转发块范围缺口 ⇒ 二轮三修（本节），待复验。
+
+**待真机复验**：正常卡全图横排密铺（不再竖排）、点击进原生画廊（不新标签）、**转发卡的原微博 +N 也展开**、卡高不变滚动不留洞、滚走滚回不重发请求、`__spb.appearance({ morePics:false })` 可关、`__spb.off()` 可还原。
 
 
 

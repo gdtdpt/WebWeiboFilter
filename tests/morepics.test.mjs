@@ -217,8 +217,14 @@ test('DOM：+8 卡注入 17 格；原格隐藏；容器锁高 = 原网格高（�
   assert.ok(box, '容器在行内');
   assert.ok(/height:\s*282px/.test(box.getAttribute('style') || ''),
     '容器必须显式锁高 282px = 原网格高（卡高一个像素不变的生死线）');
+  assert.ok(/max-width:\s*none !important/.test(box.getAttribute('style') || ''),
+    '容器必须对自家的 u-col-N > * 压宽规则免疫（2026-10-16 真机：被勒成 76px ⇒ 格子竖排）');
   assert.equal(box.querySelectorAll('a').length, 17, '17 张图全部注入');
-  assert.equal(box.querySelectorAll('a[target="_blank"]').length, 17, '点击 = 新标签开原图');
+  const anchors = box.querySelectorAll('a');
+  assert.ok([...anchors].every((a) => typeof a.onclick === 'function'),
+    '每格都要有点击代理（走原生画廊，2026-10-16 用户反馈新标签开原图不对）');
+  assert.equal(anchors[0].getAttribute('target'), null, '不再用 target=_blank（画廊代理取代）');
+  assert.equal(anchors[16].getAttribute('target'), null, '超量图（无对应原生格）同样走代理');
   const hidden = [...row.children].filter((c) => c !== box)
     .filter((c) => /display\s*:\s*none/i.test(c.getAttribute('style') || ''));
   assert.equal(hidden.length, 9, '原有 9 格全部 display:none（保留原内联，只追加 display）');
@@ -293,4 +299,103 @@ test('DOM：视口外不取数；无 bid 不取数；≤9 张不注入', { skip:
   });
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(row3.querySelectorAll(MOREGRID_SEL[0]).length, 0, '≤9 张不注入（微博本来就展示得下）');
+});
+
+/** 转发卡：feed-content 无网格，网格在 .retweet 里（2026-10-16 用户截图的真实形态） */
+function buildRetweetCard(doc) {
+  const card = doc.createElement('div');
+  card.setAttribute('class', 'wbpro-scroller-item');
+  const a0 = doc.createElement('a');
+  a0.setAttribute('href', 'https://weibo.com/999/ReposterBid');   // 外层卡 = 转发者的 bid
+  card.appendChild(a0);
+  const content = doc.createElement('div');
+  content.setAttribute('class', 'wbpro-feed-content');            // 转发语，无网格
+  card.appendChild(content);
+
+  const rt = doc.createElement('div');
+  rt.setAttribute('class', 'retweet');
+  card.appendChild(rt);
+  const time = doc.createElement('a');
+  time.setAttribute('title', '2026-10-16 05:31');
+  time.setAttribute('href', 'https://weibo.com/12345/RmSfq0kHy'); // 转发块时间链接 → 原微博 bid
+  rt.appendChild(time);
+  const rtText = doc.createElement('div');
+  rtText.setAttribute('class', 'wbpro-feed-reText');
+  rt.appendChild(rtText);
+
+  const row = doc.createElement('div');
+  row.setAttribute('class', 'u-col-3 woo-box-wrap');
+  rtText.appendChild(row);
+  for (let i = 0; i < 9; i++) {
+    const cell = doc.createElement('div');
+    const pic = doc.createElement('div');
+    pic.setAttribute('class', 'woo-picture-main');
+    cell.appendChild(pic);
+    if (i === 8) {
+      const o = doc.createElement('div');
+      o.textContent = '+3';
+      cell.appendChild(o);
+    }
+    row.appendChild(cell);
+  }
+  doc.body.appendChild(card);
+  return { card, row };
+}
+
+test('DOM：转发块的 +N 网格也展开，且 bid 必须取原微博的（不是转发者的）', { skip: !parseHTML && 'linkedom 未安装' }, async () => {
+  resetMorePicsCache();
+  const { document } = parseHTML('<html><body></body></html>');
+  const { card, row } = buildRetweetCard(document);
+
+  const requestedUrls = [];
+  const res = applyMorePics(card, true, {
+    fetcher: (u) => { requestedUrls.push(u); return jsonFetcher(detailJson17())(u); },
+    measure: () => ({ width: 409.75, height: 282 }),
+    visible: () => true,
+  });
+  assert.equal(res.requested, 1, '转发块的 +N 网格要被识别');
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.equal(requestedUrls.length, 1, '恰好 1 个请求');
+  assert.ok(requestedUrls[0].indexOf('RmSfq0kHy') !== -1,
+    `请求的必须是原微博的 bid（拿到的是：${requestedUrls[0]}）——拿转发者的 id 会取回另一条微博的图`);
+  assert.ok(requestedUrls[0].indexOf('ReposterBid') === -1, '绝不能用转发者的 bid');
+  assert.equal(countMoreGrids(document), 1, '注入成功');
+  assert.ok(row.querySelector(MOREGRID_SEL[0]), '容器落在转发块的行内');
+});
+
+test('DOM：注入格点击代理回隐藏原生格（画廊模式），代理拦截默认导航', { skip: !parseHTML && 'linkedom 未安装' }, async () => {
+  resetMorePicsCache();
+  const { document } = parseHTML('<html><body></body></html>');
+  const { card, row } = buildCard(document);
+
+  // 给前 9 个原生格装 click 间谍（我们的代理点的是格内的 woo-picture 元素）
+  const clicked = [];
+  const cells = [...row.children];
+  cells.forEach((c, i) => {
+    const pic = c.querySelector('.woo-picture-main');
+    pic.click = () => { clicked.push(i); };
+  });
+
+  applyMorePics(card, true, {
+    fetcher: jsonFetcher(detailJson17()),
+    measure: () => ({ width: 409.75, height: 282 }),
+    visible: () => true,
+  });
+  await new Promise((r) => setTimeout(r, 0));
+
+  const box = row.querySelector(MOREGRID_SEL[0]);
+  assert.ok(box, '前置：注入成功');
+  const anchors = [...box.querySelectorAll('a')];
+
+  // 第 1 格（idx 0）→ 原生格 0；第 9 格（idx 8）→ 原生格 8
+  assert.equal(anchors[0].onclick(), false, '代理必须 return false 拦下 href 导航');
+  assert.deepEqual(clicked, [0], '第 1 格应代理到原生格 0（画廊定位到该图）');
+  anchors[8].onclick();
+  assert.deepEqual(clicked, [0, 8], '第 9 格代理到原生格 8');
+  // 第 10 格起没有对应原生格 ⇒ 落到最后一格（画廊从第 9 张起，往后翻就是多出来的图）
+  anchors[9].onclick();
+  assert.deepEqual(clicked, [0, 8, 8], '第 10 格代理到原生格 8（+N 格，画廊可后翻）');
+  anchors[16].onclick();
+  assert.deepEqual(clicked, [0, 8, 8, 8], '第 17 格同上');
 });

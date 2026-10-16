@@ -21,16 +21,26 @@
  *
  * ── 幂等与可逆 ──────────────────────────────────────────────────────
  *   · 注入容器带自有标记 `data-spb="moregrid"`；已注入 ⇒ 一轮一个字节不写；
+ *   · 🔴 容器对自家的 `u-col-N > *` 压宽规则免疫（内联 max-width:none !important）——
+ *     2026-10-16 真机实锤：容器被自己的规则勒成 76px 宽 ⇒ 格子竖排（用户截图）；
  *   · Vue 滚动回收重渲染会清掉注入 ⇒ 下一轮扫描重贴（图片走 fetch 缓存，不重发请求）；
  *   · 关档（L1/L2 关或 appearance.morePics=false）逐卡还原（原格 display:none 摘除）；
  *   · 停管线 removeMoreGrids() 整页摘除。
  *
- * ⚠️ v1 范围：只处理**卡自身**（.wbpro-feed-content）的纯图片网格（恰 9 格 + 末格
- * 「+N」文案 + woo-picture）；转发块里的 +N 网格**刻意不做** —— 转发原文的 bid 与
- * 卡 id 不同，取数 id 没核实过，宁可不动。
+ * ⚠️ 范围（2026-10-16 二轮定稿）：卡自身（.wbpro-feed-content）与**转发块**（.retweet）
+ * 都做 —— 转发块的图属于原微博，bid 取转发块自己的时间链接（取不到就放弃该网格，
+ * 绝不拿转发者的 id 去请求）。纯图片网格（恰 9 格 + 末格「+N」文案 + woo-picture）。
  */
 
 import { readCardId } from '../adapters/weibo-home.js';
+
+/** 从 href 里抠帖子 bid（适配层有 absUrl 但不导出；这里只要微博两种写法都吃） */
+function bidFromHref(href) {
+  if (!href) return null;
+  const abs = /^https?:/i.test(href) ? href : href.indexOf('//') === 0 ? 'https:' + href : 'https://weibo.com' + href;
+  const m = /weibo\.com\/\d+\/([A-Za-z0-9]+)/.exec(abs);
+  return m ? m[1] : null;
+}
 
 /** 注入容器的 `data-spb` 取值（与 hidden / ad / stats 并列，互不干扰） */
 export const MOREGRID_MARK = 'moregrid';
@@ -190,38 +200,56 @@ export function getMorePics(bid, fetcher) {
 // ============================================================ DOM（探查 / 注入 / 摘除）
 
 /**
- * 找卡内的「+N」截断网格（v1 只看卡自身 `.wbpro-feed-content`，见文件头范围说明）。
+ * 找卡内的「+N」截断网格（卡自身 feed-content + 转发块 retweet，两个作用域）。
  *
  * 判据（probeMorePics v1 真机指纹）：
  *   · 行容器 `[class*="u-col-"]`（`u-col-*` 是库类名前缀，抗改版）；
  *   · 恰好 9 格；末格文案 = `+数字`；末格内有 `woo-picture`（防把别的「+N」文本误当截断格）。
  *
+ * bid 归属（🔴 转发块与卡不同源，2026-10-16 真机定位）：
+ *   · feed-content 的图属于**卡本身** ⇒ `readCardId(card)`；
+ *   · .retweet 的图属于**原微博** ⇒ 取**转发块自己的时间链接**（如 `10-16 05:31` 的
+ *     href 指向原微博 /<uid>/<bid>）；取不到（无时间锚 / 链接无 bid）⇒ 该网格放弃，
+ *     宁可不展开也不能拿转发者的 id 去请求 —— 那会取回另一条微博的图。
+ *
  * @param {Element} card `.wbpro-scroller-item`
- * @returns {Array<{row:Element, cells:Array<Element>, extra:number}>}
+ * @returns {Array<{row:Element, cells:Array<Element>, extra:number, bid:string|null}>}
  */
 export function findMoreGrids(card) {
   const out = [];
   if (!card || !card.querySelector) return out;
-  const scope = card.querySelector('.wbpro-feed-content');
-  if (!scope || !scope.querySelectorAll) return out;
-  const rows = scope.querySelectorAll('[class*="u-col-"]');
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    // 统计原格时**排除我方注入容器**（关档路径也要能找到网格：注入后行里是 9 格 + 1 容器）
-    const cells = [];
-    for (let c = 0; c < row.children.length; c++) {
-      const ch = row.children[c];
-      const attr = ch.getAttribute && ch.getAttribute('data-spb');
-      if (attr === MOREGRID_MARK) continue;
-      cells.push(ch);
+
+  const collect = (scope, bid) => {
+    if (!scope || !scope.querySelectorAll) return;
+    const rows = scope.querySelectorAll('[class*="u-col-"]');
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      // 统计原格时**排除我方注入容器**（关档路径也要能找到网格：注入后行里是 9 格 + 1 容器）
+      const cells = [];
+      for (let c = 0; c < row.children.length; c++) {
+        const ch = row.children[c];
+        const attr = ch.getAttribute && ch.getAttribute('data-spb');
+        if (attr === MOREGRID_MARK) continue;
+        cells.push(ch);
+      }
+      if (cells.length !== 9) continue;
+      const last = cells[cells.length - 1];
+      const t = (typeof last.textContent === 'string' ? last.textContent : '').trim();
+      const m = /^\+(\d+)$/.exec(t);
+      if (!m) continue;
+      if (!last.querySelector('[class*="woo-picture"]')) continue;
+      out.push({ row, cells, extra: parseInt(m[1], 10), bid: bid || null });
     }
-    if (cells.length !== 9) continue;
-    const last = cells[cells.length - 1];
-    const t = (typeof last.textContent === 'string' ? last.textContent : '').trim();
-    const m = /^\+(\d+)$/.exec(t);
-    if (!m) continue;
-    if (!last.querySelector('[class*="woo-picture"]')) continue;
-    out.push({ row, cells, extra: parseInt(m[1], 10) });
+  };
+
+  // ① 卡自身：图属于卡 ⇒ 卡的 bid
+  collect(card.querySelector('.wbpro-feed-content'), readCardId(card));
+
+  // ② 转发块：图属于原微博 ⇒ 转发块自己的时间链接（2026-10-16 用户截图补齐的证据）
+  const rt = card.querySelector('.retweet');
+  if (rt) {
+    const time = rt.querySelector('a[title^="20"]');
+    collect(rt, bidFromHref(time && time.getAttribute('href')));
   }
   return out;
 }
@@ -249,9 +277,19 @@ function unhideEl(el) {
  * 全程**重新校验**：行还在文档里、没人抢先注入过、盒子还量得出 —— 任何一条不满足就放弃
  * （槽位回收 / Vue 重渲染随时可能发生，宁可这轮不做，下一轮扫描会再来）。
  *
+ * 🔴 容器必须对自己的压宽 CSS **免疫**（2026-10-16 真机实锤）：注入容器是 u-col-N 的
+ * 直接子，会被我们的 `u-col-3 > *{max-width:76px}` 一起命中 ⇒ 容器被勒成 76px 宽、
+ * 格子一张一行竖着摞（用户截图「图片变成竖排了」）。内联 `max-width:none !important`
+ * 按级联压过一切样式表 !important ⇒ 一劳永逸，不用往每条媒体规则里加排除选择器。
+ *
+ * 点击 = **代理回原生画廊**（2026-10-16 用户反馈：新标签开原图不是想要的交互）：
+ * 前 9 格点击 → 程序化 click 对应的**隐藏原生格**（display:none 挡得住真手、挡不住
+ * 程序化 click —— §12-B15 摘要条同款结论）→ 走微博原生画廊；第 10 张起没有对应原生格
+ * ⇒ 落到第 9 格（画廊从第 9 张起，往后翻就是多出来的图）。href 留作降级/中键。
+ *
  * @returns {boolean} 是否真的注入了
  */
-function renderInto(row, pics, measure) {
+function renderInto(row, pics, nativeCells, measure) {
   // isConnected 只在「明确为 false」（浏览器里已摘出文档）时拦；undefined（部分 DOM
   // 实现 —— 如测试的 linkedom —— 不提供该属性）不拦，否则永远注不进去。
   if (!row || row.isConnected === false || !row.appendChild) return false;
@@ -265,18 +303,19 @@ function renderInto(row, pics, measure) {
 
   const doc = row.ownerDocument;
   if (!doc || !doc.createElement) return false;
+  const hidden = Array.isArray(nativeCells) ? nativeCells : [];
 
   const box = doc.createElement('div');
   box.setAttribute('data-spb', MOREGRID_MARK);
   // 🔴 高度中性：显式锁高 = 原网格高。格子的数学再怎么取整，卡高都不会变。
+  // 🔴 max-width:none：对自家的 `u-col-N > *` 压宽规则免疫（竖排勒死，见上）。
   box.setAttribute('style', 'height:' + Math.round(r.height) + 'px;overflow:hidden;'
-    + 'font-size:0;line-height:0;');
+    + 'font-size:0;line-height:0;max-width:none !important;');
 
   for (let i = 0; i < pics.length; i++) {
     const p = pics[i];
     const a = doc.createElement('a');
     a.setAttribute('href', p.view);
-    a.setAttribute('target', '_blank');
     a.setAttribute('rel', 'noopener noreferrer');
     a.setAttribute('style', 'display:inline-block;vertical-align:top;width:' + layout.cellW
       + 'px;height:' + layout.cellH + 'px;margin:' + GAP + 'px 0 0 ' + GAP + 'px;overflow:hidden;');
@@ -286,6 +325,17 @@ function renderInto(row, pics, measure) {
     img.setAttribute('alt', '');
     img.setAttribute('style', 'display:block;width:100%;height:100%;object-fit:cover;border:0;');
     a.appendChild(img);
+    // 点击代理：闭包按当前 index 捕获；点在 picture 元素上（监听器无论挂在它还是祖先格
+    //子上都会被触发 —— 事件从 picture 冒泡到格子）。代理永远 return false 拦下导航。
+    const idx = i;
+    a.onclick = function () {
+      const cell = hidden[Math.min(idx, hidden.length - 1)];
+      if (cell && cell.querySelector) {
+        const target = cell.querySelector('[class*="woo-picture"]') || cell;
+        try { target.click(); } catch (_e) { /* 派发失败降级走 href（return false 已被破坏则新标签兜底） */ }
+      }
+      return false;
+    };
     box.appendChild(a);
   }
 
@@ -339,13 +389,13 @@ export function applyMorePics(card, on, deps) {
     // 视口外的卡不取数（虚拟列表回收位上的槽位带完整卡，不拦会把缓存打爆）
     if (!visible(card)) continue;
 
-    const bid = readCardId(card);
-    if (!bid) continue;
+    // bid 已在 findMoreGrids 里按作用域定好归属（feed-content=卡 / retweet=原微博）
+    if (!g.bid) continue;
     const extra = g.extra;
     if (!(extra > 0)) continue;
     out.requested++;
-    getMorePics(bid, d.fetcher).then((pics) => {
-      if (renderInto(g.row, pics, measure)) out.injected++;
+    getMorePics(g.bid, d.fetcher).then((pics) => {
+      if (renderInto(g.row, pics, g.cells, measure)) out.injected++;
     }).catch(() => { /* getMorePics 永不 reject，这里只是双保险 */ });
   }
   return out;
