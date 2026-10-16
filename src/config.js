@@ -119,6 +119,13 @@ export const DEFAULT_CONFIG = {
      * 非法值回退 12，越界夹回 [0, 64]。控制台 `__spb.appearance({ layoutGap: 16 })` + 刷新试值。
      */
     layoutGap: 12,
+    /**
+     * L2 品牌文案换中性（§7.5-F/G，§12-B20；probeBrand 真机取证后落地）。
+     * JS 改写**整段命中白名单模板**的平台文案（chrome 文本 / title·aria-label·
+     * placeholder·alt / logo SVG→SpecBase 文字标），用户正文绝不碰。
+     * 仅在 l2 开启时生效；false 可单独关掉文案改写（L2 其余一切保留）。
+     */
+    brandNeutral: true,
     /** 缩略图高度预设：40 | 60 | 80（§7.5.3，默认 60） */
     thumbHeight: 60,
     /** 悬停恢复彩色（§7.5.3，默认关） */

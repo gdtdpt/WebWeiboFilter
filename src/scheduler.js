@@ -37,6 +37,9 @@ import {
 import {
   applyAvatarBackground, removeAvatarBackgrounds, countAvatarBackgrounds,
 } from './apply/avatarbg.js';
+import {
+  applyBrandText, restoreBrandText, countBrandText,
+} from './apply/brandtext.js';
 import { AVATAR_VARIANTS } from './features/l2.js';
 
 /** 一次扫描的间隔上限（trailing 去抖），毫秒 */
@@ -224,6 +227,16 @@ export function createScheduler(doc, config, options) {
     stats.times = times;
     applyPageAds();
 
+    // ⑦ L2 品牌文案换中性（§7.5-F/G，§12-B20）：chrome 文本 + 属性 + logo 文字标。
+    //    chrome 在卡片外 ⇒ 全文档扫（不逐卡）；pattern 驱动幂等 ⇒ 每轮重复调用无害；
+    //    档位关着时还原（L2 独有，L1 不含）。只写文本/属性，不 observe attributes ⇒ 无自触发。
+    const brandOn = appearanceOn && !!appCfg.l2 && appCfg.brandNeutral !== false;
+    try {
+      applyBrandText(doc, brandOn);
+    } catch (e) {
+      log('品牌文案改写异常（已吞掉，不影响页面）', e);
+    }
+
     if (typeof opts.onScan === 'function') {
       try { opts.onScan({ slots, hidden, pageAds: stats.pageAds, stats }); } catch (_e) { /* 回调不影响管线 */ }
     }
@@ -287,10 +300,13 @@ export function createScheduler(doc, config, options) {
     const mg = removeMoreGrids(doc);
     // β 头像水印是我方写入的内联 CSS 变量 + 标记 —— 停管线时整页清掉。
     const ab = removeAvatarBackgrounds(doc);
+    // L2 品牌文案 / logo 文字标是**被改写的 DOM 内容** —— 停管线时按台账逐条还原（§7.4「可逆」）。
+    const br = restoreBrandText(doc);
     stats.times = 0;
     log('过滤管线已停止，清掉 ' + n + ' 处标记' + (t ? '、还原 ' + t + ' 处时间' : '')
       + (sm ? '、摘除 ' + sm + ' 条摘要' : '') + (mg ? '、还原 ' + mg + ' 处全图网格' : '')
-      + (ab ? '、清掉 ' + ab + ' 处头像水印' : ''));
+      + (ab ? '、清掉 ' + ab + ' 处头像水印' : '')
+      + (br ? '、还原 ' + br + ' 处品牌文案' : ''));
     return true;
   }
 
@@ -301,7 +317,7 @@ export function createScheduler(doc, config, options) {
     isRunning: () => running,
     stats: () => Object.assign({}, stats, countMarks(doc),
       { times: countTimes(doc), summaries: countSummaries(doc), moreGrids: countMoreGrids(doc),
-        avatarBgs: countAvatarBackgrounds(doc) }),
+        avatarBgs: countAvatarBackgrounds(doc), brandText: countBrandText() }),
     recent: () => recent.slice(),
   };
 }
