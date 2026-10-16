@@ -15,6 +15,7 @@ import {
   l2Css, L2_TEXT_FONT_SIZE, L2_TEXT_LINE_HEIGHT, AVATAR_VARIANTS,
   normalizeAvatarBgSize, AVATAR_BG_SIZE_DEFAULT,
   normalizeAvatarBgOpacity,
+  normalizeLayoutSpacing, LAYOUT_MARGIN_LEFT_DEFAULT, LAYOUT_GAP_DEFAULT,
 } from '../src/features/l2.js';
 import { l1Css } from '../src/features/l1.js';
 import { appearanceCss } from '../src/features/appearance.js';
@@ -153,7 +154,7 @@ test('布局三规则：左栏 order:2 / 右壳 display:none / 主列 flex:1', (
   const content = rules.find((r) => r.selector === 'div.woo-box-flex:has(> .grayTheme):has(main.woo-box-flex)');
   assert.ok(content, '缺 _content_ 宽度基准规则');
   assert.equal(content.decls.find((d) => d.prop === 'width').value, '100% !important');
-  assert.equal(content.decls.find((d) => d.prop === 'column-gap').value, '24px !important');
+  assert.equal(content.decls.find((d) => d.prop === 'column-gap').value, '12px !important');
 
   const shell = rules.find((r) => r.selector === 'main.woo-box-flex > div:has(.wbpro-side-main)');
   assert.ok(shell, '缺右栏壳收口规则');
@@ -165,9 +166,9 @@ test('布局三规则：左栏 order:2 / 右壳 display:none / 主列 flex:1', (
   // 包裹层与 main 的放开规则
   assert.ok(rules.some((r) => r.selector === 'div:has(> main.woo-box-flex)'), '缺包裹层放开规则');
   assert.ok(rules.some((r) => r.selector === 'main.woo-box-flex'), '缺 main 放开规则');
-  // 信息流左缘呼吸（2026-10-16 用户反馈「左边像右边一样给些 margin」）
+  // 信息流左缘呼吸（2026-10-16 用户反馈两轮定值 24→12，把手 layoutMarginLeft）
   const wrap = rules.find((r) => r.selector === 'div:has(> main.woo-box-flex)');
-  assert.equal(wrap.decls.find((d) => d.prop === 'margin-left').value, '24px !important');
+  assert.equal(wrap.decls.find((d) => d.prop === 'margin-left').value, '12px !important');
 });
 
 test('时间列：absolute + 两行宽 48 + mono + 主题色', () => {
@@ -281,6 +282,30 @@ test('β 水印尺寸把手：默认 120 / 显式值生效 / 非法回退 / 越�
   const dim = parseRules(l2Css({ appearance: { avatarBgOpacity: 0.12 } }))
     .find((r) => r.selector === '.wbpro-scroller-item article::before');
   assert.equal(dim.decls.find((d) => d.prop === 'opacity').value, '0.12 !important');
+
+  // 渐隐起点 3/4（2026-10-16 用户二轮反馈「开始消失的位置调整到 3/4 处」）
+  const fade = parseRules(l2Css({}))
+    .find((r) => r.selector === '.wbpro-scroller-item article::before');
+  assert.match(fade.decls.find((d) => d.prop === 'mask-image').value,
+    /black 75%, transparent 100%\)/, '前 75% 完整可见，最后 1/4 淡出');
+});
+
+test('版面间距把手：默认 12 / 显式值生效 / 非法回退 / 越界夹回', () => {
+  assert.equal(LAYOUT_MARGIN_LEFT_DEFAULT, 12);
+  assert.equal(LAYOUT_GAP_DEFAULT, 12);
+  assert.equal(normalizeLayoutSpacing(undefined, 12), 12);
+  assert.equal(normalizeLayoutSpacing('x', 12), 12);
+  assert.equal(normalizeLayoutSpacing(16, 12), 16);
+  assert.equal(normalizeLayoutSpacing(0, 12), 0, '允许 0（贴边）');
+  assert.equal(normalizeLayoutSpacing(-5, 12), 0, '负值夹回 0');
+  assert.equal(normalizeLayoutSpacing(999, 12), 64, '高于上限夹回 64');
+
+  const gap = parseRules(l2Css({ appearance: { layoutGap: 16 } }))
+    .find((r) => r.selector === 'div.woo-box-flex:has(> .grayTheme):has(main.woo-box-flex)');
+  assert.equal(gap.decls.find((d) => d.prop === 'column-gap').value, '16px !important');
+  const ml = parseRules(l2Css({ appearance: { layoutMarginLeft: 16 } }))
+    .find((r) => r.selector === 'div:has(> main.woo-box-flex)');
+  assert.equal(ml.decls.find((d) => d.prop === 'margin-left').value, '16px !important');
 });
 
 test('appearanceCss 档位语义：L2 蕴含 L1 且拼在其后（同特异性 L2 胜）', () => {

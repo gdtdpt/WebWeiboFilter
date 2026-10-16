@@ -102,6 +102,16 @@ export const DEFAULT_CONFIG = {
      * 控制台 `__spb.appearance({ avatarBgOpacity: 0.12 })` + 刷新试值。
      */
     avatarBgOpacity: 0.2,
+    /**
+     * 信息流列的左 margin（px，版面呼吸；2026-10-16 真机两轮定值 24→12）。
+     * 非法值回退 12，越界夹回 [0, 64]。控制台 `__spb.appearance({ layoutMarginLeft: 16 })` + 刷新试值。
+     */
+    layoutMarginLeft: 12,
+    /**
+     * 信息流列与分类列（移到最右）之间的列间距（px；与 layoutMarginLeft 同轮定值 24→12）。
+     * 非法值回退 12，越界夹回 [0, 64]。控制台 `__spb.appearance({ layoutGap: 16 })` + 刷新试值。
+     */
+    layoutGap: 12,
     /** 缩略图高度预设：40 | 60 | 80（§7.5.3，默认 60） */
     thumbHeight: 60,
     /** 悬停恢复彩色（§7.5.3，默认关） */
