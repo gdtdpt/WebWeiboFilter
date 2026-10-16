@@ -48,73 +48,49 @@ function probeL2() {
   }
   var LAYOUT_KEYS = ['display', 'position', 'order', 'flex', 'flexDirection', 'width', 'marginLeft', 'marginRight', 'zIndex'];
 
-  /* ── ① 外壳三列布局 ─────────────────────────────────────────── */
+  /* ── ① 外壳三列布局（v2：nav 锚在顶栏，v1 找错了层）────────────────
+   * v1 实测（2026-10-16）：a[href="/"][aria-label] 是**顶栏 logo**（_top_1ubn9_14，
+   * 1297×60），不是左栏；真正的左右分栏层 = 从滚动容器向上找最近的
+   * 「display:flex + flexDirection:row」祖先（_content_1ubn9_18，1122px）。
+   * v2 直接对它枚举直接子：主列（含滚动容器）/ 右栏（含 side-main）/ 左栏（其余者），
+   * 逐列量 rect / position（sticky 风险）/ order / flex，并采文本片段确认身份。 */
   function shellLayout() {
-    var nav = document.querySelector('a[href="/"][aria-label]');
     var scroller = document.querySelector('.vue-recycle-scroller');
-    if (!nav || !scroller) return { verdict: '⛔ 找不到左栏锚或时间线容器', navFound: Boolean(nav), scrollerFound: Boolean(scroller) };
+    var nav = document.querySelector('a[href="/"][aria-label]');
+    if (!scroller) return { verdict: '⛔ 找不到时间线容器', scrollerFound: false };
 
-    // 公共祖先 = 布局容器（含左栏与主列的那一层）
-    function chain(el) {
-      var out = [];
-      while (el && el !== document.documentElement) { out.push(el); el = el.parentElement; }
-      return out;
+    var row = null, hops = 0, el = scroller.parentElement;
+    while (el && el !== document.documentElement) {
+      var st0 = getComputedStyle(el);
+      if (st0.display === 'flex' && st0.flexDirection === 'row') { row = el; break; }
+      hops++;
+      el = el.parentElement;
     }
-    var navChain = chain(nav), scChain = chain(scroller);
-    var common = null;
-    for (var i = 0; i < navChain.length; i++) {
-      if (scChain.indexOf(navChain[i]) !== -1) { common = navChain[i]; break; }
-    }
-    if (!common) return { verdict: '⛔ 左栏与主列无公共祖先（理论不可能）' };
+    if (!row) return { verdict: '⛔ 滚动容器的祖先里没有 flex row —— 分栏层结构变了，回传人工判' };
 
-    // 从公共祖先往下走 0~2 层，找到「直接子含两者」且 display 是 flex 的那一层
-    var layoutEl = null, layoutLv = 0, cur = common;
-    for (var lv = 0; lv < 3 && cur; lv++) {
-      var kids = cur.children || [];
-      var hasNav = false, hasSc = false;
-      for (var k = 0; k < kids.length; k++) {
-        if (kids[k].contains(nav)) hasNav = true;
-        if (kids[k].contains(scroller)) hasSc = true;
-      }
-      if (hasNav && hasSc) { layoutEl = cur; layoutLv = lv; }
-      cur = (cur.children && cur.children.length === 1) ? cur.children[0] : null;
-      if (!layoutEl) continue;
-      var d = getComputedStyle(layoutEl).display;
-      if (d === 'flex' || d === 'grid') break; // 找到 flex 布局层就停
-      if (lv < 2) { // 不是 flex 就再往下一层找（重置，继续找「同时含两者」的更深层）
-        var deeper = layoutEl;
-        layoutEl = null;
-        cur = deeper;
-      }
-    }
     var out = {
-      commonAncestor: desc(common),
-      layoutLevel: layoutLv,
-      layoutEl: layoutEl ? desc(layoutEl) : null,
-      layoutStyles: layoutEl ? stylesOf(layoutEl, LAYOUT_KEYS) : null,
+      rowEl: desc(row),
+      hopsFromScroller: hops,
+      rowStyles: stylesOf(row, LAYOUT_KEYS),
+      rowContainsNav: row.contains(nav),
       columns: [],
-      leftNavStickyUnknown: false,
     };
-    if (!layoutEl) {
-      out.verdict = '⚠️ 未找到「同时含左栏与主列」的 flex 布局层 —— order 交换可能不可用，回传读数人工判';
-      out.leftNavStickyUnknown = true;
-      return out;
-    }
-    var cols = layoutEl.children || [];
+    var cols = row.children || [];
     for (var c = 0; c < cols.length; c++) {
       var col = cols[c];
       var st = stylesOf(col, LAYOUT_KEYS);
-      st.containsNav = col.contains(nav);
       st.containsScroller = col.contains(scroller);
       st.containsSideMain = Boolean(col.querySelector('.wbpro-side-main'));
+      st.role = st.containsScroller ? 'main(信息流)' : st.containsSideMain ? 'right(右栏)' : 'LEFT?（左栏候选）';
       st.rect = rectOf(col);
+      st.textSnippet = clip(col.textContent, 40);
       out.columns.push({ el: desc(col), styles: st });
     }
-    var hasNavCol = out.columns.some(function (x) { return x.styles.containsNav; });
-    var hasScCol = out.columns.some(function (x) { return x.styles.containsScroller; });
-    out.verdict = (hasNavCol && hasScCol)
-      ? '✅ 布局层与列构成已采到 —— 回传；重点看左栏列的 position（sticky 会坏事）与各列 order/flex'
-      : '⚠️ 布局层直接子里没有同时覆盖左栏与主列 —— 中间还有包裹层，回传读数人工判';
+    var main = out.columns.some(function (x) { return x.styles.containsScroller; });
+    var lefts = out.columns.filter(function (x) { return x.styles.role.indexOf('LEFT') === 0; });
+    out.verdict = !main ? '⚠️ 分栏层直接子里没有主列（还有包裹层）—— 回传人工判'
+      : lefts.length === 1 ? '✅ 三列构成齐了 —— 重点看左栏候选列的 position（sticky 会坏事）与各列 order/flex/rect'
+      : '⚠️ 左栏候选列有 ' + lefts.length + ' 个（预期 1 个）—— 回传读数人工判';
     return out;
   }
 
@@ -246,8 +222,9 @@ function probeL2() {
     scanned: scanned,
     theme: theme,
     video: video,
-    note: 'layout.commonAncestor 是用「左栏锚 × 滚动容器公共祖先」定位的（外壳无语义锚点的替代法）。'
-      + 'timeAnchors.parents 首层就是 absolute 的挂点候选；siblings 是时间脱流后 header 原位的残留物',
+    note: 'v2：布局层 = 从滚动容器向上找最近的 flex row（v1 实测 nav 锚在顶栏，别再按 nav 找）。'
+      + 'timeAnchors.parents 首层是 _info_ 行（有 _tagList_ 兄弟 ⇒ 挂点选 article，以卡为坐标系）；'
+      + 'siblings 是时间脱流后原位的残留物（只剩来源条）',
   };
 }
 
