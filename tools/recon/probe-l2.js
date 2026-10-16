@@ -210,6 +210,76 @@ function probeL2() {
     if (ts && !ts.anomalous) time.push(ts);
   }
 
+  /* ── ⑤ L2 规则命中审计（v4 新增，2026-10-16 真机三症状定位）────────────
+   * 症状：分组页（mygroups）+ 窄窗口（~1080px）下 ① 信息流没加宽 ② 左栏没移最右
+   * ③ 头像没渐隐。M1 结构事实是在**首页 ~1297px 窗口**采的 —— 页面/宽度两个变量都变了。
+   * 本段把 l2.js 的每条选择器放到活页面里数命中数：命中 0 = 该规则没生效的直接证据，
+   * 不用再猜。外加 computed 实测（article padding / 头像 mask / 时间锚 position）。 */
+  function ruleAudit() {
+    var sels = [
+      ['①左栏order', 'div:has(> div:has(> main.woo-box-flex)) > .grayTheme'],
+      ['②a收壳', 'main.woo-box-flex > div:has(.wbpro-side-main)'],
+      ['②b包裹层放开', 'div:has(> main.woo-box-flex)'],
+      ['②cmain放开', 'main.woo-box-flex'],
+      ['②d主列放开', 'main.woo-box-flex > div:has(.vue-recycle-scroller)'],
+      ['③行化+腾列', '.wbpro-scroller-item article'],
+      ['④时间成列', '.wbpro-scroller-item article > div > header a[title^="20"]'],
+      ['⑤L2排版', '.wbpro-scroller-item .wbpro-feed-ogText'],
+      ['⑥β头像mask', '.wbpro-scroller-item img.woo-avatar-img'],
+      ['锚.grayTheme全页', '.grayTheme'],
+      ['锚main.woo-box-flex全页', 'main.woo-box-flex'],
+      ['锚side-main全页', '.wbpro-side-main'],
+      ['锚scroller全页', '.vue-recycle-scroller'],
+    ];
+    var out = {};
+    for (var i = 0; i < sels.length; i++) {
+      var n = 0;
+      try { n = document.querySelectorAll(sels[i][1]).length; } catch (_e) { n = -1; }
+      out[sels[i][0]] = n;
+    }
+    return out;
+  }
+  function l2Computed() {
+    var card = document.querySelector('.wbpro-scroller-item');
+    if (!card) return { verdict: '⛔ 当前页没有 .wbpro-scroller-item 卡' };
+    var article = card.querySelector('article');
+    var avatar = card.querySelector('img.woo-avatar-img');
+    var time = card.querySelector('article > div > header a[title^="20"]');
+    var anyAvatar = document.querySelector('img.woo-avatar-img');
+    var out = { page: location.href, innerWidth: window.innerWidth };
+    if (article) {
+      var as = getComputedStyle(article);
+      out.article = { paddingLeft: as.paddingLeft, background: as.backgroundColor,
+        position: as.position, rect: rectOf(article) };
+    }
+    var av = avatar || anyAvatar;
+    if (av) {
+      var vs = getComputedStyle(av);
+      out.avatar = { found: desc(av), inCard: Boolean(avatar),
+        webkitMaskImage: vs.webkitMaskImage, maskImage: vs.maskImage,
+        parent: desc(av.parentElement), rect: rectOf(av) };
+    } else {
+      out.avatar = { found: null, note: '全页找不到 img.woo-avatar-img —— 头像可能是别的元素（desc 见 avatarAlt）' };
+      var alt = card.querySelector('[class*="avatar"]');
+      if (alt) out.avatar.avatarAlt = desc(alt);
+    }
+    if (time) {
+      var ts2 = getComputedStyle(time);
+      out.time = { position: ts2.position, left: ts2.left, top: ts2.top, width: ts2.width,
+        fontFamily: clip(ts2.fontFamily, 40) };
+    } else {
+      out.time = { found: null, note: '「article > div > header 内」没有时间锚 —— 结构与首页不同' };
+      var t2 = card.querySelector('a[title^="20"]');
+      if (t2) {
+        out.time.foundElsewhere = desc(t2);
+        var chain = [], p = t2.parentElement;
+        for (var k = 0; k < 6 && p; k++) { chain.push(desc(p)); p = p.parentElement; }
+        out.time.parentChain = chain;
+      }
+    }
+    return out;
+  }
+
   var theme = themeInfo();
   var video = videoSample();
 
@@ -217,20 +287,20 @@ function probeL2() {
   if (!scanned) verdict = '⛔ 没扫到有效卡 —— 刷新后重跑';
   else if (!time.length) verdict = '⚠️ 当前页没有带时间锚的卡 —— 滚到信息流再跑';
   else verdict = '✅ 采到 ' + time.length + ' 个时间锚 / ' + scanned + ' 张卡 —— 整个输出回传。'
-    + '重点：① 布局层 columns 的 position/flex/order；② offsetFromCard（时间列落点）与 header 兄弟（脱流后原位）；'
-    + '③ 页面底色 vs 卡底色的差值；④ 视频播放器占卡高的比例';
+    + '重点：ruleAudit 命中 0 的条目（哪条规则没生效）+ l2Computed（头像 mask / article padding / 时间 position）';
 
   return {
     verdict: verdict,
     styleCheck: styleCheck,
+    ruleAudit: ruleAudit(),
+    l2Computed: l2Computed(),
     layout: layout,
     timeAnchors: time,
     scanned: scanned,
     theme: theme,
     video: video,
-    note: 'v3：layout.rows = 沿途全部 flex row 祖先及其直接子（嵌套两层：外层 左栏|main，内层 主列|右栏）。'
-      + 'sideShell 记录右栏列壳的实测占位（display:none 不塌壳）；'
-      + 'timeAnchors 挂点选 article（_info_ 行有 _tagList_ 兄弟）；siblings 是时间脱流后原位的残留物',
+    note: 'v4：新增 ruleAudit（L2 每条选择器的活页命中数）与 l2Computed（article/头像/时间锚的 computed）。'
+      + '请分别在「出问题的页面」（如 mygroups）和「首页」各跑一次 probeL2()，两份输出都回传',
   };
 }
 
