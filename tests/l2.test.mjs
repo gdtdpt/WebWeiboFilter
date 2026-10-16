@@ -11,7 +11,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { l2Css, L2_TEXT_FONT_SIZE, L2_TEXT_LINE_HEIGHT, AVATAR_VARIANTS } from '../src/features/l2.js';
+import {
+  l2Css, L2_TEXT_FONT_SIZE, L2_TEXT_LINE_HEIGHT, AVATAR_VARIANTS,
+  normalizeAvatarBgSize, AVATAR_BG_SIZE_DEFAULT,
+} from '../src/features/l2.js';
 import { l1Css } from '../src/features/l1.js';
 import { appearanceCss } from '../src/features/appearance.js';
 
@@ -93,6 +96,13 @@ const L2_SIZE_EXEMPT = [
     sel: /\.wbpro-feed-(ogText|reText)/,
     props: ['font-size', 'line-height'],
     why: 'L2 排版 13px/1.5（§7.5-C）：字号行距 = 卡高变化 —— 改高度项，首帧兜底（同 L1 ⑧）',
+  },
+  {
+    sel: /\.wbpro-scroller-item article::before$/,
+    props: ['position', 'top', 'left', 'width', 'height'],
+    why: 'β 头像水印：::before 绝对定位 + pointer-events:none ⇒ 不占布局、零高度影响；'
+      + '宽高 = 水印边长（avatarBgSize，正方形 cover 不变形）。图片数据由扫描管线写成'
+      + ' --spb-avatar-bg（apply/avatarbg.js）',
   },
   {
     sel: /header \.woo-avatar-main$/,
@@ -188,28 +198,70 @@ test('L2 排版默认 13px/1.5；显式 config 值优先', () => {
   assert.equal(over.decls.find((d) => d.prop === 'line-height').value, '1.8 !important');
 });
 
-test('头像三变体矩阵：beta 默认 mask 渐隐 / gamma 入时间列 / alpha 无规则 / 非法回退 beta', () => {
+test('头像三变体矩阵：beta 默认整行背景水印 / gamma 入时间列 / alpha 无规则 / 非法回退 beta', () => {
+  // ── β（默认）：头像图片作整行背景（2026-10-16 用户二次定稿，推翻「元素 mask」）──
   const beta = parseRules(l2Css({}));
-  const betaRule = beta.find((r) => r.selector === '.wbpro-scroller-item img.woo-avatar-img');
-  assert.ok(betaRule, '默认应为 beta（mask 渐隐）');
-  assert.match(betaRule.decls.find((d) => d.prop === 'mask-image').value, /linear-gradient\(135deg/);
+  const before = beta.find((r) => r.selector === '.wbpro-scroller-item article::before');
+  assert.ok(before, '默认应为 beta（article::before 整行背景水印）');
+  assert.match(before.decls.find((d) => d.prop === 'background-image').value,
+    /var\(--spb-avatar-bg\)/, '水印图片必须来自 JS 写入的 CSS 变量');
+  assert.match(before.decls.find((d) => d.prop === 'mask-image').value, /linear-gradient\(135deg/,
+    '左上向右下 135° 渐隐');
+  assert.equal(before.decls.find((d) => d.prop === 'z-index').value, '-1 !important',
+    '水印必须沉到正文之下');
+  assert.equal(before.decls.find((d) => d.prop === 'pointer-events').value, 'none !important',
+    '水印不许挡点击');
+  assert.equal(before.decls.find((d) => d.prop === 'left').value, '0 !important',
+    '水印从 article 左缘起 = 日期列起点');
+  assert.equal(before.decls.find((d) => d.prop === 'width').value, '120px !important');
+  assert.equal(before.decls.find((d) => d.prop === 'height').value, '120px !important',
+    '正方形 cover ⇒ 正常比例不变形');
 
+  // β 还应把原头像元素藏起来（visibility 保留占位 ⇒ 卡高零变化）
+  const hideEl = beta.find((r) => /header \.woo-avatar-main$/.test(r.selector));
+  assert.ok(hideEl, 'β 应隐藏原头像元素');
+  assert.equal(hideEl.decls.find((d) => d.prop === 'visibility').value, 'hidden !important');
+  // β 需要 article 自成堆叠上下文（z-index:-1 不掉进卡片底色之下）。
+  // ⚠️ article 有两条规则（③ 行代替卡 / ⑥ isolation）—— 要找带 isolation 的那条。
+  const iso = beta.find((r) => r.selector === '.wbpro-scroller-item article'
+    && r.decls.some((d) => d.prop === 'isolation'));
+  assert.ok(iso, 'β 应给 article 建 stacking context');
+  assert.equal(iso.decls.find((d) => d.prop === 'isolation').value, 'isolate !important');
+
+  // ── γ：原样保留 ──
   const gamma = parseRules(l2Css({ appearance: { avatarVariant: 'gamma' } }));
   const gammaRule = gamma.find((r) => /header \.woo-avatar-main$/.test(r.selector));
   assert.ok(gammaRule, 'gamma 应挪头像盒');
   assert.equal(gammaRule.decls.find((d) => d.prop === 'left').value, '-76px !important',
     'γ 头像 left 走衬距补偿负值（根因 ③）');
   assert.equal(gammaRule.decls.find((d) => d.prop === 'width').value, '22px !important');
-  assert.ok(!gamma.some((r) => r.selector === '.wbpro-scroller-item img.woo-avatar-img'),
-    'gamma 不应再有 mask 规则');
+  assert.ok(!gamma.some((r) => r.selector.endsWith('article::before')),
+    'gamma 不应再画整行水印');
 
+  // ── α：无任何头像规则 ──
   const alpha = parseRules(l2Css({ appearance: { avatarVariant: 'alpha' } }));
   assert.ok(!alpha.some((r) => /woo-avatar/.test(r.selector)), 'alpha 应无头像规则');
+  assert.ok(!alpha.some((r) => r.selector.endsWith('article::before')), 'alpha 无水印');
 
+  // ── 非法回退 beta ──
   const bad = parseRules(l2Css({ appearance: { avatarVariant: 'wat' } }));
-  assert.ok(bad.some((r) => r.selector === '.wbpro-scroller-item img.woo-avatar-img'),
+  assert.ok(bad.some((r) => r.selector === '.wbpro-scroller-item article::before'),
     '非法变体应回退 beta');
   assert.deepEqual(AVATAR_VARIANTS, ['alpha', 'beta', 'gamma']);
+});
+
+test('β 水印尺寸把手：默认 120 / 显式值生效 / 非法回退 / 越界夹回', () => {
+  assert.equal(AVATAR_BG_SIZE_DEFAULT, 120);
+  assert.equal(normalizeAvatarBgSize(undefined), 120);
+  assert.equal(normalizeAvatarBgSize('x'), 120);
+  assert.equal(normalizeAvatarBgSize(96), 96);
+  assert.equal(normalizeAvatarBgSize(300), 300);
+  assert.equal(normalizeAvatarBgSize(30), 64, '低于下限夹回 64');
+  assert.equal(normalizeAvatarBgSize(999), 320, '高于上限夹回 320');
+
+  const sized = parseRules(l2Css({ appearance: { avatarBgSize: 96 } }))
+    .find((r) => r.selector === '.wbpro-scroller-item article::before');
+  assert.equal(sized.decls.find((d) => d.prop === 'width').value, '96px !important');
 });
 
 test('appearanceCss 档位语义：L2 蕴含 L1 且拼在其后（同特异性 L2 胜）', () => {

@@ -32,7 +32,8 @@ WeiboFilter/
 │   ├── apply/              **应用层**（§6 第③层出口）
 │   │   ├── style.js        样式（首帧注入）：一条属性 + 两条 CSS
 │   │   ├── mark.js         幂等打标记 / 撤销标记
-│   │   └── time.js         时间文本改写 / 还原（`data-spb-t` 存原文）
+│   │   ├── time.js         时间文本改写 / 还原（`data-spb-t` 存原文）
+│   │   └── avatarbg.js     β 头像水印：header 头像 src → article 的 `--spb-avatar-bg`（幂等 + 防串号）
 │   ├── adapters/
 │   │   ├── weibo-home.js   微博首页适配层：卡片信号抽取 + 页面广告位发现 + 探针注册表
 │   │   └── weibo-shell.js  外壳层适配（logo / 身份角标）+ 探针表

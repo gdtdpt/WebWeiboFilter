@@ -44,7 +44,7 @@
  */
 
 import {
-  SEL_CARD, SEL_AVATAR, SEL_OG_TEXT, SEL_RE_TEXT, SEL_TIME_ANCHOR,
+  SEL_CARD, SEL_OG_TEXT, SEL_RE_TEXT, SEL_TIME_ANCHOR,
 } from '../adapters/weibo-home.js';
 import { normalizeFontSize, normalizeLineHeight } from './l1.js';
 
@@ -56,8 +56,22 @@ function rule(selector, body) {
 export const L2_TEXT_FONT_SIZE = 13;
 export const L2_TEXT_LINE_HEIGHT = 1.5;
 
-/** 头像变体（§7.5.5）：原位灰度（α）/ 左上角向右下渐隐（β，默认）/ 时间列下方小灰头像（γ） */
+/** 头像变体（§7.5.5）：原位灰度（α）/ 整行背景水印（β，默认）/ 时间列下方小灰头像（γ） */
 export const AVATAR_VARIANTS = ['alpha', 'beta', 'gamma'];
+
+/** β 水印的默认边长（px，正方形不变形；2026-10-16 定稿形态） */
+export const AVATAR_BG_SIZE_DEFAULT = 120;
+
+/** β 水印边长的夹取范围 */
+const AVATAR_BG_SIZE_MIN = 64;
+const AVATAR_BG_SIZE_MAX = 320;
+
+/** β 水印边长归一：非法回退默认，越界夹回（同 normalizeFontSize 的纪律） */
+export function normalizeAvatarBgSize(v) {
+  const n = Math.round(Number(v));
+  if (!isFinite(n)) return AVATAR_BG_SIZE_DEFAULT;
+  return Math.min(AVATAR_BG_SIZE_MAX, Math.max(AVATAR_BG_SIZE_MIN, n));
+}
 
 /**
  * 时间列的几何参数。左 14 / 顶 14 / 宽 48：
@@ -85,7 +99,8 @@ const TIME_COL_CSS_LEFT = TIME_COL_LEFT - TIME_COL_PAD;
  *   - `cfg.appearance.textFontSize` / `textLineHeight`：**缺省（null）时用 L2 规范值
  *     13px / 1.5**（§7.5-C）；显式设置则两档共用用户值。
  *   - `cfg.appearance.avatarVariant`：'alpha' | 'beta' | 'gamma'（非法值回退 'beta'，
- *     2026-10-16 用户拍板默认 β「左上角向右下渐隐」）。
+ *     2026-10-16 用户二次定稿默认 β「头像图片作整行背景、左上向右下渐隐」）。
+ *   - `cfg.appearance.avatarBgSize`：β 水印边长（px，默认 120，夹 [64, 320]）。
  * @returns {string}
  */
 export function l2Css(cfg) {
@@ -163,21 +178,45 @@ export function l2Css(cfg) {
       `font-size:${fontSize}px !important;line-height:${lineHeight} !important`),
   ];
 
-  // ⑥ 头像变体（§7.5.5；默认 β —— 2026-10-16 用户拍板「左上角向右下渐隐」）。
+  // ⑥ 头像变体（§7.5.5；默认 β —— 2026-10-16 用户**二次定稿**）。
   //    只在 L2 生效（L1 保持 α 形态 = 原位降饱和，即 ① 的现状）。
   //    · α：无额外规则（L1 ① 的降饱和 + 降透明就是 α 形态）。
-  //    · β：**不脱流** —— header 高度、卡高都不变；mask 渐隐是纯绘制效果。
-  //      mask 色写 black 关键字：遮罩只取 alpha 通道、与主题色无关（l2 守卫放行 black 于 mask）。
-    //    · γ：整盒（.woo-avatar-main，内联 52×52 那层）absolute 挪进时间列下方、缩到 22px；
-    //      left 同时间锚走衬距补偿负值（根因 ③）；选择器限定卡 header 内 ⇒ 转发块的小头像
-    //      原地不动。🔴 脱流后 header 高度塌缩（原 52px 由头像撑着）⇒ **改高度项**，
-    //      首帧兜底 + SIZE_EXEMPT 登记；top 以该上下文顶（= article 顶）为基准。
-    let avatar = '';
-    if (variant === 'beta') {
-      const mask = 'linear-gradient(135deg, black 20%, transparent 85%)';
-      avatar = rule(`${SEL_CARD[0]} ${SEL_AVATAR[0]}`,
-        `-webkit-mask-image:${mask} !important;mask-image:${mask} !important`);
-    } else if (variant === 'gamma') {
+  //    · β（2026-10-16 用户原话定稿，推翻 M2 的「元素 mask」误实现）：
+  //        「将头像的图片（不是 html 元素）作为整行（从日期列开始）的背景，
+  //          在左上向右下正常比例消失，不是现在这样将头像元素作为第二列」
+  //      ⇒ 三条规则：
+  //        a) 原头像盒 .woo-avatar-main 整体 visibility:hidden（保留占位 ⇒
+  //           header 高度、卡高零变化；V 认证标在盒内一并退场）；
+  //        b) article 自成堆叠上下文（isolation:isolate）—— 让水印 ::before 的
+  //           z-index:-1 恰好落到正文之下、article 透明底之上，**不会**掉进
+  //           .wbpro-scroller-item 不透明卡片底色的下面（那会整个看不见）；
+  //        c) article::before 画水印：图片数据由 apply/avatarbg.js 每轮扫描写成
+  //           CSS 变量 --spb-avatar-bg（::before 收不到内联 style，变量是唯一桥）；
+  //           左上角 = article 左缘（日期列起点，衬距是 padding 不影响 absolute
+  //           的 padding 盒原点）；正方形 cover ⇒ 不变形（用户要「正常比例」）；
+  //           135° mask 渐隐；pointer-events:none 不挡点击。
+  //    · γ：整盒（.woo-avatar-main，内联 52×52 那层）absolute 挪进时间列下方、缩到 22px；
+  //      left 同时间锚走衬距补偿负值（根因 ③）；选择器限定卡 header 内 ⇒ 转发块的小头像
+  //      原地不动。🔴 脱流后 header 高度塌缩（原 52px 由头像撑着）⇒ **改高度项**，
+  //      首帧兜底 + SIZE_EXEMPT 登记；top 以该上下文顶（= article 顶）为基准。
+  let avatar = '';
+  if (variant === 'beta') {
+    const size = normalizeAvatarBgSize(a.avatarBgSize);
+    const mask = 'linear-gradient(135deg, black 15%, transparent 80%)';
+    avatar = [
+      rule(`${SEL_CARD[0]} article > div > header .woo-avatar-main`,
+        'visibility:hidden !important'),
+      rule(`${SEL_CARD[0]} article`, 'isolation:isolate !important'),
+      rule(`${SEL_CARD[0]} article::before`,
+        'content:"" !important;position:absolute !important;left:0 !important;top:0 !important'
+        + `;width:${size}px !important;height:${size}px !important`
+        + ';background-image:var(--spb-avatar-bg) !important'
+        + ';background-size:cover !important;background-position:center !important'
+        + ';background-repeat:no-repeat !important'
+        + `;-webkit-mask-image:${mask} !important;mask-image:${mask} !important`
+        + ';z-index:-1 !important;pointer-events:none !important'),
+    ].join('\n');
+  } else if (variant === 'gamma') {
       avatar = rule(`${SEL_CARD[0]} article > div > header .woo-avatar-main`,
         `position:absolute !important;left:${TIME_COL_CSS_LEFT}px !important;top:${GAMMA_AVATAR_TOP}px !important`
           + ';width:22px !important;height:22px !important');

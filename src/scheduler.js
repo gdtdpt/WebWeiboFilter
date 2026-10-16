@@ -34,6 +34,10 @@ import {
 import {
   applyMorePics, removeMoreGrids, countMoreGrids,
 } from './apply/morepics.js';
+import {
+  applyAvatarBackground, removeAvatarBackgrounds, countAvatarBackgrounds,
+} from './apply/avatarbg.js';
+import { AVATAR_VARIANTS } from './features/l2.js';
 
 /** 一次扫描的间隔上限（trailing 去抖），毫秒 */
 export const SCAN_DEBOUNCE_MS = 120;
@@ -154,6 +158,12 @@ export function createScheduler(doc, config, options) {
     // 外观档是否开启（§7.5.2：L2 蕴含 L1）—— 时间改绝对格式属 L1 的一条，
     // 档位关着时这一趟顺带把已改写的文本**还原**（切档需刷新，见 §7.4；这里是兜底）。
     const appearanceOn = !!(config && config.appearance && (config.appearance.l1 || config.appearance.l2));
+    // β 头像水印只在「L2 开 + avatarVariant=beta」时建立（与 l2Css 的变体回退同一张表，
+    // 判定不复刻）；其余情形逐卡清干净 —— 槽位复用防串号。
+    const appCfg = (config && config.appearance) || {};
+    const avatarVariant = AVATAR_VARIANTS.indexOf(appCfg.avatarVariant) !== -1
+      ? appCfg.avatarVariant : 'beta';
+    const avatarBgOn = appearanceOn && !!appCfg.l2 && avatarVariant === 'beta';
     const now = new Date();
     let times = 0;
 
@@ -199,6 +209,11 @@ export function createScheduler(doc, config, options) {
         // ⑤ 「+N」截断格全量展示（§12-B18，取数异步、注入幂等；
         //    🔴 高度中性 —— 容器显式锁高 = 原网格高，卡高一个像素不变）。
         applyMorePics(card, appearanceOn && !!(config.appearance && config.appearance.morePics));
+
+        // ⑥ β 头像水印（§7.5.5）：header 头像的 src → article 的 --spb-avatar-bg，
+        //    绘制在 article::before（l2.js CSS 侧）；absolute + pointer-events:none
+        //    ⇒ 建/更/摘都不改卡片高度。
+        applyAvatarBackground(card, avatarBgOn);
 
         if (decision.action === ACTION.HIDE) hidden++;
       }
@@ -270,9 +285,12 @@ export function createScheduler(doc, config, options) {
     const sm = removeSummaries(doc);
     // 「+N」全展示注入同样是**元素** —— 停管线时整页还原（原格 display:none 摘掉）。
     const mg = removeMoreGrids(doc);
+    // β 头像水印是我方写入的内联 CSS 变量 + 标记 —— 停管线时整页清掉。
+    const ab = removeAvatarBackgrounds(doc);
     stats.times = 0;
     log('过滤管线已停止，清掉 ' + n + ' 处标记' + (t ? '、还原 ' + t + ' 处时间' : '')
-      + (sm ? '、摘除 ' + sm + ' 条摘要' : '') + (mg ? '、还原 ' + mg + ' 处全图网格' : ''));
+      + (sm ? '、摘除 ' + sm + ' 条摘要' : '') + (mg ? '、还原 ' + mg + ' 处全图网格' : '')
+      + (ab ? '、清掉 ' + ab + ' 处头像水印' : ''));
     return true;
   }
 
@@ -282,7 +300,8 @@ export function createScheduler(doc, config, options) {
     rescan,
     isRunning: () => running,
     stats: () => Object.assign({}, stats, countMarks(doc),
-      { times: countTimes(doc), summaries: countSummaries(doc), moreGrids: countMoreGrids(doc) }),
+      { times: countTimes(doc), summaries: countSummaries(doc), moreGrids: countMoreGrids(doc),
+        avatarBgs: countAvatarBackgrounds(doc) }),
     recent: () => recent.slice(),
   };
 }

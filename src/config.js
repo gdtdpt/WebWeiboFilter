@@ -83,11 +83,19 @@ export const DEFAULT_CONFIG = {
     /**
      * 头像处理变体（§7.5.5，**只在 L2 生效**；L1 恒为 α 形态 = 原位降饱和）：
      * - 'alpha'：原位灰度小圆（现状，无额外规则）
-     * - 'beta'：原位 + 左上角向右下 mask 渐隐（默认，2026-10-16 用户拍板；不脱流零高度影响）
+     * - 'beta'：头像**图片**作为整行（自日期列起的 article）左上角背景、向右下渐隐
+     *   （默认，2026-10-16 用户二次定稿，纠正「元素 mask」误实现）。原头像元素
+     *   visibility:hidden 退场但保留占位 ⇒ 零高度影响；图片数据由扫描管线写成
+     *   CSS 变量 --spb-avatar-bg，绘制在 article::before（尺寸见 avatarBgSize）
      * - 'gamma'：挪进时间列下方缩为 22px 小灰头像（🔴 脱流后 header 塌缩 = 改高度项）
      * 非法值回退 'beta'。
      */
     avatarVariant: 'beta',
+    /**
+     * β 水印边长（px，正方形 cover ⇒ 不变形）。非法值回退 120，越界夹回 [64, 320]。
+     * 控制台 `__spb.appearance({ avatarBgSize: 96 })` + 刷新试值。
+     */
+    avatarBgSize: 120,
     /** 缩略图高度预设：40 | 60 | 80（§7.5.3，默认 60） */
     thumbHeight: 60,
     /** 悬停恢复彩色（§7.5.3，默认关） */
