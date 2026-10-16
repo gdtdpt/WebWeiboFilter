@@ -16,6 +16,13 @@
  *   的元素逐个 `filter:grayscale(1)`。内联 filter **零布局影响**（不碰尺寸属性）。
  *   原内联 filter 存内存台账，off/stop 逐条还原；`data-spb-tb` 标记防重复。
  *   每轮扫描重跑（幂等）：SPA 重建顶栏后标记消失 ⇒ 自动重新套用。
+ *
+ * ── 二轮补丁（2026-10-16 真机截图：发布圆钮仍橙）─────────────────────
+ *   一轮只查 color/background-color/border-color —— 但发布按钮的橙**不在颜色通道上**
+ *   （probeTopbar 读它 bg-color 是透明的，肉眼却是实心橙）⇒ 橙来自 `background-image`
+ *   （渐变/图）或伪元素，计算色查不到。补：① backgroundImage 非 none 即「有涂料」
+ *   （顶栏里不需要彩色，灰度对已灰的图是无操作，误伤无害）② 伪元素 ::before/::after
+ *   的计算色/涂料 —— filter 打在宿主上**连伪元素一起滤**，无需单独处理。
  */
 
 /** 品牌锚（与 apply/brandtext.js 同款：唯一属性锚） */
@@ -39,6 +46,19 @@ export function isVividRGB(v) {
   if (denom <= 0) return false;
   return (mx - mn) / 255 / denom > 0.25;
 }
+
+/**
+ * 纯函数：计算样式里是否「有涂料」—— background-image 非 none（渐变 / 背景图）。
+ * 二轮真机发现：发布圆钮的橙不在颜色通道上（bg-color 透明、肉眼实心橙）⇒ 就是这族。
+ * 顶栏语境下涂料一律不配出现在深色顶栏（误伤 = 给已灰的图加灰度 = 无操作，无害）。
+ */
+export function hasPaintSource(cs) {
+  const bg = cs && cs.backgroundImage;
+  return typeof bg === 'string' && bg !== '' && bg !== 'none';
+}
+
+/** 伪元素清单（filter 打在宿主上连伪元素一起滤，无需单独灰度） */
+const PSEUDOS = ['::before', '::after'];
 
 /* 会话内台账：{ el, filter } —— 还原内联 filter 用 */
 const records = [];
@@ -119,7 +139,20 @@ export function applyTopbarQuiet(doc, on) {
       if (el.getAttribute && el.getAttribute(TOPBAR_MARK)) continue;
       const cs = computedStyle(el);
       if (!cs) continue;
-      if (isVividRGB(cs.backgroundColor) || isVividRGB(cs.color) || isVividRGB(cs.borderTopColor)) {
+      let vivid = hasPaintSource(cs)
+        || isVividRGB(cs.backgroundColor) || isVividRGB(cs.color) || isVividRGB(cs.borderTopColor);
+      if (!vivid) {
+        // 伪元素涂料 / 伪元素彩色（linkedom 无此 API ⇒ try 住，降级为不判）
+        for (let k = 0; k < PSEUDOS.length; k++) {
+          let pcs = null;
+          try { pcs = getComputedStyle(el, PSEUDOS[k]); } catch (_e) { break; }
+          if (pcs && (hasPaintSource(pcs) || isVividRGB(pcs.backgroundColor))) {
+            vivid = true;
+            break;
+          }
+        }
+      }
+      if (vivid) {
         if (grayOut(el)) out.grayed++;
       }
     }

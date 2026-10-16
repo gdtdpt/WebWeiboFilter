@@ -1,8 +1,10 @@
 /**
  * 顶栏降显著（apply/topbar.js + l2.js ⓪）的守卫（§7.5-F，2026-10-16）
  *
- * 测四件事：
+ * 测五件事：
  *   ① `isVividRGB` 纯函数的判据（probeTopbar 实测锚点：徽章 bg vivid / 按钮 bg 不）；
+ *   ①b `hasPaintSource` 纯函数（二轮补丁：发布圆钮的橙在 background-image / 伪元素上，
+ *       颜色通道读不到 —— backgroundImage 非 none 即「有涂料」）；
  *   ② l2.js ⓪ 分类条规则存在（.wbpro-tab2 display:none，库类锚 + 首帧防闪烁）；
  *   ③ linkedom（无 gBCR / getComputedStyle）下安全降级：不崩、分类条整行照收（不依赖计算色）；
  *   ④ 可逆：还原后标记摘除、display 复原。
@@ -12,7 +14,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  applyTopbarQuiet, restoreTopbarQuiet, countTopbarQuiet, isVividRGB, TOPBAR_MARK,
+  applyTopbarQuiet, restoreTopbarQuiet, countTopbarQuiet, isVividRGB, hasPaintSource, TOPBAR_MARK,
 } from '../src/apply/topbar.js';
 import { l2Css } from '../src/features/l2.js';
 
@@ -29,6 +31,19 @@ test('isVividRGB：probeTopbar 实测锚点', () => {
   assert.equal(isVividRGB(''), false);
   assert.equal(isVividRGB(null), false);
   assert.equal(isVividRGB('not-a-color'), false);
+});
+
+/* ── ①b 涂料判据（二轮补丁：发布圆钮的橙在 background-image / 伪元素上）── */
+
+test('hasPaintSource：background-image 非 none 即「有涂料」', () => {
+  assert.equal(hasPaintSource({ backgroundImage: 'linear-gradient(rgb(248, 100, 0), rgb(200, 80, 0))' }),
+    true, '橙色渐变背景 = 发布圆钮的橙，必须判中');
+  assert.equal(hasPaintSource({ backgroundImage: 'url("https://img.example/bg.png")' }), true, '背景图算涂料');
+  assert.equal(hasPaintSource({ backgroundImage: 'none' }), false);
+  assert.equal(hasPaintSource({ backgroundImage: '' }), false, '空串当 none（浏览器常态）');
+  assert.equal(hasPaintSource({}), false);
+  assert.equal(hasPaintSource(null), false);
+  assert.equal(hasPaintSource(undefined), false);
 });
 
 /* ── ② 分类条 CSS 规则 ───────────────────────────────────────────── */
