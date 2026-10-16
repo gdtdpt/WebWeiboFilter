@@ -518,13 +518,13 @@ __spb.css()                       // 看当前实际注入了哪些 CSS（排查
 > 开工前提已由 §12-B12 实测打开 —— 每条落地后都要真机复验「**不留洞**」（滚动 + 反复上下 + `__spb.off()` 恢复）。
 > `git push` 由用户手动执行（本机凭据助手非交互）。
 >
-> ⏳ **第 20 项（「+N」截断格全量展示）待真机验收**（2026-10-15 落地，§12-B18）——
+> ✅ **第 20 项（「+N」截断格全量展示）真机验收通过（2026-10-16 晨，§12-B18）**——
 > `src/apply/morepics.js`：>9 图微博在 feed 内全量展示。数据 = 详情接口
 > `/ajax/statuses/show?id=<bid>`（页面 Vue 数据生产构建摸不到，probeMorePics/2 定论）；
 > 渲染 = **高度中性重渲染**（量原网格矩形、同样大的盒子排更密的网格、容器显式锁高）
-> ⇒ 卡高一像素不变，不碰虚拟列表缓存。取数按 bid 缓存 + 在途去重 + 失败 60s 冷却；
-> 只取视口 ±300px 的卡；v1 只做卡自身（feed-content）纯图片网格，转发块不做。
+> ⇒ 卡高一像素不变，不碰虚拟列表缓存。取数按 bid 缓存 + 在途去重 + 失败 60s 冷却 +
+> 三路 console.warn；只取视口 ±300px 的卡；作用域 = 卡自身 + **转发块**（bid 各取各的）。
 > `appearance.morePics` 开关（默认 true）。探针 `tools/recon/probe-morepics.js`
-> （probeMorePics / probeMorePics2 / probeDetailApi）。
-> **复验要点**：17 图卡全图出现且滚动不留洞/不重叠、点格开原图、滚走滚回不重发请求、
-> `__spb.appearance({ morePics:false })` 可关、`__spb.off()` 可还原。
+> （probeMorePics / probeMorePics2 / probeDetailApi）。二轮三修记录见 B18 专节
+> （容器对自家压宽 CSS 免疫 / 点击代理回原生画廊 / 转发块 bid 归属）。
+> 诊断把手：`__spb.morePicsDebug()`（cached/inflight/cooling/fetchAvailable）。
