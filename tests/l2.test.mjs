@@ -114,6 +114,12 @@ const L2_SIZE_EXEMPT = [
     why: 'γ 头像：整盒脱流挪进时间列 ⇒ header 高度塌缩（原 52px 由头像撑）—— 改高度项，'
       + '首帧兜底；仅 avatarVariant:"gamma" 时注入',
   },
+  {
+    sel: /^\.wbpro-tab2$/,
+    props: ['display'],
+    why: '频道分类条整条隐藏（2026-10-16 用户拍板「tab 全部隐藏」）：流外 chrome（虚拟列表'
+      + '之外，§7.5.0 A 类逻辑），display 安全；库类锚，probeTopbar 实测该条 44px 只装 7 个 tab',
+  },
 ];
 
 test('L2 规则全部通过改尺寸审查（SIZE_EXEMPT 逐条登记）', () => {

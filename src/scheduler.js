@@ -40,6 +40,9 @@ import {
 import {
   applyBrandText, restoreBrandText, countBrandText,
 } from './apply/brandtext.js';
+import {
+  applyTopbarQuiet, restoreTopbarQuiet, countTopbarQuiet,
+} from './apply/topbar.js';
 import { AVATAR_VARIANTS } from './features/l2.js';
 
 /** 一次扫描的间隔上限（trailing 去抖），毫秒 */
@@ -237,6 +240,16 @@ export function createScheduler(doc, config, options) {
       log('品牌文案改写异常（已吞掉，不影响页面）', e);
     }
 
+    // ⑧ L2 顶栏降显著（§7.5-F，probeTopbar 取证后落地）：头像/彩色图标灰度 + 分类条整行收掉。
+    //    分类条的 display:none 不落在 CSS 是因为行落点（_slot_ 祖先）是哈希类，只能 JS 按
+    //    tab2 反推；CSS 侧（l2.js ⓪ .wbpro-tab2）负责首帧防闪烁。内联 filter 零布局影响。
+    const topbarOn = appearanceOn && !!appCfg.l2 && appCfg.topbarQuiet !== false;
+    try {
+      applyTopbarQuiet(doc, topbarOn);
+    } catch (e) {
+      log('顶栏降显著异常（已吞掉，不影响页面）', e);
+    }
+
     if (typeof opts.onScan === 'function') {
       try { opts.onScan({ slots, hidden, pageAds: stats.pageAds, stats }); } catch (_e) { /* 回调不影响管线 */ }
     }
@@ -302,11 +315,14 @@ export function createScheduler(doc, config, options) {
     const ab = removeAvatarBackgrounds(doc);
     // L2 品牌文案 / logo 文字标是**被改写的 DOM 内容** —— 停管线时按台账逐条还原（§7.4「可逆」）。
     const br = restoreBrandText(doc);
+    // 顶栏降显著的内联 filter / display 同理 —— 停管线时逐条还原。
+    const tq = restoreTopbarQuiet(doc);
     stats.times = 0;
     log('过滤管线已停止，清掉 ' + n + ' 处标记' + (t ? '、还原 ' + t + ' 处时间' : '')
       + (sm ? '、摘除 ' + sm + ' 条摘要' : '') + (mg ? '、还原 ' + mg + ' 处全图网格' : '')
       + (ab ? '、清掉 ' + ab + ' 处头像水印' : '')
-      + (br ? '、还原 ' + br + ' 处品牌文案' : ''));
+      + (br ? '、还原 ' + br + ' 处品牌文案' : '')
+      + (tq ? '、还原 ' + tq + ' 处顶栏降显著' : ''));
     return true;
   }
 
@@ -317,7 +333,8 @@ export function createScheduler(doc, config, options) {
     isRunning: () => running,
     stats: () => Object.assign({}, stats, countMarks(doc),
       { times: countTimes(doc), summaries: countSummaries(doc), moreGrids: countMoreGrids(doc),
-        avatarBgs: countAvatarBackgrounds(doc), brandText: countBrandText() }),
+        avatarBgs: countAvatarBackgrounds(doc), brandText: countBrandText(),
+        topbarQuiet: countTopbarQuiet(doc) }),
     recent: () => recent.slice(),
   };
 }

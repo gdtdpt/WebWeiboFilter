@@ -158,6 +158,13 @@ export function l2Css(cfg) {
   //    + 后代有 main.woo-box-flex（全页唯一，audit 实测 =1；排除弹层里其它的 .grayTheme）。
   //    fixed 浮钮不参与 flex 布局，order 对它无效，无需排除。
   const layout = [
+    // ⓪ 频道分类条整条隐藏（2026-10-16 用户拍板「tab 全部隐藏，都不需要」）：
+    //    .wbpro-tab2 是库类锚（probeTopbar 实测该条 44px 只装 全部/原创/视频/超话社区/
+    //    V+微博/群微博 七个 tab），流外 chrome ⇒ display 安全（§7.5.0 A 类逻辑）。
+    //    顺带消灭「超话社区 / V+微博 / 群微博」三个品牌词（§7.5-G「用不到直接隐藏」）。
+    //    行内残余（高级搜索等）由 apply/topbar.js 的 JS 按 _slot_ 祖先收整条（见彼处）。
+    rule('.wbpro-tab2', 'display:none !important'),
+
     rule('div.woo-box-flex:has(> .grayTheme):has(main.woo-box-flex) > .grayTheme',
       'order:2 !important'),
 

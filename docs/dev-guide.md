@@ -34,7 +34,8 @@ WeiboFilter/
 │   │   ├── mark.js         幂等打标记 / 撤销标记
 │   │   ├── time.js         时间文本改写 / 还原（`data-spb-t` 存原文）
 │   │   ├── avatarbg.js     β 头像水印：header 头像 src → article 的 `--spb-avatar-bg`（幂等 + 防串号）
-│   │   └── brandtext.js    L2 品牌文案换中性（§12-B20）：白名单模板改写文本/属性 + logo SVG→SpecBase 文字标（pattern 幂等 + 台账还原）
+│   │   ├── brandtext.js    L2 品牌文案换中性（§12-B20）：白名单模板改写文本/属性 + logo SVG→SpecBase 文字标（pattern 幂等 + 台账还原）
+│   │   └── topbar.js       L2 顶栏降显著（§12-B21）：头像/彩色图标灰度（计算色 vivid 判据）+ 分类条 _slot_ 行收整（内联 filter 零布局影响）
 │   ├── adapters/
 │   │   ├── weibo-home.js   微博首页适配层：卡片信号抽取 + 页面广告位发现 + 探针注册表
 │   │   └── weibo-shell.js  外壳层适配（logo / 身份角标）+ 探针表

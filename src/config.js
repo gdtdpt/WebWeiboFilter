@@ -126,6 +126,13 @@ export const DEFAULT_CONFIG = {
      * 仅在 l2 开启时生效；false 可单独关掉文案改写（L2 其余一切保留）。
      */
     brandNeutral: true,
+    /**
+     * L2 顶栏降显著（§7.5-F；2026-10-16 用户诉求「头像太显眼 / 橙色按钮明显」+ probeTopbar
+     * 取证后落地）：顶栏头像与彩色图标/徽章灰度（内联 filter，零布局影响）+ 分类条整行
+     * 收掉（CSS 侧 = l2.js ⓪ .wbpro-tab2；JS 侧收 _slot_ 行，含「高级搜索」残余）。
+     * 仅在 l2 开启时生效；false 可单独关掉（L2 其余一切保留）。
+     */
+    topbarQuiet: true,
     /** 缩略图高度预设：40 | 60 | 80（§7.5.3，默认 60） */
     thumbHeight: 60,
     /** 悬停恢复彩色（§7.5.3，默认关） */
