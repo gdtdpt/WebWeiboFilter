@@ -35,7 +35,8 @@ WeiboFilter/
 │   │   ├── time.js         时间文本改写 / 还原（`data-spb-t` 存原文）
 │   │   ├── avatarbg.js     β 头像水印：header 头像 src → article 的 `--spb-avatar-bg`（幂等 + 防串号）
 │   │   ├── brandtext.js    L2 品牌文案换中性（§12-B20）：白名单模板改写文本/属性 + logo SVG→SpecBase 文字标（pattern 幂等 + 台账还原）
-│   │   └── topbar.js       L2 顶栏降显著（§12-B21）：头像/彩色图标灰度（计算色 vivid 判据）+ 分类条 _slot_ 行收整（内联 filter 零布局影响）
+│   │   ├── topbar.js       L2 顶栏降显著（§12-B21）：头像/彩色图标灰度（计算色 vivid 判据）+ 分类条 _slot_ 行收整（内联 filter 零布局影响）
+│   │   └── vivid.js        主区 vivid 收尾（§12-B22）：全文档「写死鲜色」扫描灰度（四通道含 SVG fill + 渐变 rgb；阈值 0.5 放过哑色；article/顶栏豁免）
 │   ├── adapters/
 │   │   ├── weibo-home.js   微博首页适配层：卡片信号抽取 + 页面广告位发现 + 探针注册表
 │   │   └── weibo-shell.js  外壳层适配（logo / 身份角标）+ 探针表
@@ -82,7 +83,8 @@ WeiboFilter/
     ├── recon-smoke.test.mjs    recon.js 无浏览器冒烟（vm 沙箱 + 真快照 + 合成页）
     ├── ffprobe-rule.test.mjs   首帧探针注入的规则守卫（禁「不动边框盒」的手法 + 每卡恰好命中 1 个）
     ├── ffprobe-verdict.test.mjs 首帧探针 v3 判词（四个世界：跟着走 / 停在原处 / 改槽不改卡 / 没生效）
-    └── brandtext.test.mjs      品牌文案换中性（§12-B20：规则幂等根基 / **用户正文免疫** / 生命周期 / logo 安全门 / 徽章门）
+    ├── brandtext.test.mjs      品牌文案换中性（§12-B20：规则幂等根基 / **用户正文免疫** / 生命周期 / logo 安全门 / 徽章门）
+    └── vivid.test.mjs          主区 vivid 收尾（§12-B22：paintIsVivid / 阈值 0.5 放过哑色 / linkedom 降级 / 豁免与生命周期）
 ```
 
 ## 3. 构建

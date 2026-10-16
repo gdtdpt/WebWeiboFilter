@@ -1432,6 +1432,38 @@ logo 变 SpecBase 文字标（深色主题下颜色是否正常——走 `var(--
 
 
 
+#### B22 专节 · 主区 vivid 收尾 / 个人页适配（✅ 已落地 · 2026-10-16；probe-profile 取证）
+
+**需求**（用户截图反馈）：个人主页（`/u/<uid>`）「还是原来的样式」——统计数、数据胶囊
+（昨日阅读数/互动数/视频累计播放量）、置顶角标仍鲜橙。
+
+**取证判读**（probeProfile，2026-10-16 16:51）：
+- `themeVars` 核验：:root 上 26 个哑色**在个人页全部生效** ⇒ 变量覆盖是全站的，不用补；
+- 残余鲜橙全部是**写死颜色**（不走变量）：数据胶囊 `._tag_1yc79_149`（⛔ 哈希类）
+  color/border `#ea8011`（s=86）、侧栏未读数 `.woo-badge-msg` `rgb(250,108,1)`（s=99）、
+  「下载动图」hover 钮 bg 蓝（s=75）、置顶角标探针没抓到（疑似 SVG **fill** 上色——
+  「涂料三族」教训再加一员：颜色/背景图/伪元素之外还有 **fill**）；
+- 🔴 **反向锚点**：`rgb(172,138,108)`（s=28）= 我们哑色 `hsl(28,28%,55%)` 的本尊
+  （tab 下划线/管理钮/关注钮）——不是问题，是设计值 ⇒ 判定阈值必须放过它；
+- 结构普查：个人页信息流 = **同一套卡片体系**（3 卡 3 article / vueScroller /
+  feedContents 全同构）⇒ 卡片规则天然复用，无需个人页专版；版面重排无误伤。
+
+**实现**：
+- `isVividRGB(v, minS)` 参数化（默认 0.25 不变，顶栏语义不变）；
+- 新 `src/apply/vivid.js`：全文档 vivid 扫描——阈值 **0.5**（只抓写死鲜色 s 75~99、
+  放过哑色 s 28~30）、四通道 color/backgroundColor/borderTopColor/**fill** +
+  `paintIsVivid`（bg-image 渐变串里的 rgb 逐个判）；命中 ⇒ `filter:grayscale(1)`
+  （零布局影响）+ `data-spb-vq` 标记 + 台账还原；跳过顶栏 bar 子树（⑧ 已管，避免
+  双台账互覆）与 `article` 子树（**用户内容红线**）；**全站生效**（写死橙未来一网兜住）；
+- l1.js ②c：卡外图片降饱和 `img.woo-picture-img:not(article *),img.woo-avatar-img:not(article *)`
+  ——个人页封面大图 / 侧栏头像（用户确认），`:not(article *)` 钉死作用域、卡内媒体归 ②；
+- scheduler ⑨ 接线，gate = `appearanceOn && vividQuiet!==false`（与 themeCss 去橙红同层）；
+  `stop()` 还原、`stats().vividQuiet` 计数；config 把手 `appearance.vividQuiet`。
+- 测试 233/233（vivid.test.mjs：paintIsVivid / 阈值判据 / linkedom 降级 / 生命周期）。
+
+**待真机复验**：个人页数据胶囊/侧栏未读数变灰；置顶角标（fill 假设——探针没抓到，
+若真机仍橙说明上色途径还有第五族，再取证）；封面/侧栏头像降饱和；首页回归（顶栏/卡片不受影响）。
+
 #### B21 专节 · L2 顶栏降显著（✅ 已落地 · 2026-10-16；probe-topbar 取证 → CSS + JS 双侧）
 
 **需求**（M3 一轮真机截图反馈，用户拍板）：① 频道分类条（全部/原创/视频/超话社区/V+微博/

@@ -133,6 +133,13 @@ export const DEFAULT_CONFIG = {
      * 仅在 l2 开启时生效；false 可单独关掉（L2 其余一切保留）。
      */
     topbarQuiet: true,
+    /**
+     * 主区 vivid 收尾（§12-B22）：全文档扫描「写死鲜色」（非 CSS 变量，:root 覆盖管不到）
+     * 的元素并灰度 —— 数据胶囊 / 侧栏未读数 / SVG fill / 渐变。阈值 0.5 只抓写死色、
+     * 放过我们的哑色；article 子树（用户内容）与顶栏（topbarQuiet 管辖）跳过。
+     * L1/L2 任一开即生效；false 可单独关掉。
+     */
+    vividQuiet: true,
     /** 缩略图高度预设：40 | 60 | 80（§7.5.3，默认 60） */
     thumbHeight: 60,
     /** 悬停恢复彩色（§7.5.3，默认关） */

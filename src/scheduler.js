@@ -43,6 +43,9 @@ import {
 import {
   applyTopbarQuiet, restoreTopbarQuiet, countTopbarQuiet,
 } from './apply/topbar.js';
+import {
+  applyVividQuiet, restoreVividQuiet, countVividQuiet,
+} from './apply/vivid.js';
 import { AVATAR_VARIANTS } from './features/l2.js';
 
 /** 一次扫描的间隔上限（trailing 去抖），毫秒 */
@@ -250,6 +253,16 @@ export function createScheduler(doc, config, options) {
       log('顶栏降显著异常（已吞掉，不影响页面）', e);
     }
 
+    // ⑨ 主区 vivid 收尾（§12-B22，probeProfile 取证后落地）：写死鲜色（非变量）的运行时
+    //    灰度网 —— 数据胶囊 / 侧栏未读数 / SVG fill / 渐变。阈值 0.5 只抓写死色、放过哑色；
+    //    跳过 article 子树（用户内容）与顶栏（⑧ 已管）。与 themeCss 去橙红同层（L1/L2 任一开）。
+    const vividOn = appearanceOn && appCfg.vividQuiet !== false;
+    try {
+      applyVividQuiet(doc, vividOn);
+    } catch (e) {
+      log('主区 vivid 收尾异常（已吞掉，不影响页面）', e);
+    }
+
     if (typeof opts.onScan === 'function') {
       try { opts.onScan({ slots, hidden, pageAds: stats.pageAds, stats }); } catch (_e) { /* 回调不影响管线 */ }
     }
@@ -317,12 +330,15 @@ export function createScheduler(doc, config, options) {
     const br = restoreBrandText(doc);
     // 顶栏降显著的内联 filter / display 同理 —— 停管线时逐条还原。
     const tq = restoreTopbarQuiet(doc);
+    // 主区 vivid 收尾的内联 filter 同理。
+    const vq = restoreVividQuiet(doc);
     stats.times = 0;
     log('过滤管线已停止，清掉 ' + n + ' 处标记' + (t ? '、还原 ' + t + ' 处时间' : '')
       + (sm ? '、摘除 ' + sm + ' 条摘要' : '') + (mg ? '、还原 ' + mg + ' 处全图网格' : '')
       + (ab ? '、清掉 ' + ab + ' 处头像水印' : '')
       + (br ? '、还原 ' + br + ' 处品牌文案' : '')
-      + (tq ? '、还原 ' + tq + ' 处顶栏降显著' : ''));
+      + (tq ? '、还原 ' + tq + ' 处顶栏降显著' : '')
+      + (vq ? '、还原 ' + vq + ' 处 vivid 收尾' : ''));
     return true;
   }
 
@@ -334,7 +350,7 @@ export function createScheduler(doc, config, options) {
     stats: () => Object.assign({}, stats, countMarks(doc),
       { times: countTimes(doc), summaries: countSummaries(doc), moreGrids: countMoreGrids(doc),
         avatarBgs: countAvatarBackgrounds(doc), brandText: countBrandText(),
-        topbarQuiet: countTopbarQuiet(doc) }),
+        topbarQuiet: countTopbarQuiet(doc), vividQuiet: countVividQuiet(doc) }),
     recent: () => recent.slice(),
   };
 }

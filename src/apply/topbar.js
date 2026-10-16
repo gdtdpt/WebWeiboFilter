@@ -32,10 +32,13 @@ const SEL_LOGO = 'a[href="/"][aria-label]';
 export const TOPBAR_MARK = 'data-spb-tb';
 
 /**
- * 纯函数：一个计算色值是否「鲜艳」（HSL 饱和度 > 0.25 且峰谷差 > 30）。
+ * 纯函数：一个计算色值是否「鲜艳」（HSL 饱和度 > minS 且峰谷差 > 30）。
  * probeTopbar 实测锚点：徽章 bg rgb(175,121,106) → vivid；按钮 bg rgb(44,44,44) → 不。
+ * @param {number} [minS=0.25] 饱和度阈值 —— 顶栏 0.25；主区 vivid 收尾用 **0.5**
+ *   （B22：我们的哑色 s≈28~30，0.5 阈值才能「只抓写死鲜色、放过自己人」）。
  */
-export function isVividRGB(v) {
+export function isVividRGB(v, minS) {
+  const th = typeof minS === 'number' ? minS : 0.25;
   const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/.exec(typeof v === 'string' ? v : '');
   if (!m) return false;
   const r = +m[1], g = +m[2], b = +m[3];
@@ -44,7 +47,7 @@ export function isVividRGB(v) {
   const l = (mx + mn) / 510;
   const denom = 1 - Math.abs(2 * l - 1);
   if (denom <= 0) return false;
-  return (mx - mn) / 255 / denom > 0.25;
+  return (mx - mn) / 255 / denom > th;
 }
 
 /**
@@ -67,8 +70,8 @@ function computedStyle(el) {
   try { return getComputedStyle(el); } catch (_e) { return null; }
 }
 
-/** 从 logo 锚向上找 bar：h∈[40,80] 且 w≥600 的第一个祖先（probeTopbar 同判据） */
-function findTopbar(doc) {
+/** 从 logo 锚向上找 bar：h∈[40,80] 且 w≥600 的第一个祖先（probeTopbar 同判据）—— vivid.js 复用 */
+export function findTopbar(doc) {
   let logo = null;
   try { logo = doc.querySelector(SEL_LOGO); } catch (_e) { return null; }
   if (!logo) return null;

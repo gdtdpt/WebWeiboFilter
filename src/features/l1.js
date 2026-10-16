@@ -271,6 +271,13 @@ export function l1Css(cfg) {
     // ② 媒体：降饱和（**不改尺寸、不灭色相**；缩略化属第二批）
     rule(`${SEL_MEDIA[0]} img`, 'filter:saturate(.4) !important;opacity:.85 !important'),
 
+    // ②c 卡外图片：个人页封面大图 / 侧栏头像（probeProfile 取证，§12-B22）—— 同款降饱和。
+    //     媒体规则的作用域在 feed-content / retweet 内 ⇒ 个人页头部封面（569×361）在
+    //     作用域外、长期全彩。`:not(article *)` 把作用域钉死在「用户内容之外」——
+    //     卡内媒体一律归 ②，绝不双重处理（B17 纪律：filter 不碰几何，只动颜色，安全）。
+    rule('img.woo-picture-img:not(article *),img.woo-avatar-img:not(article *)',
+      'filter:saturate(.4) !important'),
+
     // ②b 视频：封面 / 暂停帧降饱和 —— 和图片同一套手法（用户反馈 2026-10-14：视频封面一直全彩）。
     //     根因：视频卡里**没有 `woo-picture`**（见适配层 `SEL_VIDEO_PLAYER` 的注释），
     //     上面那条媒体规则盖不到它 ⇒ 未播放的视频封面就是整页最扎眼的一块。
@@ -413,4 +420,4 @@ export function l1Css(cfg) {
 }
 
 /** 规则条数（探针 / 诊断页断言用；改 `l1Css()` 时记得同步） */
-export const L1_RULE_COUNT = 27;
+export const L1_RULE_COUNT = 28;
