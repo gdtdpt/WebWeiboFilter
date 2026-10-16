@@ -168,6 +168,13 @@ test('样式注入：ensureStyle 幂等，removeStyle 能清干净', { skip }, (
   assert.ok(strip.includes('overflow:hidden'), '压条必须裁切内容');
   assert.ok(strip.includes('visibility:hidden'), '压条必须保留 visibility 兜底');
 
+  // 🔴 B19 补刀（2026-10-16 真机实锤「没有自动上移补位」）：必须同时压「卡」——
+  //    scroller 重测对象是卡（B12：sizeCache 对照卡边框盒），只压槽位 = 观察对象没变
+  const cardShrink = el.textContent.split('\n')
+    .find((l) => l.includes('[data-spb="hidden"] .wbpro-scroller-item')) || '';
+  assert.ok(cardShrink.includes('max-height:22px'), '卡自身必须跟着压到 22px（补位前提）');
+  assert.ok(cardShrink.includes('overflow:hidden'), '卡自身必须裁切');
+
   // B 类细条里的那行字（2026-10-15 方案 A 的 ::after 沿用）：挂在槽位的 ::after 上、
   // 用「visibility 置回 visible」而不是动 display —— 后者会改布局
   assert.ok(el.textContent.includes('[data-spb="hidden"]::after'), '占位提示规则缺失');

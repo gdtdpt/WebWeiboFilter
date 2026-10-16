@@ -53,6 +53,15 @@ export const FILTER_CSS = [
     + `max-height:${HIDDEN_STRIP_H}px !important;`
     + 'overflow:hidden !important'
     + '}',
+  // 🔴 B19 补刀（2026-10-16 真机实锤「没有自动上移补位」）：只压槽位不够 ——
+  //    scroller 的重测对象是**卡**（§12-B12：sizeCache 对照卡的边框盒高）。
+  //    槽位被裁而卡仍保全高 ⇒ 观察对象没变化 ⇒ ResizeObserver 不触发、不补位。
+  //    把卡也压到 22px，让「被观察的盒子」真的变小。卡内内容本就被槽位
+  //    overflow 裁掉 + visibility 盖住，这里只是让卡自己的盒子跟着塌。
+  `[${MARK_ATTR}="${MARK_HIDDEN}"] .wbpro-scroller-item{`
+    + `max-height:${HIDDEN_STRIP_H}px !important;`
+    + 'overflow:hidden !important'
+    + '}',
   `[${MARK_ATTR}="${MARK_PAGE_AD}"]{display:none !important}`,
   // B 类细条里的那行字：::after 是槽位的后代 ⇒ 能把 visibility 重新置回 visible。
   // absolute + inset:0 在 22px 细条内居中；底缘一条分割线色（主题令牌，禁写死）
