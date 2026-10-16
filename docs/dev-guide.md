@@ -54,6 +54,7 @@ WeiboFilter/
 │       ├── probe-ad-label.js        真机「广告标签」取样（Console）：定位「广告」二字长在哪个元素（§12-B13 ⑨）
 │       ├── probe-media.js           真机媒体尺寸取样（Console）：单图/九宫格/视频的 rect、容器链、高度由什么决定（媒体缩略化前置，§12-B16 待立）
 │       ├── probe-morepics.js        「+N」截断格与超量图片取证（Console）：probeMorePics / 2（内容级深搜）/ probeDetailApi（§12-B18）
+│       ├── probe-video.js           视频缩略化取证（Console）：probeVideo —— 定高手法 / B17 配对内联 / 播放态还原 / 控制条几何（M4 前置，跑两遍：未播放 + 播放后暂停）
 │       └── find-ad-slots.mjs        离线「广告位定位」：真 DOM + 祖先链 + 稳定签名（parse5）
 └── tests/
     ├── fixtures/           DOM 快照夹具（⚠️ 含真实内容，已 gitignore）
